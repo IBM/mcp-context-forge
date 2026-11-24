@@ -316,6 +316,24 @@ class TestServerService:
 
     # ------------------------- register_server -------------------------- #
     @pytest.mark.asyncio
+    async def test_register_server_invalidates_servers(self, server_service, test_db):
+        """A committed registration invalidates the servers cache once."""
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=None)))
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock()
+        test_db.add = Mock(side_effect=lambda server: server.__dict__.update(tools=[], resources=[], prompts=[], a2a_agents=[], metrics=[]))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        cache = MagicMock()
+        cache.invalidate_servers = AsyncMock()
+
+        with patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache):
+            await server_service.register_server(test_db, ServerCreate(id="550e8400e29b41d4a716446655440009", name="cache_server", description="d"))  # pragma: allowlist secret
+
+        test_db.commit.assert_called_once()
+        cache.invalidate_servers.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_register_server(self, server_service, test_db, mock_tool, mock_resource, mock_prompt):
         """
         Successful registration returns a populated ServerRead.
@@ -895,6 +913,24 @@ class TestServerService:
             await server_service.update_server(db, "550e8400e29b41d4a716446655440001", update, "user@example.com")  # pragma: allowlist secret
 
         assert mock_server.owner_email == original_owner
+
+    @pytest.mark.asyncio
+    async def test_update_server_audit_records_interface_count_without_urls(self, server_service, mock_server):
+        """The update audit entry names the interface change by count and never logs the binding URLs."""
+        db = MagicMock()
+        db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=mock_server))])
+        mock_server.interfaces = []
+        server_service._notify_server_updated = AsyncMock()
+        server_service._audit_trail = MagicMock()
+        server_service.convert_server_to_read = Mock(return_value=MagicMock(name="server_read"))
+
+        update = ServerUpdate(interfaces=[{"protocol": "a2a", "binding": "https://8.8.8.8/a2a"}])
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await server_service.update_server(db, "550e8400e29b41d4a716446655440001", update, "user@example.com")  # pragma: allowlist secret
+
+        details = server_service._audit_trail.log_action.call_args.kwargs["details"]
+        assert details["changes"] == "interfaces: 1"
+        assert "8.8.8.8" not in str(details)
 
     @pytest.mark.asyncio
     async def test_update_server_name_conflict(self, server_service, mock_server, test_db):
@@ -1852,6 +1888,8 @@ class TestServerService:
         """Test disabling OAuth on a server."""
         # Setup existing server with OAuth enabled
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {"authorization_server": "https://auth.example.com"}
 
         test_db.get = Mock(return_value=mock_server)
@@ -1911,6 +1949,8 @@ class TestServerService:
         encryption = get_encryption_service(settings.auth_encryption_secret)
         existing_secret = await encryption.encrypt_secret_async("already-stored")
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {"authorization_server": "https://auth.example.com", "client_secret": existing_secret}
 
         test_db.get = Mock(return_value=mock_server)
@@ -1960,6 +2000,8 @@ class TestServerService:
     async def test_update_server_oauth_config_legacy_object_without_model_fields_set(self, server_service, mock_server, test_db):
         """Legacy update objects without model_fields_set still update oauth_config."""
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = None
 
         test_db.get = Mock(return_value=mock_server)
@@ -2006,6 +2048,7 @@ class TestServerService:
             associated_tools = None
             associated_resources = None
             associated_prompts = None
+            interfaces = None
             tags = None
             oauth_enabled = None
             oauth_config = {"authorization_server": "https://auth.example.com", "client_secret": "legacy-secret"}  # pragma: allowlist secret
@@ -2024,6 +2067,8 @@ class TestServerService:
         """Test that OAuth config is included in server read response."""
         # Setup server with OAuth config
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_server": "https://idp.example.com",
             "client_secret": "do-not-leak",  # pragma: allowlist secret
@@ -2264,6 +2309,8 @@ class TestServerService:
         """Raises ServerError when no OAuth config."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = None
         db = MagicMock()
         db.get.return_value = mock_server
@@ -2274,6 +2321,8 @@ class TestServerService:
         """Raises ServerError when no authorization_servers in config."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {"scopes_supported": ["read"]}
         db = MagicMock()
         db.get.return_value = mock_server
@@ -2284,6 +2333,8 @@ class TestServerService:
         """Returns RFC 9728 metadata with singular authorization_server config (wrapped in array)."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_server": "https://idp.example.com",
             "scopes_supported": ["openid", "profile"],
@@ -2302,6 +2353,8 @@ class TestServerService:
         """Returns RFC 9728 metadata preserving all authorization_servers from plural config."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_servers": ["https://idp1.com", "https://idp2.com"],
         }
@@ -2399,6 +2452,8 @@ class TestServerService:
         """
         # Setup server with OAuth already enabled
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_servers": ["https://original-idp.example.com"],
             "scopes_supported": ["openid"],

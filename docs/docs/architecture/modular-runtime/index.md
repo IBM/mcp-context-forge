@@ -7,7 +7,7 @@ build a protocol module in Rust, Go, or Python.
 The intent is not to freeze every future protobuf field today. The intent is
 to define the minimum contract surface clearly enough that:
 
-- the existing Rust MCP module can be understood as the reference implementation
+- historical module experiments can inform future implementations
 - a Rust A2A module can be implemented without re-designing the trust model
 - a Go LLM proxy module can be implemented without guessing where policy lives
 - a REST or gRPC module can be implemented without inventing a different
@@ -40,27 +40,19 @@ It is **illustrative at the wire-schema level**:
 - final generated bindings can still evolve as long as they preserve those
   semantics
 
-## Implemented Precedent
+## Historical Precedent
 
-The first implemented precedent is the
-[Rust MCP Runtime](../rust-mcp-runtime.md).
-
-That precedent proves:
-
-- a protocol runtime can move out of Python
-- a module can own direct public ingress
-- the core can remain authoritative for auth, token scoping, and RBAC
-- plugin parity and rollback can still be preserved
-
-It does **not** mean that every future module must copy the exact current Rust
-MCP seam. The target-state contracts in this section are slightly more generic
-than the current implementation.
+The removed [Rust MCP Runtime](../rust-mcp-runtime.md) informed this proposal.
+It demonstrated direct protocol ingress with core-owned policy. It is no longer
+a reference implementation available for deployment or development.
+[ADR-058](../adr/058-remove-rust-runtime-and-workspace.md) records its removal.
+Future modules require implementation and validation of these target contracts.
 
 ## Status by Protocol Family
 
 | Protocol family | Status |
 |-----------------|--------|
-| MCP | Implemented as a Rust sidecar/runtime path |
+| MCP | Python transport; a separate module remains proposed |
 | A2A | Planned against this spec |
 | LLM | Planned against this spec |
 | REST/gRPC | Planned against this spec |

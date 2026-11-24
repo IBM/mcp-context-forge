@@ -27,7 +27,9 @@ class SSEAwareCompressMiddleware:
     compression for /mcp endpoints.
 
     When json_response_enabled=True (default), all responses including /mcp
-    are compressed normally since they return JSON, not SSE streams.
+    are compressed normally. These responses are JSON, except that a 2026-07-28
+    request carrying ``_meta.progressToken`` may get ``text/event-stream``;
+    those SSE responses are compressed with per-chunk flush.
 
     Examples:
         >>> from unittest.mock import AsyncMock

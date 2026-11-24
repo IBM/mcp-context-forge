@@ -5,6 +5,9 @@
  */
 
 import { describe, test, expect, vi, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   viewA2AAgent,
@@ -17,6 +20,8 @@ import {
 } from "../../../mcpgateway/admin_ui/a2aAgents.js";
 import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
 import { openModal, closeModal } from "../../../mcpgateway/admin_ui/modals";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 vi.mock("../../../mcpgateway/admin_ui/modals", () => ({
   closeModal: vi.fn(),
@@ -593,6 +598,7 @@ describe("editA2AAgent - auth types", () => {
       <input id="oauth-authorization-url-a2a-edit" />
       <input id="oauth-redirect-uri-a2a-edit" />
       <input id="oauth-scopes-a2a-edit" />
+      <input id="oauth-resource-a2a-edit" />
       <div id="oauth-auth-code-fields-a2a-edit" style="display:none"></div>
       <div id="auth-query_param-fields-a2a-edit" style="display:none"></div>
       <input id="auth-query-param-key-a2a-edit" />
@@ -730,6 +736,64 @@ describe("editA2AAgent - auth types", () => {
     );
     expect(document.getElementById("oauth-scopes-a2a-edit").value).toBe("read write");
     expect(document.getElementById("oauth-auth-code-fields-a2a-edit").style.display).toBe("block");
+  });
+
+  describe("oauth resource field", () => {
+    function mockOAuthAgent(oauthConfig) {
+      fetchWithTimeout.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            name: "OAuth Agent",
+            endpointUrl: "http://localhost",
+            agentType: "A2A",
+            visibility: "public",
+            authType: "oauth",
+            oauthConfig,
+            tags: [],
+            capabilities: {},
+            config: {},
+          }),
+      });
+    }
+
+    test("fills the field from a string resource", async () => {
+      window.ROOT_PATH = "";
+      document.body.innerHTML = createEditFormHTML("oauth");
+      mockOAuthAgent({ grant_type: "client_credentials", resource: "https://api.example.com" });
+      await editA2AAgent("agent-oauth");
+      expect(document.getElementById("oauth-resource-a2a-edit").value).toBe("https://api.example.com");
+    });
+
+    test("joins a list resource", async () => {
+      window.ROOT_PATH = "";
+      document.body.innerHTML = createEditFormHTML("oauth");
+      mockOAuthAgent({ grant_type: "client_credentials", resource: ["https://a.example.com", "https://b.example.com"] });
+      await editA2AAgent("agent-oauth");
+      expect(document.getElementById("oauth-resource-a2a-edit").value).toBe("https://a.example.com, https://b.example.com");
+    });
+
+    test("clears a value left by the previous agent when the agent has no resource", async () => {
+      window.ROOT_PATH = "";
+      document.body.innerHTML = createEditFormHTML("oauth");
+      document.getElementById("oauth-resource-a2a-edit").value = "left over from the previous agent";
+      mockOAuthAgent({ grant_type: "client_credentials" });
+      await editA2AAgent("agent-oauth");
+      expect(document.getElementById("oauth-resource-a2a-edit").value).toBe("");
+    });
+
+    test("add and edit forms in the template carry the oauth_resource input and default to client_credentials", () => {
+      const template = readFileSync(resolve(__dirname, "../../../mcpgateway/templates/admin.html"), "utf8");
+      expect(template).toContain('id="oauth-resource-a2a-edit"');
+      const addForm = template.slice(template.indexOf('id="auth-oauth-fields-a2a"'));
+      expect(addForm.slice(0, 6000)).toContain('name="oauth_resource"');
+      for (const id of ["oauth-grant-type-a2a", "oauth-grant-type-a2a-edit"]) {
+        const start = template.indexOf(`id="${id}"`);
+        const select = template.slice(start, template.indexOf("</select>", start));
+        expect(select).toContain('<option value="client_credentials" selected>');
+        expect(select).not.toContain('<option value="authorization_code" selected>');
+      }
+    });
   });
 
   test("populates query_param auth fields", async () => {

@@ -199,6 +199,10 @@ async def lifecycle_client(main_app_with_admin_api):
         yield client, main_mod.gateway_service
 
     app.dependency_overrides.clear()
+    # Tests assign AsyncMocks to the shared gateway_service instance; drop them so later tests see the real methods.
+    for patched_method in ("_initialize_gateway", "_initialize_gateway_with_timeout"):
+        vars(main_mod.gateway_service).pop(patched_method, None)
+    vars(main_mod.gateway_service._event_service).pop("publish_event", None)
     user_context_db.close()
     main_mod.SessionLocal = original_main_session_local
     main_mod.validate_token_user = original_validate_token_user

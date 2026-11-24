@@ -92,6 +92,11 @@ os.environ.setdefault("AUTH_ENCRYPTION_SECRET", _TEST_ENC_SECRET)
 os.environ.setdefault("PLATFORM_ADMIN_PASSWORD", _TEST_ADMIN_PW)
 os.environ.setdefault("DEFAULT_USER_PASSWORD", _TEST_USER_PW)
 
+# Cheap Argon2id parameters keep password hashing and secret encryption fast. `make test` sets the
+# same values. setdefault lets CI and direct rstest runs match it without overriding a host value.
+os.environ.setdefault("ARGON2ID_TIME_COST", "1")
+os.environ.setdefault("ARGON2ID_MEMORY_COST", "1024")
+
 
 def _force_minimal_main_app_features() -> None:
     """Default heavy optional features to off before anything imports mcpgateway.main.
@@ -119,10 +124,9 @@ def _force_minimal_main_app_features() -> None:
     # Defensive: if any import above already populated the settings cache,
     # clear it so subsequent reads reflect the values we just set.
     try:
-        # First-Party
-        from mcpgateway.config import get_settings  # noqa: E402  # local import - conftest bootstrap
-
-        get_settings.cache_clear()
+        config_module = sys.modules.get("mcpgateway.config")
+        if config_module is not None:
+            config_module.get_settings.cache_clear()
     except Exception:  # noqa: BLE001 - best-effort during bootstrap
         pass
 
@@ -134,14 +138,29 @@ def _force_minimal_main_app_features() -> None:
 
 _force_minimal_main_app_features()
 
-# First-Party
-import mcpgateway.db as db_mod  # noqa: E402  # must load after test DB env hardening
-from mcpgateway.config import Settings  # noqa: E402  # must load after test DB env hardening
-
 # Local
 
 # Skip session-level RBAC patching for now - let individual tests handle it
 # _session_rbac_originals = patch_rbac_decorators()
+
+
+_INITIAL_STATE_FILES = (
+    "tests/unit/mcpgateway/transports/test_streamablehttp_transport.py",
+    "tests/unit/mcpgateway/utils/test_verify_credentials.py",
+    "tests/unit/mcpgateway/routers/test_oauth_router.py",
+    "tests/unit/mcpgateway/routers/test_search_router.py",
+)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Keep files ordered and run initial-state tests before other files on their worker."""
+    priority = {path: index for index, path in enumerate(_INITIAL_STATE_FILES)}
+    for item in items:
+        path = item.nodeid.split("::", 1)[0]
+        group = "initial-state" if path in priority else path
+        item.add_marker(pytest.mark.xdist_group(group))
+    items.sort(key=lambda item: (item.get_closest_marker("serial") is not None, priority.get(item.nodeid.split("::", 1)[0], len(priority))))
 
 
 def pytest_addoption(parser):
@@ -189,6 +208,9 @@ def test_db_url():
 @pytest.fixture(scope="session")
 def test_engine(test_db_url):
     """Create a SQLAlchemy engine for testing."""
+    # First-Party
+    import mcpgateway.db as db_mod
+
     if test_db_url.startswith("sqlite"):
         engine = create_engine(
             test_db_url,
@@ -222,6 +244,9 @@ def test_db(test_engine):
 @pytest.fixture
 def test_settings():
     """Create test settings with in-memory database."""
+    # First-Party
+    from mcpgateway.config import Settings
+
     return Settings(
         database_url="sqlite:///:memory:",
         basic_auth_user="testuser",
@@ -244,6 +269,7 @@ def app():
 
     # 2) patch settings
     # First-Party
+    import mcpgateway.db as db_mod
     from mcpgateway.config import settings
 
     mp.setattr(settings, "database_url", url, raising=False)
@@ -322,6 +348,7 @@ def app_with_temp_db():
 
     # 2) patch settings
     # First-Party
+    import mcpgateway.db as db_mod
     from mcpgateway.config import settings
 
     mp.setattr(settings, "database_url", url, raising=False)
@@ -496,7 +523,8 @@ def pytest_sessionfinish(session, exitstatus):
     # Dispose the module-level engine to close all SQLite connections
     # This prevents ResourceWarning about unclosed database connections
     try:
-        if hasattr(db_mod, "engine") and db_mod.engine is not None:
+        db_mod = sys.modules.get("mcpgateway.db")
+        if db_mod is not None and getattr(db_mod, "engine", None) is not None:
             db_mod.engine.dispose()
     except Exception:
         pass  # Ignore errors during cleanup
@@ -626,6 +654,24 @@ def _test_ssrf_defaults():
 
 
 @pytest.fixture(autouse=True)
+def reset_service_token_cache():
+    """Give each test a fresh, in-memory, process-wide gateway service-token cache.
+
+    ``GatewayService`` and the token-exchange actor resolver share one cache per
+    process, so cached discovery and actor tokens would otherwise leak between tests.
+    The fresh cache is pinned to memory: the lazily created one would connect to
+    ``REDIS_URL``, and a Redis running on a developer machine would keep tokens
+    across tests and across runs.
+    """
+    from mcpgateway.services import gateway_service_token_cache
+    from mcpgateway.services.gateway_service_token_cache import GatewayServiceTokenCache
+
+    gateway_service_token_cache._shared_cache = GatewayServiceTokenCache(redis_url=None)
+    yield
+    gateway_service_token_cache._shared_cache = None
+
+
+@pytest.fixture(autouse=True)
 def clear_metrics_cache():
     """Clear the metrics cache before and after each test to ensure isolation.
 
@@ -707,3 +753,23 @@ def clear_jwt_cache_between_tests():
         clear_jwt_caches()
     except ImportError:
         pass
+
+
+@pytest.fixture(autouse=True)
+def clear_correlation_id_between_tests():
+    """Clear the correlation-ID contextvar before and after each test.
+
+    ``get_or_generate_correlation_id()`` sets the ContextVar when no ID is set.
+    ``AuditTrailService.log_action()`` calls it synchronously and never resets it.
+    The next test on the same worker then inherits that ID. Assertions on exact
+    error text fail nondeterministically, because ``error_formatter._with_reference``
+    appends ``(reference: <id>)``. Clear around every test so no test inherits
+    another test's ID.
+    """
+    from mcpgateway.utils.correlation_id import clear_correlation_id
+
+    clear_correlation_id()
+
+    yield
+
+    clear_correlation_id()

@@ -29,14 +29,69 @@ from __future__ import annotations
 
 # Standard
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+import hashlib
 from typing import Any, AsyncIterator, Callable, Optional
 
 # Third-Party
 import httpx2
 from mcp.client.streamable_http import streamable_http_client as _sdk_streamable_http_client
 from mcp.shared.exceptions import MCPError
-from mcp_types import JSONRPCError, jsonrpc_message_adapter
+from mcp_types import jsonrpc_message_adapter, JSONRPCError
 from pydantic import ValidationError
+
+# First-Party
+from mcpgateway.observability import set_span_attribute
+
+REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+
+
+@dataclass
+class UpstreamSessionInfo:
+    """Track the session ID assigned by one upstream connection."""
+
+    session_id: str | None = None
+
+    def capture_sse(self, session_id: str) -> None:
+        """Capture the session ID supplied by the SSE transport.
+
+        Args:
+            session_id: Upstream-assigned session ID.
+        """
+        self.session_id = session_id
+
+    async def capture_response(self, response: httpx2.Response) -> None:
+        """Capture an upstream session ID without retaining response headers.
+
+        Args:
+            response: Upstream HTTP response.
+        """
+        session_id = response.headers.get("Mcp-Session-Id")
+        if session_id and response.is_success:
+            self.session_id = session_id
+
+    def install(self, client: httpx2.AsyncClient) -> None:
+        """Install session capture on this connection's HTTP client.
+
+        Args:
+            client: Connection-local HTTP client.
+        """
+        client.event_hooks.setdefault("response", []).append(self.capture_response)
+
+    def annotate(self, *spans: Any) -> None:
+        """Add a correlation hash of the upstream session ID to available spans.
+
+        The raw ID is a session handle and never leaves the gateway. The span
+        attribute is the first 16 hex characters of its SHA-256 digest.
+
+        Args:
+            spans: Spans to annotate when an upstream ID is available.
+        """
+        if self.session_id:
+            session_hash = hashlib.sha256(self.session_id.encode("utf-8")).hexdigest()[:16]
+            for span in spans:
+                if span is not None:
+                    set_span_attribute(span, "gateway.upstream.session_id", session_hash)
 
 
 class ErrorResponseHook:
@@ -66,8 +121,14 @@ class ErrorResponseHook:
         SSE, or when an error status comes without a JSON-RPC error body. Those made-up
         errors are the ones translated later; a real JSON-RPC error the upstream sent is
         left untouched. An SSE body cannot be inspected here, so nothing is noted for it.
+        The hook runs before the SDK decides whether to follow a redirect. A kept 3xx is
+        therefore dropped when the next answer is 202 or 204, which shows the SDK followed it.
         """
-        if response.request.method != "POST" or response.status_code in (202, 204):
+        if response.request.method != "POST":
+            return
+        if response.status_code in (202, 204):
+            if self.response is not None and self.response.status_code in REDIRECT_STATUS_CODES:
+                self.response = None
             return
         self.response = response
         self.response_carried_jsonrpc_error = False
@@ -86,10 +147,11 @@ class ErrorResponseHook:
     def to_transport_error(self, exc: BaseException) -> Optional[httpx2.HTTPError]:
         """Translate an error the SDK made up into the transport failure it stands for.
 
-        Returns ``httpx2.HTTPStatusError`` when the last POST was refused with an error
-        status and no JSON-RPC error body, ``httpx2.DecodingError`` when it answered 2xx
-        with a body the SDK could not read as JSON-RPC, and None otherwise, including
-        for a real JSON-RPC error the upstream sent (even at a 4xx status).
+        Returns ``httpx2.HTTPStatusError`` when the last POST was redirected without being
+        followed (3xx) or refused with an error status (4xx/5xx) and no JSON-RPC error
+        body, ``httpx2.DecodingError`` when it answered 2xx with a body the SDK could not
+        read as JSON-RPC, and None otherwise, including for a real JSON-RPC error the
+        upstream sent (even at a 4xx status).
         """
         response = self.response
         if response is None:
@@ -99,7 +161,7 @@ class ErrorResponseHook:
             root = root.exceptions[0]  # pylint: disable=no-member
         if not isinstance(root, MCPError) or self.response_carried_jsonrpc_error:
             return None
-        if response.status_code >= 400:
+        if response.status_code >= 300:
             return httpx2.HTTPStatusError(
                 f"{response.status_code} {response.reason_phrase} for url '{response.request.url}'",
                 request=response.request,
@@ -122,6 +184,7 @@ async def streamable_http_client(
     timeout: float | httpx2.Timeout | None = None,
     auth: httpx2.Auth | None = None,
     httpx_client_factory: Callable[..., httpx2.AsyncClient] | None = None,
+    session_info: UpstreamSessionInfo | None = None,
 ) -> AsyncIterator[Any]:
     """Yield ``(read_stream, write_stream)`` from the mcp 2.x streamable transport.
 
@@ -137,8 +200,10 @@ async def streamable_http_client(
         httpx_client_factory: Optional factory returning a configured
             ``httpx2.AsyncClient``. When supplied, ``headers``/``timeout``/``auth``
             are forwarded as keyword arguments to the factory; otherwise a fresh
-            ``httpx2.AsyncClient`` is created here with ``follow_redirects=True``
-            (matching v1's internal client behavior).
+            ``httpx2.AsyncClient`` is created here with ``follow_redirects=False``
+            so a redirect cannot reach a destination that outbound URL validation
+            never checked.
+        session_info: Optional connection-local upstream session ID tracker.
 
     Yields:
         2-tuple of ``(read_stream, write_stream)``.
@@ -146,7 +211,7 @@ async def streamable_http_client(
     if httpx_client_factory is not None:
         http_client = httpx_client_factory(headers=headers, timeout=timeout, auth=auth)
     else:
-        kwargs: dict[str, Any] = {"follow_redirects": True}
+        kwargs: dict[str, Any] = {"follow_redirects": False}
         if headers is not None:
             kwargs["headers"] = headers
         if timeout is not None:
@@ -155,6 +220,8 @@ async def streamable_http_client(
             kwargs["auth"] = auth
         http_client = httpx2.AsyncClient(**kwargs)
 
+    if session_info is not None:
+        session_info.install(http_client)
     error_hook = ErrorResponseHook().install(http_client)
     async with http_client:
         try:

@@ -9,7 +9,6 @@ Comprehensive unit tests for bootstrap_db module.
 # Standard
 import asyncio
 import json
-import os
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -18,8 +17,8 @@ import pytest
 
 # First-Party
 from mcpgateway.bootstrap_db import (
-    alembic_at_head,
     advisory_lock,
+    alembic_at_head,
     bootstrap_admin_user,
     bootstrap_default_roles,
     bootstrap_resource_assignments,
@@ -40,6 +39,7 @@ def mock_settings():
     settings.platform_admin_full_name = "Platform Admin"
     settings.auto_create_personal_teams = True
     settings.database_url = "sqlite:///:memory:"
+    settings.gateway_replicas = 1
     return settings
 
 
@@ -896,6 +896,33 @@ class TestBootstrapDefaultRoles:
                             assert mock_role_service.create_role.call_count == 5
                             # Should not log about additional roles
                             assert not any("additional roles" in str(call) for call in mock_logger.info.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_default_roles_grant_gateway_token_read_only_to_developer_and_team_admin(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Only developer and team_admin hold gateways.token_read; viewer roles do not."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = False
+
+        created_role = Mock()
+        created_role.id = "role-id"
+        mock_role_service.create_role.return_value = created_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        await bootstrap_default_roles(mock_conn)
+
+        permissions_by_role = {call.kwargs["name"]: call.kwargs["permissions"] for call in mock_role_service.create_role.call_args_list}
+        assert {name for name, permissions in permissions_by_role.items() if "gateways.token_read" in permissions} == {"developer", "team_admin"}
+        assert "gateways.read" in permissions_by_role["viewer"]
 
     @pytest.mark.asyncio
     async def test_bootstrap_roles_with_invalid_json_file(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
@@ -1908,11 +1935,13 @@ class TestMain:
         mock_connect_cm.__exit__ = Mock(return_value=None)
         mock_engine.connect = Mock(return_value=mock_connect_cm)
 
-        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine), \
-             patch("importlib.resources.files") as mock_files, \
-             patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})), \
-             patch("mcpgateway.bootstrap_db.alembic_at_head", return_value=False), \
-             patch("mcpgateway.bootstrap_db.settings", mock_settings):
+        with (
+            patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine),
+            patch("importlib.resources.files") as mock_files,
+            patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})),
+            patch("mcpgateway.bootstrap_db.alembic_at_head", return_value=False),
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+        ):
             mock_files.return_value.joinpath.return_value = "alembic.ini"
             with pytest.raises(RuntimeError, match="Schema not at head; migrations required before startup"):
                 await main()
@@ -2134,10 +2163,10 @@ class TestMainAdditionalBranches:
         """SQLite + GATEWAY_REPLICAS > 1 emits warning (line 768)."""
         mock_settings.mcpgateway_skip_migrations = False
         mock_settings.database_url = "sqlite:///./mcp.db"
+        mock_settings.gateway_replicas = 2
         mock_engine, _ = self._make_engine_cm()
 
         with (
-            patch.dict(os.environ, {"GATEWAY_REPLICAS": "2"}),
             patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine),
             patch("importlib.resources.files") as mock_files,
             patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})),

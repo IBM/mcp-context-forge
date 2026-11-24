@@ -35,6 +35,23 @@ The metadata response fields (per RFC 9728 Section 2):
 
 ## Implementation
 
+### Administrator approval
+
+Only unrestricted platform administrators can configure virtual-server OAuth trust.
+The server must have approved OAuth settings before it advertises the issuer through protected-resource metadata.
+Pending configurations retain their issuer settings for review but return HTTP 404 or 503 from metadata routes.
+MCP initialization also excludes pending issuer URLs.
+
+A bearer token from a pending server issuer receives HTTP 503 with
+`OAuth configuration requires administrator approval` before account resolution or upstream execution.
+Independent authentication paths retain their existing rules.
+An OAuth-enabled server still rejects anonymous MCP requests when `MCP_REQUIRE_AUTH` is false.
+
+Migration `b7e291a4c630` marks all existing configurations unapproved.
+Coordinate migration with application deployment and restart all workers.
+Review each required issuer before approving its current server version.
+See [OAuth approval and upgrade steps](../manage/sso.md#virtual-server-oauth-approval-and-upgrades).
+
 ### Compliant Endpoint
 
 **Path:** `/.well-known/oauth-protected-resource/servers/{server_id}/mcp`
@@ -52,7 +69,7 @@ The metadata response fields (per RFC 9728 Section 2):
 - Returns `authorization_servers` field as JSON array (RFC 9728 Section 2)
 - Includes `/mcp` suffix in resource URL
 - Cache headers for performance
-- Only exposes public servers with OAuth enabled
+- Only exposes public servers with enabled, approved OAuth settings
 
 **Example Request:**
 
@@ -80,7 +97,7 @@ The `get_oauth_protected_resource_metadata()` method:
 - Returns RFC 9728 compliant metadata with `authorization_servers` field (JSON array)
 - Reads `authorization_servers` (plural) from config as primary source
 - Falls back to `authorization_server` (singular) from config for backward compatibility
-- Only exposes metadata for public, enabled servers with OAuth configured
+- Only exposes metadata for public, enabled servers with approved OAuth settings
 - Includes optional `scopes_supported` if configured
 
 **Configuration Priority:**

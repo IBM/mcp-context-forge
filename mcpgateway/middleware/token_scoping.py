@@ -34,7 +34,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.paths import replace_api_path_alias
 from mcpgateway.utils.verify_credentials import (
     ConfigurableHTTPBearer,
-    get_auth_bearer_token_from_request,
+    get_request_auth_token,
     verify_jwt_token_cached,
 )
 
@@ -64,7 +64,6 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/prompts/?([a-f0-9\-]+)"), "prompt"),
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
 ]
-_AUTH_COOKIE_NAMES = ("jwt_token", "access_token")
 
 
 class ResourceOwnershipResult(Enum):
@@ -132,6 +131,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # state|toggle sub-resource rule below.
     ("POST", re.compile(r"^/servers/[^/]+/test-handshake(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.SERVERS_UPDATE),  # Server management sub-resources
+    ("POST", re.compile(r"^/servers/[^/]+/oauth/approve/?$"), Permissions.SERVERS_UPDATE),
     ("POST", re.compile(r"^/servers/[^/]+/message(?:$|/)"), Permissions.SERVERS_USE),  # Server message access endpoint
     ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
@@ -160,6 +160,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # server-scoped API token whose permissions list does not include gateways.read is
     # rejected at the middleware layer rather than reaching the handler and failing there.
     ("GET", re.compile(r"^/oauth/status(?:$|/)"), Permissions.GATEWAYS_READ),
+    # OAuth per-caller access token retrieval (GET /oauth/token/{gateway_id}); returns a
+    # live bearer token, so it requires gateways.token_read.
+    ("GET", re.compile(r"^/oauth/token(?:$|/)"), Permissions.GATEWAYS_TOKEN_READ),
     # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
     # Registered clients are global rows with no team column, so these map to
     # admin-category permissions; the handlers additionally require an
@@ -189,19 +192,34 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("GET", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     ("POST", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     # A2A agent API permissions (a2a_router, prefix="/a2a" — see main.py).
-    # Order matters: the first method+path match wins, so the concrete /a2a/invoke
+    # Order matters: the first method+path match wins. The stored extended card needs
+    # a2a.update, so it precedes the general GET /a2a rule. The concrete /a2a/invoke
     # collection route is listed before the {agent_name}-scoped POST routes.
+    ("GET", re.compile(r"^/a2a/[^/]+/stored-card/extended/?$"), Permissions.A2A_UPDATE),
     ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/cancel/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/?$"), Permissions.A2A_UPDATE),
     ("DELETE", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/pushNotificationConfigs/[^/]+/?$"), Permissions.A2A_UPDATE),
+    ("POST", re.compile(r"^/a2a/[^/]+/tasks/[^/]+/messages/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/?$"), Permissions.A2A_CREATE),
+    # Card fetch makes the gateway issue an outbound request to a caller-chosen URL,
+    # so it needs a2a.create rather than a2a.read.
+    ("POST", re.compile(r"^/a2a/fetch-card/?$"), Permissions.A2A_CREATE),
     ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/jsonrpc(?:$|/)"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/test(?:$|/)"), Permissions.A2A_INVOKE),
     ("POST", re.compile(r"^/a2a/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.A2A_UPDATE),
     ("PUT", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_UPDATE),
     ("DELETE", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_DELETE),
+    # Export/import routes on export_import_router. The handlers require
+    # admin.export / admin.import (the import routes are global_only); without
+    # these entries the default-deny below rejects correctly scoped tokens.
+    ("GET", re.compile(r"^/export(?:$|/)"), Permissions.ADMIN_EXPORT),
+    ("POST", re.compile(r"^/export/selective(?:$|/)"), Permissions.ADMIN_EXPORT),
+    ("POST", re.compile(r"^/import(?:$|/)"), Permissions.ADMIN_IMPORT),
+    ("GET", re.compile(r"^/import/status(?:$|/)"), Permissions.ADMIN_IMPORT),
+    ("POST", re.compile(r"^/import/cleanup(?:$|/)"), Permissions.ADMIN_IMPORT),
     # A2A agent plugin bindings live under /a2a-agents/... (hyphen), which does not
     # match ^/a2a(?:$|/) above. Decorators on a2a_agent_plugin_bindings require
     # tools.read / tools.manage_plugins — same contract as tool plugin bindings (#6701).
@@ -258,6 +276,7 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/admin/servers/?$"), Permissions.SERVERS_CREATE),
     ("POST", re.compile(r"^/admin/servers/[^/]+/delete(?:$|/)"), Permissions.SERVERS_DELETE),
     ("POST", re.compile(r"^/admin/servers/[^/]+/(?:edit|state)(?:$|/)"), Permissions.SERVERS_UPDATE),
+    ("POST", re.compile(r"^/admin/servers/[^/]+/oauth/approve/?$"), Permissions.SERVERS_UPDATE),
     ("GET", re.compile(r"^/admin/servers(?:$|/)"), Permissions.SERVERS_READ),
     # Token/tag read surfaces
     ("GET", re.compile(r"^/admin/tokens(?:$|/)"), Permissions.TOKENS_READ),
@@ -489,28 +508,6 @@ class TokenScopingMiddleware:
             normalized = f"/{normalized}"
         return replace_api_path_alias(normalized)
 
-    def _extract_jwt_token_from_request(self, request: Request) -> Optional[str]:
-        """Extract JWT token from supported cookie names or Bearer auth header.
-
-        Args:
-            request: Request object carrying cookies and headers.
-
-        Returns:
-            JWT string when present and validly formatted; otherwise ``None``.
-        """
-        cookies = getattr(request, "cookies", None)
-        if cookies and hasattr(cookies, "get"):
-            for cookie_name in _AUTH_COOKIE_NAMES:
-                cookie_token = cookies.get(cookie_name)
-                if isinstance(cookie_token, str) and cookie_token.strip():
-                    return cookie_token.strip()
-
-        # Get the configured auth header (default Authorization) and parse
-        # the Bearer scheme case-insensitively. Reading from the configured
-        # header keeps token scoping aligned with the auth dependency so
-        # scope restrictions cannot be bypassed by setting AUTH_HEADER_NAME.
-        return get_auth_bearer_token_from_request(request)
-
     async def _extract_token_scopes(self, request: Request) -> Optional[dict]:
         """Extract token scopes from JWT in request.
 
@@ -520,7 +517,7 @@ class TokenScopingMiddleware:
         Returns:
             Dict containing token scopes or None if no valid token
         """
-        token = self._extract_jwt_token_from_request(request)
+        token = get_request_auth_token(request)
         if not token:
             return None
 
@@ -538,9 +535,9 @@ class TokenScopingMiddleware:
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP address from request.
 
-        Only trusts X-Forwarded-For / X-Real-IP headers when a trusted proxy
-        configuration is in place (ProxyHeadersMiddleware with specific hosts).
-        Otherwise, uses the direct connection IP to prevent header spoofing.
+        ``ProxyHeadersMiddleware`` resolves ``request.client`` from
+        X-Forwarded-For only when the direct peer is listed in
+        ``FORWARDED_ALLOW_IPS``; otherwise it is the socket peer.
 
         Args:
             request: FastAPI request object
@@ -548,11 +545,6 @@ class TokenScopingMiddleware:
         Returns:
             str: Client IP address
         """
-        # Use direct client IP as the secure default.
-        # Proxy headers are only trustworthy when Uvicorn/Starlette's
-        # ProxyHeadersMiddleware has already rewritten request.client from a
-        # trusted upstream.  That middleware replaces request.client.host with
-        # the real client IP, so we can rely on it directly.
         return request.client.host if request.client else "unknown"
 
     def _check_ip_restrictions(self, client_ip: str, ip_restrictions: list) -> bool:
@@ -830,6 +822,11 @@ class TokenScopingMiddleware:
         # a validly-scoped token (e.g. tools.read-only), so let it through and rely
         # on the handler's per-entity RBAC + token/team scoping to filter results.
         if request_path == "/search" or request_path.startswith("/search/"):
+            return True
+
+        # The caller's own profile and deployment feature flags need no scoped permission;
+        # any authenticated token may read them.
+        if request_method == "GET" and request_path in ("/auth/email/me", "/auth/email/me/"):
             return True
 
         # Handle admin routes with granular route-group mapping.
@@ -1331,10 +1328,10 @@ class TokenScopingMiddleware:
             if normalized_path == "/":
                 return await call_next(request)
 
-            # Trusted internal Rust -> Python MCP dispatch already carries a
+            # Trusted Python affinity dispatch already carries a
             # normalized auth context and is re-authorized by the internal MCP
-            # handlers. Re-applying token-scoping path checks here would reject
-            # the private /_internal/mcp/* hop for scoped tokens.
+            # dispatcher. Re-applying token-scoping path checks here would reject
+            # the private /_internal/mcp/rpc hop for scoped tokens.
             if self._is_trusted_internal_mcp_runtime_request(request, normalized_path):
                 return await call_next(request)
 
@@ -1471,19 +1468,17 @@ class TokenScopingMiddleware:
             )
 
     def _is_trusted_internal_mcp_runtime_request(self, request: Request, normalized_path: str) -> bool:
-        """Return whether the request is a trusted internal MCP/A2A runtime hop.
+        """Return whether the request is a trusted Python affinity RPC hop.
 
-        Delegates to the shared gate in ``auth_context`` so the trust decision is
-        defined in one place. Unlike the previous local check, this trusts both
-        the ``rust`` and ``affinity`` runtime markers — closing the gap where the
-        in-process session-affinity dispatch was still token-scoped.
+        Delegate to the shared gate in ``auth_context`` to keep middleware and
+        internal dispatch on the same trust boundary.
 
         Args:
             request: Incoming HTTP request.
             normalized_path: Canonicalized request path used for route matching.
 
         Returns:
-            ``True`` when the request is a trusted internal MCP/A2A hop.
+            ``True`` when the request is a trusted Python affinity RPC hop.
         """
         # First-Party
         from mcpgateway.auth_context import is_trusted_internal_mcp_request  # pylint: disable=import-outside-toplevel

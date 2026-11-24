@@ -74,7 +74,7 @@ from mcpgateway.db import engine
 _SECRET_NAME_RE = re.compile(r"secret|password|passwd|credential|passphrase|private_key|api_key", re.IGNORECASE)
 
 # String settings matching _SECRET_NAME_RE that are not themselves secrets.
-_SAFE_STRING_FIELDS = frozenset({"jwt_private_key_path"})
+_SAFE_STRING_FIELDS = frozenset({"jwt_private_key_path", "cimd_private_key_path"})
 
 # Key names that indicate a secret when they appear *inside* a collection-typed
 # setting (a SIEM destination entry, a role mapping, ...). Deliberately broader

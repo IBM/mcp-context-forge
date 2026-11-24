@@ -31,6 +31,7 @@ from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.cache.admin_stats_cache import admin_stats_cache
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -926,6 +927,7 @@ class TeamManagementService:
             memberships, invitations = await self._seed_members(team, seeds, created_by)
 
             self.db.commit()
+            notify_dataplane()
 
             team_id = str(team.id)
 
@@ -1086,6 +1088,7 @@ class TeamManagementService:
 
             team.updated_at = utc_now()
             self.db.commit()
+            notify_dataplane()
 
             self._invalidate_team_member_caches(team_id)
 
@@ -1152,6 +1155,7 @@ class TeamManagementService:
             )
 
             self.db.commit()
+            notify_dataplane()
 
             # Invalidate all role caches for this team
             try:
@@ -1218,7 +1222,9 @@ class TeamManagementService:
 
         Args:
             team_id: ID of the team
-            user_email: Email of the user to add
+            user_email: Canonical user_id of the user to add. Phase-1 value =
+                e-mail, so the ``EmailTeamMember.user_email`` queries are
+                unchanged.
             role: Role to assign (owner, member)
             invited_by: Email of user who added this member
             grant_source: Origin of grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
@@ -1282,6 +1288,7 @@ class TeamManagementService:
         try:
             member, action = self._upsert_membership(team_id, user_email, role, invited_by=invited_by, grant_source=grant_source, existing=existing_membership)
             self.db.commit()
+            notify_dataplane()
             self._log_team_member_action(member.id, team_id, user_email, role, action, invited_by)
 
             await self._assign_team_rbac_role(user_email, team_id, role, granted_by=invited_by)
@@ -1301,7 +1308,9 @@ class TeamManagementService:
 
         Args:
             team_id: ID of the team
-            user_email: Email of the user to remove
+            user_email: Canonical user_id of the user to remove. Phase-1
+                value = e-mail, so the ``EmailTeamMember.user_email`` query
+                is unchanged.
             removed_by: Email of user performing the removal
 
         Returns:
@@ -1343,6 +1352,7 @@ class TeamManagementService:
             # Remove membership (soft delete)
             membership.is_active = False
             self.db.commit()
+            notify_dataplane()
             self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
 
             # Revoke all team-scoped RBAC roles from removed member defensively
@@ -1487,7 +1497,9 @@ class TeamManagementService:
 
         Args:
             team_id: ID of the team
-            user_email: Email of the user
+            user_email: Canonical user_id of the user. Phase-1 value =
+                e-mail, so the ``EmailTeamMember.user_email`` query is
+                unchanged.
 
         Returns:
             EmailTeamMember if found and active, None otherwise
@@ -1995,7 +2007,8 @@ class TeamManagementService:
         include_personal: bool = False,
         search_query: Optional[str] = None,
         personal_owner_email: Optional[str] = None,
-    ) -> List[int]:
+        team_ids: Optional[List[str]] = None,
+    ) -> List[str]:
         """Get all team IDs matching criteria (unpaginated).
 
         Args:
@@ -2004,9 +2017,10 @@ class TeamManagementService:
             include_personal: Whether to include personal teams
             search_query: Search term for name/slug
             personal_owner_email: When set (and include_personal=False), includes this user's personal team alongside non-personal teams
+            team_ids: Allowed team IDs, or ``None`` for unrestricted filtering.
 
         Returns:
-            List[int]: List of team IDs
+            List[str]: List of team IDs
         """
         query = self._apply_team_list_filters(
             select(EmailTeam.id),
@@ -2017,10 +2031,13 @@ class TeamManagementService:
             personal_owner_email=personal_owner_email,
         )
 
+        if team_ids is not None:
+            query = query.where(EmailTeam.id.in_(team_ids))
+
         result = self.db.execute(query)
-        team_ids = [row[0] for row in result.all()]
+        ids = [row[0] for row in result.all()]
         self.db.commit()  # Release transaction to avoid idle-in-transaction
-        return team_ids
+        return ids
 
     async def get_teams_count(
         self,
@@ -2320,12 +2337,13 @@ class TeamManagementService:
             logger.error("Failed to get join requests for user %s: %s", SecurityValidator.sanitize_log_message(user_email), e)
             return []
 
-    async def cancel_join_request(self, request_id: str, user_email: str) -> bool:
+    async def cancel_join_request(self, request_id: str, user_email: str, team_id: str) -> bool:
         """Cancel a join request.
 
         Args:
             request_id: ID of the join request to cancel
             user_email: Email of the user canceling the request
+            team_id: URL team that must own the stored request
 
         Returns:
             bool: True if canceled successfully, False otherwise
@@ -2336,7 +2354,9 @@ class TeamManagementService:
         try:
             # Get the join request
             join_request = (
-                self.db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.user_email == user_email, EmailTeamJoinRequest.status == "pending").first()
+                self.db.query(EmailTeamJoinRequest)
+                .filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.team_id == team_id, EmailTeamJoinRequest.user_email == user_email, EmailTeamJoinRequest.status == "pending")
+                .first()
             )
 
             if not join_request:

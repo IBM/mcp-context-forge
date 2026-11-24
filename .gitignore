@@ -92,6 +92,7 @@ coverage.xml
 *,cover
 .hypothesis/
 .pytest_cache/
+.rstest_cache/
 mutants
 .mutmut-cache
 test-results/
@@ -187,7 +188,8 @@ packages.json
 .aider*
 aider*
 .ai*
-.bob
+.bob/*
+!.bob/skills
 .omo
 .claude/*
 CLAUDE.local.md
@@ -243,7 +245,7 @@ celerybeat-schedule
 # ========================================
 # Python Version Management
 # ========================================
-.python-version
+# .python-version is tracked to select the default development interpreter.
 
 # ========================================
 # uv Package Manager

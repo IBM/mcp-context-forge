@@ -9,7 +9,7 @@ cpex's TenantPluginManagerFactory is no longer imported or subclassed.
 This module provides a standalone factory that uses cpex's
 TenantPluginManager for actual plugin execution while adding
 gateway-specific features:
-- TTL-based cache with ``_CachedManager`` wrappers
+- Context-scoped manager caching with alias sharing
 - Per-plugin Redis mode overrides via ``_apply_redis_mode_overrides``
 - ``invalidate_all`` / ``invalidate_team`` for cross-worker propagation
 - CF-owned ``PluginConfigOverride`` with ``on_error`` field
@@ -65,29 +65,10 @@ class PluginConfigOverride(BaseModel):
     priority: Optional[int] = None
 
 
-class _CachedManager:
-    """A cached tenant manager paired with the monotonic timestamp of its build."""
-
-    __slots__ = ("manager", "created_at")
-
-    def __init__(self, manager: TenantPluginManager, created_at: float) -> None:
-        self.manager = manager
-        self.created_at = created_at
-
-    @staticmethod
-    def expired(created_at: float, ttl: float) -> bool:
-        """Return True when ``ttl > 0`` and *created_at* is older than ``ttl`` seconds."""
-        return ttl > 0 and (time.monotonic() - created_at) > ttl
-
-    def is_expired(self, ttl: float) -> bool:
-        """Return True when ``ttl > 0`` and the entry is older than ``ttl`` seconds."""
-        return self.expired(self.created_at, ttl)
-
-
 class TenantPluginManagerFactory:
     """Standalone factory for context-scoped TenantPluginManager instances.
 
-    TTL caching, Redis mode overrides, invalidate_all/invalidate_team,
+    Redis mode overrides, invalidate_all/invalidate_team,
     on_error support, and optional DB wiring for per-tool plugin bindings.
 
     When *db_factory* is provided, ``get_config_from_db`` reads
@@ -98,7 +79,6 @@ class TenantPluginManagerFactory:
     Call sites should use :func:`make_context_id` to construct them.
     """
 
-    DEFAULT_CACHE_TTL = 300  # seconds; bounds staleness when an invalidation message is missed
     CONTEXT_ID_SEPARATOR = CONTEXT_ID_SEPARATOR
 
     def __init__(
@@ -107,7 +87,6 @@ class TenantPluginManagerFactory:
         timeout: int = 30,
         observability: Optional[ObservabilityProvider] = None,
         hook_policies: Optional[dict[str, HookPayloadPolicy]] = None,
-        cache_ttl: Optional[int] = None,
         db_factory: Optional[Callable[[], Session]] = None,
     ):
         """Initialise the factory, loading base config from *yaml_path*."""
@@ -115,11 +94,10 @@ class TenantPluginManagerFactory:
         self._timeout = timeout
         self._observability = observability
         self._hook_policies = hook_policies
-        self._managers: dict[str, _CachedManager] = {}
+        self._managers: dict[str, TenantPluginManager] = {}
         self._inflight: dict[str, asyncio.Task[TenantPluginManager]] = {}
-        self._aliases: dict[str, tuple[str, float]] = {}  # context_id -> (shared cache key, alias created_at)
+        self._aliases: dict[str, str] = {}  # context_id -> shared cache key
         self._lock = asyncio.Lock()
-        self._cache_ttl = cache_ttl if cache_ttl is not None else self.DEFAULT_CACHE_TTL
         self._db_factory = db_factory
 
     @property
@@ -141,15 +119,12 @@ class TenantPluginManagerFactory:
 
     def _cached_manager(self, context_id: str) -> Optional[TenantPluginManager]:
         """Return the live cached manager for *context_id*, directly or through its alias."""
-        entry = self._managers.get(context_id)
-        if entry is not None and not entry.is_expired(self._cache_ttl):
-            return entry.manager
-        alias = self._aliases.get(context_id)
-        if alias is not None:
-            shared_key, aliased_at = alias
-            shared = self._managers.get(shared_key)
-            if shared is not None and not shared.is_expired(self._cache_ttl) and not _CachedManager.expired(aliased_at, self._cache_ttl):
-                return shared.manager
+        manager = self._managers.get(context_id)
+        if manager is not None:
+            return manager
+        shared_key = self._aliases.get(context_id)
+        if shared_key is not None:
+            return self._managers.get(shared_key)
         return None
 
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
@@ -165,15 +140,6 @@ class TenantPluginManagerFactory:
             if cached is not None:
                 return cached
 
-            entry = self._managers.get(context_id)
-            if entry is not None and entry.is_expired(self._cache_ttl):
-                expired = self._managers.pop(context_id)
-                logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
-                try:
-                    await expired.manager.shutdown()
-                except Exception:
-                    logger.warning("Failed to shutdown expired manager for context_id=%s", context_id, exc_info=True)
-
             inflight = self._inflight.get(context_id)
             if inflight is None:
                 inflight = asyncio.create_task(self._build_manager(context_id))
@@ -184,7 +150,7 @@ class TenantPluginManagerFactory:
             async with self._lock:
                 entry = self._managers.get(context_id)
                 if entry is not None:
-                    return entry.manager
+                    return entry
                 return manager
         finally:
             async with self._lock:
@@ -222,9 +188,9 @@ class TenantPluginManagerFactory:
             if shares_slot:
                 async with self._lock:
                     existing = self._managers.get(cache_key)
-                    if existing is not None and not existing.is_expired(self._cache_ttl):
-                        self._aliases[context_id] = (cache_key, time.monotonic())
-                        return existing.manager
+                    if existing is not None:
+                        self._aliases[context_id] = cache_key
+                        return existing
 
             config = self._merge_tenant_config(self._bindings_to_overrides(bindings))
             config = await self._apply_redis_mode_overrides(config)
@@ -240,12 +206,12 @@ class TenantPluginManagerFactory:
             async with self._lock:
                 existing = self._managers.get(cache_key)
                 if shares_slot:
-                    self._aliases[context_id] = (cache_key, time.monotonic())
-                if shares_slot and existing is not None and not existing.is_expired(self._cache_ttl):
-                    winner, discarded = existing.manager, manager
+                    self._aliases[context_id] = cache_key
+                if shares_slot and existing is not None:
+                    winner, discarded = existing, manager
                 else:
-                    self._managers[cache_key] = _CachedManager(manager=manager, created_at=time.monotonic())
-                    winner, discarded = manager, existing.manager if existing is not None else None
+                    self._managers[cache_key] = manager
+                    winner, discarded = manager, existing
             manager = None
 
             if discarded is not None and discarded is not winner:
@@ -367,7 +333,7 @@ class TenantPluginManagerFactory:
     async def reload_tenant(self, context_id: str) -> TenantPluginManager:
         """Evict and rebuild the cached manager for *context_id*."""
         async with self._lock:
-            old_entry = self._managers.pop(context_id, None)
+            old = self._managers.pop(context_id, None)
             self._aliases.pop(context_id, None)
 
             inflight = self._inflight.get(context_id)
@@ -377,8 +343,6 @@ class TenantPluginManagerFactory:
 
             inflight = asyncio.create_task(self._build_manager(context_id))
             self._inflight[context_id] = inflight
-
-        old = old_entry.manager if old_entry is not None else None
         if old is not None:
             try:
                 await old.shutdown()
@@ -395,7 +359,7 @@ class TenantPluginManagerFactory:
     async def shutdown(self) -> None:
         """Shut down all cached managers and cancel in-flight build tasks."""
         async with self._lock:
-            entries = list(self._managers.values())
+            managers = list(self._managers.values())
             inflight = list(self._inflight.values())
             self._managers.clear()
             self._aliases.clear()
@@ -407,9 +371,9 @@ class TenantPluginManagerFactory:
         if inflight:
             await asyncio.gather(*inflight, return_exceptions=True)
 
-        for entry in entries:
+        for mgr in managers:
             try:
-                await entry.manager.shutdown()
+                await mgr.shutdown()
             except Exception:
                 logger.exception("Failed to shutdown plugin manager")
 

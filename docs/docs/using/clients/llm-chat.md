@@ -200,6 +200,8 @@ The LLM Chat functionality is powered by the following REST API endpoints:
 
 `/llmchat/connect` validates user-supplied server URLs with SSRF protections. Under strict defaults, localhost/private addresses are rejected unless explicitly allowed (for example via `SSRF_ALLOWED_NETWORKS` or local development overrides).
 
+LLM Chat validates the URL again before each tool listing and tool call. With SSRF protection enabled and no egress proxy, it connects only to the addresses that passed validation. It does not follow HTTP redirects. If your MCP server redirects (for example `/mcp` to `/mcp/`), enter the final URL. A URL that resolves to a blocked address returns `503` on connect; during a chat, the tool call returns an error message to the model.
+
 **Response**:
 
 ```json

@@ -6,14 +6,17 @@ SPDX-License-Identifier: Apache-2.0
 Extended tests to achieve >95% coverage for mcp_client_chat_service module.
 """
 
+# Standard
 import importlib.util
 import sys
 import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+# Third-Party
 import pytest
 
+# First-Party
 import mcpgateway.services.mcp_client_chat_service as svc
 
 # --------------------------------------------------------------------------- #
@@ -144,7 +147,7 @@ async def test_mcpclient_connect_disconnect_and_reload(monkeypatch):
     mock_client.connect = AsyncMock()
     mock_client.disconnect = AsyncMock()
     mock_client.list_tools = AsyncMock(return_value=["tool_1"])
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock(return_value=mock_client))
+    monkeypatch.setattr(svc, "MCPToolLoader", MagicMock(return_value=mock_client))
 
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     client = svc.MCPClient(cfg)
@@ -164,7 +167,7 @@ async def test_mcpclient_connect_disconnect_and_reload(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcpchatservice_initialize_and_valid_chat(monkeypatch):
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock())
+    monkeypatch.setattr(svc, "MCPToolLoader", MagicMock())
     chatcfg = svc.MCPClientConfig(
         mcp_server=svc.MCPServerConfig(url="https://x", transport="sse"),
         llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="ak", model="gpt-4")),  # pragma: allowlist secret
@@ -309,6 +312,7 @@ class DummySessionCM:
 
 
 def _patch_gateway_session(monkeypatch, model, provider):
+    # First-Party
     import mcpgateway.db as db_mod
 
     session = DummySession(model, provider, db_mod.LLMModel, db_mod.LLMProvider)
@@ -585,45 +589,48 @@ async def test_mcpclient_disconnect_when_not_connected():
 
 @pytest.mark.asyncio
 async def test_mcpclient_connect_with_headers(monkeypatch):
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse", headers={"x-test": "1"})
     client = svc.MCPClient(cfg)
     captured = {}
 
-    def _client_factory(config):
-        captured.update(config)
+    def _client_factory(connection):
+        captured.update(connection)
         return AsyncMock()
 
-    monkeypatch.setattr(svc, "MultiServerMCPClient", _client_factory)
+    monkeypatch.setattr(svc, "MCPToolLoader", _client_factory)
     await client.connect()
-    assert captured["default"]["headers"] == {"x-test": "1"}
+    assert captured["headers"] == {"x-test": "1"}
 
 
 @pytest.mark.asyncio
 async def test_mcpclient_connect_stdio_args(monkeypatch):
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
     cfg = svc.MCPServerConfig(command="python", args=["server.py"], transport="stdio")
     client = svc.MCPClient(cfg)
     captured = {}
 
-    def _client_factory(config):
-        captured.update(config)
+    def _client_factory(connection):
+        captured.update(connection)
         return AsyncMock()
 
-    monkeypatch.setattr(svc, "MultiServerMCPClient", _client_factory)
+    monkeypatch.setattr(svc, "MCPToolLoader", _client_factory)
     await client.connect()
-    assert captured["default"]["command"] == "python"
-    assert captured["default"]["args"] == ["server.py"]
+    assert captured["command"] == "python"
+    assert captured["args"] == ["server.py"]
 
 
 @pytest.mark.asyncio
 async def test_mcpclient_connect_error(monkeypatch):
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     client = svc.MCPClient(cfg)
 
     def _client_factory(_config):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(svc, "MultiServerMCPClient", _client_factory)
+    monkeypatch.setattr(svc, "MCPToolLoader", _client_factory)
     with pytest.raises(ConnectionError):
         await client.connect()
     assert client.is_connected is False
@@ -892,9 +899,10 @@ async def test_trim_messages_and_clear(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_mcpclient_double_connect(monkeypatch):
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     mock_client = AsyncMock()
     mock_client.connect = AsyncMock()
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock(return_value=mock_client))
+    monkeypatch.setattr(svc, "MCPToolLoader", MagicMock(return_value=mock_client))
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     c = svc.MCPClient(cfg)
     await c.connect()
@@ -906,7 +914,7 @@ async def test_mcpclient_double_connect(monkeypatch):
 async def test_mcpclient_tools_cache(monkeypatch):
     mock_client = AsyncMock()
     mock_client.list_tools = AsyncMock(return_value=["Tool"])
-    monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock(return_value=mock_client))
+    monkeypatch.setattr(svc, "MCPToolLoader", MagicMock(return_value=mock_client))
     cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
     c = svc.MCPClient(cfg)
     c._client = mock_client
@@ -968,8 +976,6 @@ def test_optional_langchain_import_block_executes():
         "langchain_core.language_models",
         "langchain_core.messages",
         "langchain_core.tools",
-        "langchain_mcp_adapters",
-        "langchain_mcp_adapters.client",
         "langchain_ollama",
         "langchain_openai",
         "langgraph",
@@ -988,15 +994,11 @@ def test_optional_langchain_import_block_executes():
         langchain_core_messages.BaseMessage = object
         langchain_core_messages.HumanMessage = object
         langchain_core_tools.BaseTool = object
+        langchain_core_tools.StructuredTool = object
+        langchain_core_tools.ToolException = object
         langchain_core.language_models = langchain_core_language_models
         langchain_core.messages = langchain_core_messages
         langchain_core.tools = langchain_core_tools
-
-        langchain_mcp_adapters = types.ModuleType("langchain_mcp_adapters")
-        langchain_mcp_adapters.__path__ = []
-        langchain_mcp_client = types.ModuleType("langchain_mcp_adapters.client")
-        langchain_mcp_client.MultiServerMCPClient = object
-        langchain_mcp_adapters.client = langchain_mcp_client
 
         langchain_ollama = types.ModuleType("langchain_ollama")
         langchain_ollama.ChatOllama = object
@@ -1020,8 +1022,6 @@ def test_optional_langchain_import_block_executes():
                 "langchain_core.language_models": langchain_core_language_models,
                 "langchain_core.messages": langchain_core_messages,
                 "langchain_core.tools": langchain_core_tools,
-                "langchain_mcp_adapters": langchain_mcp_adapters,
-                "langchain_mcp_adapters.client": langchain_mcp_client,
                 "langchain_ollama": langchain_ollama,
                 "langchain_openai": langchain_openai,
                 "langgraph": langgraph,
@@ -1212,6 +1212,7 @@ def test_anthropic_provider_completion(monkeypatch):
 
 def test_anthropic_provider_not_available():
     """AnthropicProvider raises ImportError when not available."""
+    # First-Party
     import mcpgateway.services.mcp_client_chat_service as m
 
     orig = m._ANTHROPIC_AVAILABLE
@@ -1260,6 +1261,7 @@ def test_bedrock_provider_completion_with_credentials(monkeypatch):
 
 def test_bedrock_provider_not_available():
     """AWSBedrockProvider raises ImportError when not available."""
+    # First-Party
     import mcpgateway.services.mcp_client_chat_service as m
 
     orig = m._BEDROCK_AVAILABLE
@@ -1318,6 +1320,7 @@ def test_watsonx_provider_completion_with_params(monkeypatch):
 
 def test_watsonx_provider_not_available():
     """WatsonxProvider raises ImportError when not available."""
+    # First-Party
     import mcpgateway.services.mcp_client_chat_service as m
 
     orig = m._WATSONX_AVAILABLE

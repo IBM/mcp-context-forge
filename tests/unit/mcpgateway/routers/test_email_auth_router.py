@@ -987,26 +987,25 @@ class TestGetDb:
 
 
 class TestGetClientIpBranches:
-    """Tests for get_client_ip helper covering X-Forwarded-For and X-Real-IP."""
+    """get_client_ip ignores raw forwarding headers and returns the resolved client host."""
 
-    def test_x_forwarded_for(self):
+    def test_ignores_x_forwarded_for(self):
         # First-Party
         from mcpgateway.routers.email_auth import get_client_ip
 
         request = MagicMock()
-        request.headers = {"X-Forwarded-For": "10.0.0.1, 10.0.0.2"}
-        assert get_client_ip(request) == "10.0.0.1"
+        request.headers = {"X-Forwarded-For": "198.51.100.7, 10.0.0.2"}
+        request.client.host = "192.0.2.10"
+        assert get_client_ip(request) == "192.0.2.10"
 
-    def test_x_real_ip(self):
+    def test_ignores_x_real_ip(self):
         # First-Party
         from mcpgateway.routers.email_auth import get_client_ip
 
         request = MagicMock()
-        # MagicMock headers with .get that returns None for X-Forwarded-For, value for X-Real-IP
-        headers_mock = MagicMock()
-        headers_mock.get = lambda key, default=None: {"X-Real-IP": "192.168.1.1"}.get(key, default)
-        request.headers = headers_mock
-        assert get_client_ip(request) == "192.168.1.1"
+        request.headers = {"X-Real-IP": "198.51.100.7"}
+        request.client.host = "192.0.2.10"
+        assert get_client_ip(request) == "192.0.2.10"
 
 
 class TestCreateAccessTokenEdgeCases:
@@ -1610,6 +1609,30 @@ async def test_get_current_user_profile():
     result = await get_current_user_profile(current_user=user)
     assert isinstance(result, EmailUserResponse)
     assert result.email == "user@example.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("a2a_enabled", [True, False])
+async def test_get_current_user_profile_reports_a2a_feature_flag(monkeypatch, a2a_enabled):
+    """/me exposes the A2A flag to any authenticated user, whether or not they are admin."""
+    # First-Party
+    from mcpgateway.routers import email_auth
+    from mcpgateway.routers.email_auth import get_current_user_profile
+
+    monkeypatch.setattr(email_auth.settings, "mcpgateway_a2a_enabled", a2a_enabled)
+    user = MagicMock(spec=EmailUser)
+    user.email = "user@example.com"
+    user.full_name = "User"
+    user.is_admin = False
+    user.is_active = True
+    user.auth_provider = "local"
+    user.created_at = datetime.now(timezone.utc)
+    user.last_login = None
+    user.password_change_required = False
+    user.is_email_verified = MagicMock(return_value=True)
+
+    result = await get_current_user_profile(current_user=user)
+    assert result.features.model_dump() == {"a2a": a2a_enabled}
 
 
 class TestGetAuthEvents:

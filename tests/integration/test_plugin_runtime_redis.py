@@ -350,55 +350,6 @@ class TestGetPluginManagerRedis:
 
 
 # ---------------------------------------------------------------------------
-# TTL cache expiry — real Redis (#1)
-# ---------------------------------------------------------------------------
-
-
-class TestTTLCacheExpiryRedis:
-    """Test TTL-based cache expiry with real Redis and real timer."""
-
-    @pytest.mark.asyncio
-    async def test_cache_expires_after_ttl(self, async_redis, sync_redis):
-        """Manager cache entry expires after TTL and triggers rebuild."""
-        from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
-
-        # Create a factory with very short TTL (1 second)
-        factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)
-        factory._managers = {}
-        factory._inflight = {}
-        factory._aliases = {}
-        factory._lock = asyncio.Lock()
-        factory._cache_ttl = 1  # 1 second TTL
-        factory._base_config = MagicMock()
-        factory._base_config.plugins = []
-        factory._timeout = 30
-        factory._observability = None
-        factory._hook_policies = None
-
-        # Manually cache a manager with current timestamp
-        mock_manager = MagicMock()
-        mock_manager.shutdown = AsyncMock()
-        factory._managers["test::tool"] = (mock_manager, time.monotonic())
-
-        # Immediately — should return cached manager
-        async with factory._lock:
-            entry = factory._managers.get("test::tool")
-            assert entry is not None
-            mgr, created_at = entry
-            assert (time.monotonic() - created_at) < factory._cache_ttl
-
-        # Wait for TTL to expire
-        await asyncio.sleep(1.5)
-
-        # Now the entry should be considered expired
-        async with factory._lock:
-            entry = factory._managers.get("test::tool")
-            if entry is not None:
-                _, created_at = entry
-                assert (time.monotonic() - created_at) > factory._cache_ttl, "Cache should be expired"
-
-
-# ---------------------------------------------------------------------------
 # Pub/sub handler triggers manager eviction (#7, #8)
 # ---------------------------------------------------------------------------
 
@@ -414,8 +365,8 @@ class TestPubSubEvictionRedis:
         mock_factory = AsyncMock()
         mock_factory._lock = asyncio.Lock()
         mock_factory._managers = {
-            "team_a::tool_1": (MagicMock(), time.monotonic()),
-            "team_a::tool_2": (MagicMock(), time.monotonic()),
+            "team_a::tool_1": MagicMock(),
+            "team_a::tool_2": MagicMock(),
         }
         mock_factory.reload_tenant = AsyncMock()
 
@@ -443,9 +394,9 @@ class TestPubSubEvictionRedis:
         mock_factory = AsyncMock()
         mock_factory._lock = asyncio.Lock()
         mock_factory._managers = {
-            "team_a::tool_1": (MagicMock(), time.monotonic()),
-            "team_a::tool_2": (MagicMock(), time.monotonic()),
-            "team_b::tool_1": (MagicMock(), time.monotonic()),
+            "team_a::tool_1": MagicMock(),
+            "team_a::tool_2": MagicMock(),
+            "team_b::tool_1": MagicMock(),
         }
         mock_factory.reload_tenant = AsyncMock()
 

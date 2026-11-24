@@ -1,14 +1,14 @@
 # ADR-043: Rust MCP Runtime Sidecar with Mode-Based Rollout
 
-- *Status:* Accepted
+- *Status:* Superseded by [ADR-058](058-remove-rust-runtime-and-workspace.md)
 - *Date:* 2026-03-14
 - *Deciders:* Platform Team
 - *Supersedes:* ADR-038 (experimental Rust transport backend)
 
-!!! warning "Deprecated as of 2026-06-11; sunsets on 2026-07-07"
-    The Rust MCP runtime sidecar described in this ADR is deprecated. Keep this
-    ADR as historical context; prefer the default Python MCP transport for new
-    deployments. See [Deprecations](../../deprecations.md).
+!!! warning "Superseded: Rust runtime and workspace removed"
+    [EPIC #5817](https://github.com/IBM/mcp-context-forge/issues/5817) removes the
+    Rust runtime and workspace. [ADR-058](058-remove-rust-runtime-and-workspace.md)
+    records the removal decision. The body below is historical.
 
 ## Context
 

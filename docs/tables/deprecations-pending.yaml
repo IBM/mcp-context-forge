@@ -10,25 +10,6 @@
     Spec-deprecated. The gateway compatibility path remains via the control
     plane. No removal date assigned. The dataplane publisher serves only
     `STREAMABLEHTTP` backends.
-- Interface: "Rust MCP runtime sidecar"
-  Deprecated: "2026-06-11"
-  "Earliest removal": "2026-07-07"
-  Migration: >-
-    Python MCP transport. Leave `RUST_MCP_MODE=off` and
-    `EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false`.
-  Status: >-
-    Past earliest removal. Code remains: `crates/mcp_runtime`,
-    `RUST_MCP_MODE`, `EXPERIMENTAL_RUST_MCP_*`, `MCP_RUST_*`, and the
-    transport proxies. Runtime responses carry `Deprecation` and `Sunset`
-    headers.
-- Interface: "Rust A2A runtime sidecar"
-  Deprecated: "2026-06-11"
-  "Earliest removal": "2026-07-07"
-  Migration: >-
-    Python A2A invocation path.
-  Status: >-
-    Past earliest removal. Code remains. The Python A2A protocol adapter is
-    unaffected.
 - Interface: "ValidationMiddleware"
   Deprecated: "2026-06-11"
   "Earliest removal": "2026-07-07"

@@ -7,15 +7,18 @@ Unit tests for DatabaseTokenBackend.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
+import httpx
 import pytest
 
 # First-Party
 from mcpgateway.db import OAuthToken
+from mcpgateway.services.oauth_manager import OAuthError
 from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
 
 
@@ -240,9 +243,6 @@ async def test_two_user_isolation_write_and_read(backend_with_encryption, mock_d
     assert aud_alice != aud_bob, "Alice and Bob share the same learned_aud — isolation failure"
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_store_tokens_new(backend_with_encryption, mock_db):
     """Test storing new OAuth tokens with encryption."""
@@ -301,7 +301,7 @@ async def test_store_tokens_update_existing(backend_with_encryption, mock_db):
         fixed_time = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         mock_dt.now = Mock(return_value=fixed_time)
 
-        result = await backend_with_encryption.store_tokens(
+        await backend_with_encryption.store_tokens(
             gateway_id="gw-1",
             team_id="team-1",
             user_id="oauth-user-1",
@@ -333,7 +333,7 @@ async def test_store_tokens_no_encryption(backend_no_encryption, mock_db):
         fixed_time = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         mock_dt.now = Mock(return_value=fixed_time)
 
-        result = await backend_no_encryption.store_tokens(
+        await backend_no_encryption.store_tokens(
             gateway_id="gw-1",
             team_id="team-1",
             user_id="oauth-user-1",
@@ -397,6 +397,143 @@ async def test_store_tokens_no_expires_in_persists_null(backend_with_encryption,
 
 
 # ---------- get_user_token ----------
+
+
+@pytest.mark.asyncio
+async def test_token_details_return_token_and_metadata(backend_no_encryption, mock_db):
+    """Return metadata from the same stored record as the access token."""
+    record = _make_token_record(access_token="caller-access")
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+
+    result = await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    assert result.access_token == "caller-access"
+    assert result.expires_at == record.expires_at
+    assert result.scopes == record.scopes
+    assert not hasattr(result, "refresh_token")
+    assert mock_db.execute.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_token_details_serialize_concurrent_refreshes(backend_no_encryption, mock_db):
+    """Concurrent requests use the refreshed token after the first refresh."""
+    record = _make_token_record(access_token="old", expires_at=datetime.now(timezone.utc) + timedelta(seconds=30))
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def refresh(token_record, raise_errors=False):
+        started.set()
+        await release.wait()
+        token_record.access_token = "new"
+        token_record.expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        return "new"
+
+    with patch.object(backend_no_encryption, "_refresh_access_token", new=AsyncMock(side_effect=refresh)) as refresh_mock:
+        first = asyncio.create_task(backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com"))
+        await started.wait()
+        second = asyncio.create_task(backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com"))
+        await asyncio.sleep(0)
+        release.set()
+        results = await asyncio.gather(first, second)
+
+    assert [result.access_token for result in results] == ["new", "new"]
+    refresh_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [OAuthError("unavailable"), httpx.ConnectError("unavailable"), ValueError("decryption failed")])
+@pytest.mark.parametrize("expired", [False, True])
+async def test_token_details_keep_valid_token_when_refresh_fails(backend_no_encryption, mock_db, error, expired):
+    """A transient refresh failure preserves the current usable access token."""
+    record = _make_token_record(access_token="still-valid", expires_at=datetime.now(timezone.utc) + timedelta(seconds=-60 if expired else 60))
+    mock_db.execute.return_value.scalar_one_or_none.return_value = record
+    with patch.object(backend_no_encryption, "_refresh_access_token", new=AsyncMock(side_effect=error)):
+        if expired:
+            with pytest.raises(type(error)):
+                await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+            return
+        result = await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    assert result.access_token == "still-valid"
+
+
+@pytest.mark.asyncio
+async def test_token_details_distinguish_missing_and_expired(backend_no_encryption, mock_db):
+    """An expired stored token requires authorization; a missing row returns None."""
+    from mcpgateway.services.token_backends.base import TokenReauthorizationRequired
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    assert await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com") is None
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(refresh_token=None, expires_at=datetime.now(timezone.utc) - timedelta(seconds=60))
+
+    with pytest.raises(TokenReauthorizationRequired):
+        await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+
+@pytest.mark.asyncio
+async def test_token_details_propagate_database_failure(backend_no_encryption, mock_db):
+    """Database failures remain distinct from an absent token."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    mock_db.execute.side_effect = SQLAlchemyError("Database unavailable")
+    with pytest.raises(SQLAlchemyError):
+        await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+
+@pytest.mark.asyncio
+async def test_token_details_return_stored_token_type(backend_no_encryption, mock_db):
+    """The stored token type travels with the access token."""
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(token_type="bearer")
+
+    result = await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    assert result.token_type == "bearer"
+
+
+@pytest.mark.asyncio
+async def test_token_details_reject_non_bearer_token(backend_no_encryption, mock_db):
+    """A stored token that is not a Bearer token requires authorization."""
+    from mcpgateway.services.token_backends.base import TokenReauthorizationRequired
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(token_type="mac")
+
+    with pytest.raises(TokenReauthorizationRequired):
+        await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+
+@pytest.mark.asyncio
+async def test_get_user_token_still_returns_non_bearer_token(backend_no_encryption, mock_db):
+    """The legacy reader keeps its warn-only behavior for a non-Bearer token."""
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(token_type="mac", access_token="legacy-access")
+
+    assert await backend_no_encryption.get_user_token("gw-1", None, "user@test.com") == "legacy-access"
+
+
+@pytest.mark.asyncio
+async def test_token_details_lock_the_token_row(backend_no_encryption, mock_db):
+    """The strict reader locks the row so concurrent workers serialize on it."""
+    from sqlalchemy.dialects import postgresql
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+    await backend_no_encryption.get_user_token_details("gw-1", None, "user@test.com")
+
+    statement = mock_db.execute.call_args.args[0]
+    assert "FOR UPDATE" in str(statement.compile(dialect=postgresql.dialect()))
+    assert statement.get_execution_options()["populate_existing"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_user_token_does_not_lock_the_token_row(backend_no_encryption, mock_db):
+    """The legacy reader stays lock-free."""
+    from sqlalchemy.dialects import postgresql
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+    await backend_no_encryption.get_user_token("gw-1", None, "user@test.com")
+
+    assert "FOR UPDATE" not in str(mock_db.execute.call_args.args[0].compile(dialect=postgresql.dialect()))
 
 
 @pytest.mark.asyncio
@@ -1048,8 +1185,6 @@ async def test_cleanup_expired_tokens_exception(backend_with_encryption, mock_db
         assert result == 0
 
 
-
-
 # ---------- Integration edge cases ----------
 
 
@@ -1062,7 +1197,7 @@ async def test_store_tokens_with_empty_scopes(backend_with_encryption, mock_db):
         url="https://example.com"
     )
 
-    result = await backend_with_encryption.store_tokens(
+    await backend_with_encryption.store_tokens(
         gateway_id="gw-1",
         team_id="team-1",
         user_id="oauth-user-1",
@@ -1182,3 +1317,56 @@ def test_db_backend_encryption_attribute_error():
     with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service", side_effect=AttributeError("no attr")):
         backend = DatabaseTokenBackend(db, settings)
     assert backend.encryption is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seconds,status", [(-1, "expired"), (60, "valid"), (None, "valid")])
+async def test_validation_token_never_refreshes_or_writes(backend_with_encryption, seconds, status):
+    """Read-only validation accepts near-expiry tokens and never refreshes expired tokens."""
+    backend = backend_with_encryption
+    expiry = datetime.now(timezone.utc) + timedelta(seconds=seconds) if seconds is not None else None
+    backend.db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(expires_at=expiry)
+    backend._refresh_access_token = AsyncMock()
+    result = await backend.read_validation_token("gw-1", None, "user@test.com")
+    assert result.status == status
+    assert result.access_token == ("decrypted_value" if status == "valid" else None)
+    backend._refresh_access_token.assert_not_called()
+    backend.db.commit.assert_not_called()
+    backend.db.add.assert_not_called()
+    assert "decrypted_value" not in repr(result)
+    query = backend.db.execute.call_args.args[0]
+    assert set(query.compile().params.values()) == {"gw-1", "user@test.com"}
+
+
+@pytest.mark.asyncio
+async def test_validation_token_does_not_use_another_users_token(backend_with_encryption):
+    """A missing caller-specific row never falls back to another token."""
+    backend = backend_with_encryption
+    backend.db.execute.return_value.scalar_one_or_none.return_value = None
+    assert await backend.read_validation_token("gw-1", None, "other@test.com") is None
+    backend.encryption.decrypt_secret_async.assert_not_called()
+    query = backend.db.execute.call_args.args[0]
+    assert set(query.compile().params.values()) == {"gw-1", "other@test.com"}
+
+
+@pytest.mark.asyncio
+async def test_validation_token_storage_failure_propagates(backend_with_encryption):
+    """Storage failure remains distinct from missing authorization."""
+    backend_with_encryption.db.execute.side_effect = RuntimeError("storage unavailable")
+    with pytest.raises(RuntimeError):
+        await backend_with_encryption.read_validation_token("gw-1", None, "user@test.com")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_type,token", [("Basic", "encrypted_access"), ("Bearer", "")])
+async def test_validation_token_rejects_unusable_credentials(backend_with_encryption, token_type, token):
+    """Invalid token types and empty decrypted tokens cannot authorize validation."""
+    backend = backend_with_encryption
+    backend.db.execute.return_value.scalar_one_or_none.return_value = _make_token_record(token_type=token_type)
+    backend.encryption.decrypt_secret_async.return_value = token
+    result = await backend.read_validation_token("gw-1", None, "user@test.com")
+    assert result.status == "invalid"
+    assert result.access_token is None
+    if token_type == "Basic":
+        backend.encryption.decrypt_secret_async.assert_not_called()
+    backend.db.commit.assert_not_called()

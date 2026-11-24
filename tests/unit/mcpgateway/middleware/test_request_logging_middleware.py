@@ -1388,3 +1388,34 @@ async def test_sampling_exception_defaults_to_logging(dummy_logger, mock_structu
     assert response.status_code == 200
     # Should still have logged despite sampling exception
     assert len(dummy_logger.logged) > 0
+
+
+def test_mask_sensitive_data_masks_sigv4_credentials():
+    data = {
+        "sigv4_config": {"access_key_id": "AKIAEXAMPLE", "secret_access_key": "secret-value", "session_token": "token-value", "region": "us-east-1"},  # pragma: allowlist secret
+        "X-Amz-Signature": "sig-value",
+        "x-amz-credential": "cred-value",
+        "x-amz-security-token": "token-value",
+    }
+    masked = mask_sensitive_data(data)
+    assert masked["sigv4_config"]["secret_access_key"] == "******"
+    assert masked["sigv4_config"]["session_token"] == "******"
+    assert masked["sigv4_config"]["region"] == "us-east-1"
+    assert "secret-value" not in str(masked)
+    assert "token-value" not in str(masked)
+    assert masked["X-Amz-Signature"] == "******"
+    assert masked["x-amz-credential"] == "******"
+    assert masked["x-amz-security-token"] == "******"
+
+
+def test_mask_sensitive_headers_masks_sigv4_headers():
+    masked = mask_sensitive_headers(
+        {
+            "Authorization": "AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/20260101/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=abc",
+            "x-amz-security-token": "token-value",
+            "x-amz-date": "20260101T000000Z",
+        }
+    )
+    assert masked["Authorization"] == "******"
+    assert masked["x-amz-security-token"] == "******"
+    assert masked["x-amz-date"] == "20260101T000000Z"

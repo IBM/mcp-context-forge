@@ -24,7 +24,6 @@ Examples:
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import logging
-import os
 import re
 from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
@@ -32,9 +31,32 @@ import uuid
 # Third-Party
 import jsonschema
 import sqlalchemy as sa
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Column,
+    create_engine,
+    DateTime,
+    event,
+    Float,
+    ForeignKey,
+    func,
+    Index,
+)
+from sqlalchemy import (
+    Integer,
+    JSON,
+    make_url,
+    MetaData,
+    select,
+    String,
+    Table,
+    Text,
+    text,
+    UniqueConstraint,
+)
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -119,7 +141,7 @@ elif backend == "sqlite":
 
 # Check for SQLALCHEMY_ECHO environment variable for query debugging
 # This is useful for N+1 detection and performance analysis
-_sqlalchemy_echo = os.getenv("SQLALCHEMY_ECHO", "").lower() in ("true", "1", "yes")
+_sqlalchemy_echo = settings.sqlalchemy_echo
 
 
 def build_engine() -> Engine:
@@ -1348,6 +1370,9 @@ class Permissions:
     TOOLS_PREVIEW = "tools.preview"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
+    # Tool validation policy permissions
+    VALIDATION_POLICY_MANAGE = "validation_policy.manage"
+
     # Plugin permissions
     PLUGINS_READ = "plugins.read"
 
@@ -1361,6 +1386,7 @@ class Permissions:
     # Gateway permissions
     GATEWAYS_CREATE = "gateways.create"
     GATEWAYS_READ = "gateways.read"
+    GATEWAYS_TOKEN_READ = "gateways.token_read"
     GATEWAYS_UPDATE = "gateways.update"
     GATEWAYS_DELETE = "gateways.delete"
 
@@ -2915,7 +2941,7 @@ class ObservabilityTrace(Base):
     http_status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # User context
-    user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # canonical user_id; phase-1 value = e-mail; name kept for compatibility
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
 
@@ -3318,6 +3344,8 @@ class Tool(Base):
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
     output_schema: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
+    tool_validation_policy: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="CEL expression that overrides the gateway policy for this tool. NULL inherits.")
+    validation_refusal: Mapped[Optional[str]] = mapped_column(Text, nullable=True, comment="Why the validation policy refused this discovered tool. The tool stays disabled while set.")
     extension_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -3345,6 +3373,9 @@ class Tool(Base):
     # Request type and authentication fields
     auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", or None
     auth_value: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    sigv4_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True, comment="AWS SigV4 configuration: access_key_id, region, service, unsigned_payload, encrypted secret_access_key and session_token"
+    )
 
     # custom_name,custom_name_slug, display_name
     custom_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
@@ -4466,6 +4497,8 @@ class Server(Base):
     prompts: Mapped[List["Prompt"]] = relationship("Prompt", secondary=server_prompt_association, back_populates="servers")
     a2a_agents: Mapped[List["A2AAgent"]] = relationship("A2AAgent", secondary=server_a2a_association, back_populates="servers")
 
+    interfaces: Mapped[List["ServerInterface"]] = relationship("ServerInterface", cascade="all, delete-orphan", passive_deletes=True, order_by="ServerInterface.created_at")
+
     # API token relationships
     scoped_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="server")
 
@@ -4683,6 +4716,8 @@ class Server(Base):
     # When enabled, MCP clients can authenticate using OAuth with browser-based IDP SSO
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    oauth_config_approved: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"), nullable=False)
+    oauth_config_generation: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     # Operator-set instructions text. NULL: not set. Empty string: send no instructions.
     instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -4725,6 +4760,9 @@ class Gateway(Base):
     transport: Mapped[str] = mapped_column(String(20), default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
     upstream_instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tool_validation_policy: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, comment="CEL expression that decides whether a tool from this gateway may be registered. NULL inherits the global policy."
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
@@ -4788,7 +4826,7 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param", "sigv4" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
@@ -4799,6 +4837,11 @@ class Gateway(Base):
 
     # OAuth configuration
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # AWS Signature V4 configuration
+    sigv4_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSON, nullable=True, comment="AWS SigV4 configuration: access_key_id, region, service, encrypted secret_access_key and session_token"
+    )
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -4975,8 +5018,10 @@ class A2AAgent(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     endpoint_url: Mapped[str] = mapped_column(String(767), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
+    protocol_binding: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)  # "jsonrpc" or "http_json"; NULL uses the URL heuristic
     protocol_version: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    skills: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True, default=None)
     # Configuration
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
@@ -5039,6 +5084,7 @@ class A2AAgent(Base):
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
     tasks: Mapped[List["A2ATask"]] = relationship("A2ATask", back_populates="agent", cascade="all, delete-orphan")
     auth_config: Mapped[Optional["A2AAgentAuth"]] = relationship("A2AAgentAuth", back_populates="agent", uselist=False, cascade="all, delete-orphan")
+    cards: Mapped[List["A2AAgentCard"]] = relationship("A2AAgentCard", back_populates="agent", cascade="all, delete-orphan", order_by="A2AAgentCard.version")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
         Index("idx_a2a_agents_created_at_id", "created_at", "id"),
@@ -5178,6 +5224,36 @@ class A2ATask(Base):
     def __repr__(self) -> str:
         """Return a string representation of the A2ATask instance."""
         return f"<A2ATask(id='{self.id}', task_id='{self.task_id}', state='{self.state}')>"
+
+
+class A2AAgentCard(Base):
+    """An Agent Card stored as fetched, one row per fetched version.
+
+    The card document stays separate from the deployment settings on ``A2AAgent``.
+    ``kind`` is ``public`` for the card read without credentials and ``extended`` for the
+    authenticated extended card. The highest ``version`` of a kind is its current card.
+    """
+
+    __tablename__ = "a2a_agent_cards"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="public", server_default="public")
+    card: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    detected_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    etag: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    max_age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("a2a_agent_id", "version", name="uq_a2a_agent_cards_agent_version"),)
+
+    agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="cards")
+
+    def __repr__(self) -> str:
+        """Return a string representation of the A2AAgentCard instance."""
+        return f"<A2AAgentCard(id='{self.id}', a2a_agent_id='{self.a2a_agent_id}', version={self.version})>"
 
 
 class ServerTaskMapping(Base):
@@ -5433,6 +5509,7 @@ class OAuthState(Base):
     app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
     redirect_uri: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)  # Pinned at authorize time; reused at callback (RFC 6749 §4.1.3)
     team_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Team ID from JWT for Vault path
+    browser_binding_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -5768,6 +5845,7 @@ class SSOProvider(Base):
         userinfo_url (str): User info endpoint
         issuer (str): OIDC issuer (optional)
         jwks_uri (str): OIDC JWKS endpoint for token signature verification (optional)
+        ca_certificate (str): PEM CA bundle trusted for TLS to this provider (optional)
         trusted_domains (List[str]): Auto-approved email domains
         scope (str): OAuth scope string
         auto_create_users (bool): Auto-create users on first login
@@ -5806,6 +5884,7 @@ class SSOProvider(Base):
     userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
     issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
     jwks_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # OIDC JWKS endpoint for token signature verification
+    ca_certificate: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # PEM CA bundle trusted, in addition to system CAs, for TLS to this provider
     trusted_for_api_auth: Mapped[bool] = mapped_column(Boolean, default=False, nullable=True)  # Accept this IdP's access tokens as API/MCP bearer creds (issue #3567)
     api_audience: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True
@@ -6703,7 +6782,7 @@ class AuditTrail(Base):
     resource_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     # User context
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # canonical user_id; phase-1 value = e-mail; name kept for compatibility
     user_email: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
     team_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
 

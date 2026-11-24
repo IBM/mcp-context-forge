@@ -365,15 +365,18 @@ class TestPassthroughHeadersSpecialAuth:
 class TestComputePassthroughHeadersCached:
     @patch("mcpgateway.utils.passthrough_headers.settings")
     def test_cached_feature_disabled_still_allows_x_upstream_authorization(self, mock_settings):
+        """X-Upstream-Authorization rename works when gateway has no managed credential."""
         mock_settings.max_header_value_length = 4096
         mock_settings.enable_header_passthrough = False
         mock_settings.enable_overwrite_base_headers = False
 
+        # auth_type=None means the gateway does not manage its own upstream credential,
+        # so the rename is allowed.
         result = compute_passthrough_headers_cached(
             request_headers={"X-Upstream-Authorization": "Bearer abc\r\n"},
             base_headers={},
             allowed_headers=[],
-            gateway_auth_type="basic",
+            gateway_auth_type=None,
         )
         assert result["Authorization"] == "Bearer abc"
 

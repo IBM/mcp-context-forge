@@ -8,8 +8,11 @@ Static safety gate for user-supplied jq filters.
 Tool ``jsonpath_filter`` values are compiled and executed by the gateway. jq
 exposes built-ins that read the host process environment (``env``, ``$ENV``),
 read host state (``input_filename``, ``$__loc__``), write to the gateway's
-stderr (``debug``, ``stderr``), and load code from disk (``include``,
-``import``, ``modulemeta``). None of those belong in a response filter.
+stderr (``debug``, ``stderr``), load code from disk (``include``,
+``import``, ``modulemeta``), terminate the process (``halt``, ``halt_error``),
+disclose internal built-ins (``builtins``), and perform unbounded loops or
+recursion (``while``, ``until``, ``recurse``, ``recurse_down``, ``foreach``,
+``repeat``). None of those belong in a response filter.
 
 This module rejects them before compilation. It is deliberately free of
 ``mcpgateway`` imports so that ``schemas.py`` can use it at validation time
@@ -53,6 +56,18 @@ DENIED_JQ_TOKENS = frozenset(
         "include",
         "import",
         "modulemeta",
+        # Process termination.
+        "halt",
+        "halt_error",
+        # Introspection.
+        "builtins",
+        # Unbounded iteration / loops.
+        "while",
+        "until",
+        "recurse",
+        "recurse_down",
+        "foreach",
+        "repeat",
     }
 )
 

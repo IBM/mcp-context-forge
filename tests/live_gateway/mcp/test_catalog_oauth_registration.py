@@ -128,3 +128,23 @@ def test_requires_oauth_config_reflects_pending_authorization(registered_github:
     assert github_entry["is_registered"] is True
     assert github_entry["gateway_id"] == registered_github["server_id"]
     assert github_entry["requires_oauth_config"] is True
+
+
+@pytest.mark.parametrize("credentials", [{}, {"resource": "https://mcp.linear.app/custom"}])
+def test_catalog_resource_preserves_path(credentials: dict) -> None:
+    """Registration preserves the catalog resource path and accepts caller overrides."""
+    response = _register("linear", {"oauth_credentials": credentials})
+    if response.status_code == 404:
+        pytest.skip(f"catalog 'linear' entry unavailable: {response.text}")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["success"] is True, payload
+    server_id = payload["server_id"]
+    try:
+        gateway_response = httpx.get(f"{BASE_URL}/v1/gateways/{server_id}", headers=_headers(), timeout=10.0)
+        assert gateway_response.status_code == 200, gateway_response.text
+        oauth_config = gateway_response.json().get("oauthConfig") or {}
+        assert oauth_config.get("resource") == credentials.get("resource", "https://mcp.linear.app/mcp")
+        assert oauth_config.get("scopes") == ["read", "write"]
+    finally:
+        _delete_gateway(server_id)

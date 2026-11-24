@@ -23,16 +23,15 @@ Requirements:
     - Keycloak with the mcp-gateway realm imported (infra/keycloak/realm-export.json)
     - playwright installed: pip install playwright. pyproject.toml disables the plugin by
       default (-p no:playwright), so pass -p playwright to pytest.
-    - The four positive tests (a trusted token for a group member and for a non-member, on
-      GET /tools and POST /rpc) also need an https Keycloak. verify_oauth_access_token accepts
+    - The positive tests (trusted tokens on GET /tools, POST /rpc and POST /mcp/) also need an https Keycloak. verify_oauth_access_token accepts
       only an https issuer and jwks_uri, and the Keycloak of the sso compose profile is plain
-      http, so these four tests skip against it.
+      http, so these tests skip against it.
 
 Usage, deny paths only (sso compose profile):
     SSO_API_TOKEN_AUTH_ENABLED=true docker compose --profile sso up -d
     SSO_API_TOKEN_AUTH_ENABLED=true pytest -p playwright tests/live_gateway/sso/test_external_idp_rest_auth_e2e.py -v -rs
 
-Usage, all nine tests (https Keycloak in Docker, gateway from this checkout on the host).
+Usage, all tests (https Keycloak in Docker, gateway from this checkout on the host).
 Run from the repository root. Keep the certificate under $HOME: some Docker runtimes on macOS
 (for example Rancher Desktop and Colima) share only $HOME with the container VM by default.
 
@@ -244,9 +243,10 @@ def _get_keycloak_token(email: str, password: str = KEYCLOAK_TEST_PASSWORD) -> s
 class _Response:
     """Status and body read before the request context is disposed (a disposed Playwright response cannot be read)."""
 
-    def __init__(self, status: int, body: str):
+    def __init__(self, status: int, body: str, headers: dict[str, str] | None = None):
         self.status = status
         self._body = body
+        self.headers = headers or {}
 
     def text(self) -> str:
         return self._body
@@ -267,6 +267,57 @@ def _rpc_request(playwright: Playwright, token: str | None, method: str = "tools
     try:
         resp = ctx.post("/rpc", data={"jsonrpc": "2.0", "id": 1, "method": method, "params": {}})
         return _Response(resp.status, resp.text())
+    finally:
+        ctx.dispose()
+
+
+_MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+_MCP_INITIALIZE = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "e2e", "version": "1.0"}},
+}
+
+
+def _mcp_payload(resp: _Response) -> Any:
+    """Decode a /mcp reply, which is plain JSON or an SSE stream whose last `data:` line holds the message."""
+    if resp.headers.get("content-type", "").startswith("text/event-stream"):
+        # Standard
+        import json
+
+        return json.loads([line for line in resp.text().splitlines() if line.startswith("data:")][-1][5:])
+    return resp.json()
+
+
+def _mcp_initialize(playwright: Playwright, token: str | None) -> _Response:
+    """Issue an MCP initialize POST against /mcp/ with an optional bearer token."""
+    headers = dict(_MCP_HEADERS)
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    ctx = playwright.request.new_context(base_url=BASE_URL, extra_http_headers=headers)
+    try:
+        resp = ctx.post("/mcp/", data=_MCP_INITIALIZE)
+        return _Response(resp.status, resp.text(), resp.headers)
+    finally:
+        ctx.dispose()
+
+
+def _mcp_list_tools(playwright: Playwright, token: str) -> _Response:
+    """Run initialize, notifications/initialized and tools/list on one /mcp/ session; return the tools/list reply.
+
+    A failed initialize is returned as is, so the caller sees the real status.
+    """
+    headers = {**_MCP_HEADERS, "Authorization": f"Bearer {token}"}
+    ctx = playwright.request.new_context(base_url=BASE_URL, extra_http_headers=headers)
+    try:
+        init = ctx.post("/mcp/", data=_MCP_INITIALIZE)
+        if init.status != 200:
+            return _Response(init.status, init.text(), init.headers)
+        session_headers = {"mcp-session-id": init.headers["mcp-session-id"]} if "mcp-session-id" in init.headers else {}
+        ctx.post("/mcp/", headers=session_headers, data={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        resp = ctx.post("/mcp/", headers=session_headers, data={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        return _Response(resp.status, resp.text(), resp.headers)
     finally:
         ctx.dispose()
 
@@ -559,3 +610,101 @@ class TestExternalIdPRpcAuth:
         """No Authorization header at all is still a plain 401 on POST /rpc."""
         resp = _rpc_request(playwright, None)
         assert resp.status == 401, f"Unauthenticated POST /rpc should be rejected, got {resp.status}"
+
+
+class TestExternalIdpMcpAuth:
+    """E2E: trusted external-IdP bearer tokens on POST /mcp/ (#7435).
+
+    /mcp authenticates through verify_credentials_cached() like /rpc, so it must accept
+    the same tokens and apply the same team scoping and deny behavior.
+    """
+
+    @staticmethod
+    def _listed_tool_names(resp: _Response) -> set[str]:
+        assert resp.status == 200, f"Trusted external-IdP token should be accepted on /mcp tools/list, got {resp.status}: {resp.text()}"
+        body = _mcp_payload(resp)
+        assert "error" not in body, f"tools/list returned a JSON-RPC error: {body}"
+        return {t["name"] for t in body["result"]["tools"]}
+
+    @skip_no_https_issuer
+    def test_trusted_token_accepted_on_mcp(self, playwright: Playwright, trusted_keycloak_provider: None):
+        """A trusted, correctly-audienced token completes initialize on /mcp/.
+
+        Before the fix, /mcp verified only internal JWTs and answered 401.
+        """
+        token = _get_keycloak_token(KEYCLOAK_GROUP_MEMBER)
+        resp = _mcp_initialize(playwright, token)
+        assert resp.status == 200, f"Trusted external-IdP token should be accepted on /mcp, got {resp.status}: {resp.text()}"
+
+    @skip_no_https_issuer
+    def test_client_credentials_token_accepted_on_mcp(self, playwright: Playwright, trusted_keycloak_provider: None):
+        """A client_credentials (service account) token completes initialize on /mcp/, the case reported in #7435."""
+        # Third-Party
+        import httpx
+
+        kc = httpx.post(
+            KEYCLOAK_TOKEN_URL,
+            data={"grant_type": "client_credentials", "client_id": KEYCLOAK_CLIENT_ID, "client_secret": KEYCLOAK_CLIENT_SECRET},
+            timeout=10,
+        )
+        if kc.status_code != 200:
+            pytest.skip(f"Keycloak refused client_credentials for {KEYCLOAK_CLIENT_ID} ({kc.status_code}); enable service accounts on the client")
+        resp = _mcp_initialize(playwright, kc.json()["access_token"])
+        assert resp.status == 200, f"Trusted client_credentials token should be accepted on /mcp, got {resp.status}: {resp.text()}"
+
+    @skip_no_https_issuer
+    def test_trusted_group_member_lists_scoped_tool_via_mcp(self, playwright: Playwright, trusted_keycloak_provider: None, team_scoped_tool: dict[str, Any]):
+        """A trusted token for a /Viewers member lists the team-scoped tool through /mcp/."""
+        token = _get_keycloak_token(KEYCLOAK_GROUP_MEMBER)
+        names = self._listed_tool_names(_mcp_list_tools(playwright, token))
+        assert team_scoped_tool["name"] in names, "Group member should see the team-scoped tool via /mcp tools/list"
+
+    @skip_no_https_issuer
+    def test_trusted_non_member_does_not_list_scoped_tool_via_mcp(self, playwright: Playwright, trusted_keycloak_provider: None, team_scoped_tool: dict[str, Any]):
+        """A trusted token for a user in no mapped group is authenticated on /mcp/ but does not see the team-scoped tool."""
+        token = _get_keycloak_token(KEYCLOAK_NO_GROUP_USER)
+        names = self._listed_tool_names(_mcp_list_tools(playwright, token))
+        assert team_scoped_tool["name"] not in names, "Non-member should not see a tool scoped to a team they were never mapped into"
+
+    def test_wrong_audience_rejected_on_mcp(self, playwright: Playwright, admin_api: APIRequestContext, trusted_keycloak_provider: None):
+        """A validly-signed, trusted-issuer token whose `aud` doesn't match api_audience is rejected on /mcp/."""
+        resp = admin_api.put(
+            f"/auth/sso/admin/providers/{TRUSTED_PROVIDER_ID}",
+            data={"trusted_for_api_auth": True, "api_audience": "not-a-real-audience"},
+        )
+        assert resp.status == 200, f"Failed to set wrong api_audience: {resp.status} {resp.text()}"
+        try:
+            token = _get_keycloak_token(KEYCLOAK_GROUP_MEMBER)
+            resp = _mcp_initialize(playwright, token)
+            assert resp.status == 401, f"Token with non-matching audience should be rejected on /mcp, got {resp.status}"
+        finally:
+            admin_api.put(
+                f"/auth/sso/admin/providers/{TRUSTED_PROVIDER_ID}",
+                data={"trusted_for_api_auth": True, "api_audience": TRUSTED_API_AUDIENCE},
+            )
+
+    def test_untrusted_issuer_rejected_on_mcp(self, playwright: Playwright, trusted_keycloak_provider: None):
+        """A token from an issuer that is not a trusted provider is rejected on /mcp/, even with a matching audience.
+
+        The SSO admin endpoints are rate limited (10 requests/minute), so this deny path avoids
+        toggling provider settings and uses a locally signed token instead.
+        """
+        # Standard
+        from datetime import datetime, timedelta, timezone
+
+        # Third-Party
+        import jwt
+
+        now = datetime.now(timezone.utc)
+        token = jwt.encode(
+            {"iss": "https://untrusted-idp.example.com", "sub": KEYCLOAK_GROUP_MEMBER, "email": KEYCLOAK_GROUP_MEMBER, "aud": TRUSTED_API_AUDIENCE, "iat": now, "exp": now + timedelta(minutes=5)},
+            "an-untrusted-idp-signing-key-of-sufficient-length",  # pragma: allowlist secret — throwaway key for a token that must be rejected
+            algorithm="HS256",
+        )
+        resp = _mcp_initialize(playwright, token)
+        assert resp.status == 401, f"Token from an untrusted issuer should be rejected on /mcp, got {resp.status}"
+
+    def test_no_token_rejected_on_mcp(self, playwright: Playwright, trusted_keycloak_provider: None):
+        """No Authorization header at all is a plain 401 on /mcp/. This needs MCP_REQUIRE_AUTH=true on the gateway."""
+        resp = _mcp_initialize(playwright, None)
+        assert resp.status == 401, f"Unauthenticated /mcp should be rejected (needs MCP_REQUIRE_AUTH=true), got {resp.status}"

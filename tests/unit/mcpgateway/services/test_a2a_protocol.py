@@ -139,6 +139,33 @@ class TestIsJsonrpcA2AAgent:
     def test_none_values(self):
         assert is_jsonrpc_a2a_agent(None, None) is False
 
+    def test_http_json_binding_ignores_trailing_slash(self):
+        assert is_jsonrpc_a2a_agent("custom", "https://x.com/", "http_json") is False
+
+    def test_http_json_binding_overrides_generic_type(self):
+        assert is_jsonrpc_a2a_agent("generic", "https://x.com", "http_json") is False
+
+    def test_jsonrpc_binding_without_trailing_slash(self):
+        assert is_jsonrpc_a2a_agent("custom", "https://x.com", "jsonrpc") is True
+
+    def test_missing_binding_keeps_url_fallback(self):
+        assert is_jsonrpc_a2a_agent("custom", "https://x.com/", None) is True
+
+
+def test_prepare_invocation_http_json_agent_with_trailing_slash_sends_plain_body():
+    prepared = prepare_a2a_invocation(
+        agent_type="custom",
+        endpoint_url="https://agent.example/a2a/",
+        protocol_version="1.0",
+        parameters={"query": "hi"},
+        interaction_type="query",
+        protocol_binding="http_json",
+    )
+
+    assert "jsonrpc" not in prepared.request_data
+    assert prepared.request_data["interaction_type"] == "query"
+    assert prepared.request_data["parameters"] == {"query": "hi"}
+
 
 # ── normalize_a2a_method ─────────────────────────────────────────────────────
 
@@ -258,6 +285,22 @@ class TestNormalizeTaskState:
     def test_v1_to_legacy(self):
         assert _normalize_task_state("TASK_STATE_COMPLETED", "0.3") == "completed"
         assert _normalize_task_state("TASK_STATE_WORKING", "0.3") == "working"
+
+    def test_v1_to_legacy_uses_hyphenated_v03_values(self):
+        assert _normalize_task_state("TASK_STATE_INPUT_REQUIRED", "0.3") == "input-required"
+        assert _normalize_task_state("TASK_STATE_AUTH_REQUIRED", "0.3") == "auth-required"
+
+    @pytest.mark.parametrize(
+        "legacy_state",
+        ["submitted", "working", "input-required", "completed", "canceled", "failed", "rejected", "auth-required"],
+    )
+    def test_v03_state_round_trips(self, legacy_state):
+        v1_state = _normalize_task_state(legacy_state, "1.0")
+        assert _normalize_task_state(v1_state, "0.3") == legacy_state
+
+    def test_underscore_spellings_still_accepted_on_input(self):
+        assert _normalize_task_state("input_required", "1.0") == "TASK_STATE_INPUT_REQUIRED"
+        assert _normalize_task_state("auth_required", "1.0") == "TASK_STATE_AUTH_REQUIRED"
 
     def test_unknown_state_passes_through(self):
         assert _normalize_task_state("custom_state", "1.0") == "custom_state"

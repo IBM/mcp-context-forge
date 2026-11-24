@@ -43,8 +43,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
       - name: Prepare .env
-        run: cp .env.example .env
+        run: make setup
 
       - name: Validate 'ui' profile compose config
         run: make compose-ui-config-check

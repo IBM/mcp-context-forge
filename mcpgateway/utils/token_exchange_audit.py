@@ -27,7 +27,7 @@ _db_logger = get_structured_logger("token_exchange")
 
 def audit_token_exchange(
     *,
-    user_email: str,
+    user_email: Optional[str],
     gateway_id: str,
     target_audience: Optional[str],
     success: bool,
@@ -37,15 +37,33 @@ def audit_token_exchange(
     latency_ms: Optional[int],
     correlation_id: Optional[str] = None,  # L3: tie the event to the originating request
     request_id: Optional[str] = None,
+    purpose: str = "invocation",
+    mode: str = "impersonation",
 ) -> None:
     """Emit a structured audit event for one token exchange attempt.
 
-    Records principal claims and outcome only — never the subject or exchanged
-    token material. ``correlation_id``/``request_id`` link the event to the
-    request for forensic correlation (Story 3).
+    Records principal claims and outcome only — never the subject, actor, or
+    exchanged token material. ``correlation_id``/``request_id`` link the event to
+    the request for forensic correlation (Story 3).
+
+    Args:
+        user_email: Principal the token was requested for, or ``None`` for a service token.
+        gateway_id: Gateway identifier.
+        target_audience: Requested audience, if any.
+        success: Whether the token request succeeded.
+        expires_in: Lifetime of the issued token in seconds, if known.
+        upstream: Gateway display name or upstream identifier.
+        error: Sanitized failure reason, or ``None`` on success.
+        latency_ms: Token request latency in milliseconds.
+        correlation_id: Correlation identifier of the originating request.
+        request_id: Request identifier of the originating request.
+        purpose: ``invocation`` for a per-user exchange, ``discovery`` for the discovery credential.
+        mode: ``impersonation`` or ``delegation`` (RFC 8693 ``actor_token`` sent).
     """
     event = {
         "event": "token-exchange",
+        "purpose": purpose,
+        "mode": mode,
         "user_email": user_email,
         "gateway_id": gateway_id,
         "target_audience": target_audience,
@@ -59,7 +77,9 @@ def audit_token_exchange(
     }
     if success:
         logger.info(
-            "token-exchange succeeded user=%s gateway=%s audience=%s",
+            "token-exchange succeeded purpose=%s mode=%s user=%s gateway=%s audience=%s",
+            purpose,
+            mode,
             user_email,
             gateway_id,
             target_audience,
@@ -67,7 +87,9 @@ def audit_token_exchange(
         )
     else:
         logger.warning(
-            "token-exchange failed user=%s gateway=%s audience=%s error=%s",
+            "token-exchange failed purpose=%s mode=%s user=%s gateway=%s audience=%s error=%s",
+            purpose,
+            mode,
             user_email,
             gateway_id,
             target_audience,

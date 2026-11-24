@@ -22,7 +22,7 @@ def server_keys(server, pattern):
     return fakeredis.FakeRedis(server=server).keys(pattern)
 
 
-def _trusted_internal_request(path, *, marker="rust", hmac_value=None, ctx="ctx", client="127.0.0.1"):
+def _trusted_internal_request(path, *, marker="affinity", hmac_value=None, ctx="ctx", client="127.0.0.1"):
     """Build a real loopback internal request for trust-gate exemption tests."""
     from starlette.requests import Request
 
@@ -62,7 +62,7 @@ class TestRateLimiterRedisUrl:
 
         from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
-        middleware = RateLimitMiddleware(MagicMock())
+        RateLimitMiddleware(MagicMock())
 
         # Verify dedicated function was called
         mock_get_client.assert_called()
@@ -80,7 +80,7 @@ class TestRateLimiterRedisUrl:
 
         from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
-        middleware = RateLimitMiddleware(MagicMock())
+        RateLimitMiddleware(MagicMock())
 
         # Verify client was obtained (will use main REDIS_URL via _get_sync_redis_client)
         mock_get_client.assert_called()
@@ -212,21 +212,21 @@ class TestRateLimitMiddlewareTiers:
         tier = middleware.get_endpoint_tier("/health")
         assert tier["limit"] == 500
 
-    def test_get_client_ip_forwarded(self, middleware, mock_request):
-        """Test IP extraction from X-Forwarded-For."""
-        mock_request.headers["X-Forwarded-For"] = "10.0.0.1, 192.168.1.1"
+    def test_get_client_ip_ignores_x_forwarded_for(self, middleware, mock_request):
+        """Raw X-Forwarded-For is ignored even with trust_proxy_auth; ProxyHeadersMiddleware owns that."""
+        mock_request.headers["X-Forwarded-For"] = "198.51.100.7, 192.168.1.1"
 
         ip = middleware._get_client_ip(mock_request)
 
-        assert ip == "10.0.0.1"
+        assert ip == "192.168.1.100"
 
-    def test_get_client_ip_x_real(self, middleware, mock_request):
-        """Test IP extraction from X-Real-IP."""
-        mock_request.headers = {"X-Real-IP": "10.0.0.2"}
+    def test_get_client_ip_ignores_x_real_ip(self, middleware, mock_request):
+        """Raw X-Real-IP is ignored even with trust_proxy_auth."""
+        mock_request.headers = {"X-Real-IP": "198.51.100.7"}
 
         ip = middleware._get_client_ip(mock_request)
 
-        assert ip == "10.0.0.2"
+        assert ip == "192.168.1.100"
 
     def test_get_client_ip_fallback(self, middleware, mock_request):
         """Test IP fallback to request.scope client."""
@@ -799,6 +799,10 @@ class TestRateLimitMiddlewareTiers:
 
         assert tier == "HIGH"
 
+    def test_tier_name_high_oauth_token_retrieval(self, middleware):
+        """GET /oauth/token/{gateway_id} is rate limited in the HIGH tier."""
+        assert middleware._get_tier_name("/oauth/token/gateway123", "GET") == "HIGH"
+
     def test_tier_name_critical_sso(self, middleware):
         """Test tier for SSO auth endpoints."""
         tier = middleware._get_tier_name("/auth/sso/login")
@@ -1206,10 +1210,10 @@ class TestRateLimitMiddlewareTiers:
             middleware.redis_client = original_client
             middleware._sliding_window_script = original_script
 
-    def test_get_client_ip_with_both_headers(self, middleware):
-        """Test IP extraction prefers X-Forwarded-For."""
+    def test_get_client_ip_ignores_both_headers(self, middleware):
+        """Test IP extraction uses the resolved scope client, not forwarding headers."""
         mock_request = MagicMock()
-        mock_request.headers = {"X-Forwarded-For": "10.0.0.1", "X-Real-IP": "10.0.0.2"}
+        mock_request.headers = {"X-Forwarded-For": "198.51.100.7", "X-Real-IP": "198.51.100.8"}
         mock_request.scope = {"client": ("10.0.0.1", 12345)}
 
         ip = middleware._get_client_ip(mock_request)
@@ -1690,3 +1694,15 @@ class TestRateLimitMiddlewareTiers:
 
         assert result is False
         assert hasattr(middleware, "_violation_expiry")
+
+
+@pytest.mark.parametrize("path", ["/v1/mcp-servers/test-handshake", "/gateways/test-handshake", "/gateways/test-handshake/"])
+def test_handshake_uses_connection_test_rate_tier(path):
+    """Public aliases share the connection-test rate limit without burst allowance."""
+    from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware, settings
+
+    with patch.object(RateLimitMiddleware, "_init_redis"):
+        middleware = RateLimitMiddleware(MagicMock())
+    tier = middleware.get_endpoint_tier(path, "POST")
+    assert tier["limit"] == settings.rate_limit_critical_rpm
+    assert tier["burst"] == 0

@@ -39,7 +39,8 @@ The product calls a registered upstream an "MCP server" and a virtual server a "
 
 Rules:
 
-- Both spellings work. Responses keep the original key names.
+- Both spellings work in requests.
+- Responses that carry `gatewayId` also carry `mcpServerId` with the same value: tool, resource, and prompt records, the MCP-server refresh result, and the impact preview. Responses keep the original keys. The legacy keys stay until a later release announces their removal.
 - Camel-case bodies accept `mcpServerId` where they accept `gatewayId`.
 - A request that sends both spellings with different values returns `422`.
 - A request that sends both spellings with the same value is accepted.
@@ -364,7 +365,7 @@ When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration rem
 
 When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns. Async `POST`, `PUT`, and `DELETE` gateway lifecycle responses also include a `Retry-After` header derived from `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` so clients have a polling hint.
 
-Gateway registration rejects a normalized federated tool-name collision with `409 Conflict`. Gateway refresh also rejects a newly discovered tool, rename, or visibility change that conflicts in the public, team, or private namespace. An ordinary refresh does not reject an unchanged existing tool because of a historical duplicate row. Review and repair historical duplicate rows with the scope-aware queries in the [changelog](../../../CHANGELOG.md#unreleased).
+Gateway registration rejects a normalized federated tool-name collision with `409 Conflict`. Gateway refresh also rejects a newly discovered tool, rename, or visibility change that conflicts in the public, team, or private namespace. An ordinary refresh does not reject an unchanged existing tool because of a historical duplicate row. Review and repair historical duplicate rows with the scope-aware queries in the [changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md).
 
 **Async create response example (`202 Accepted`):**
 
@@ -1779,6 +1780,28 @@ A2A (Agent-to-Agent) enables integration with external AI agents.
 
 !!! note "A2A Feature Flag"
     A2A features must be enabled via `MCPGATEWAY_A2A_ENABLED=true` in your `.env` file.
+
+### Detect Whether A2A Is Enabled
+
+`GET /auth/email/me` returns a `features` object that any authenticated user can read:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/auth/email/me | jq '.features'
+# { "a2a": false }
+```
+
+When A2A is disabled, every A2A route returns 404 with `{"detail": {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}}`. Unauthenticated callers receive 401.
+
+Status changes from earlier releases:
+
+| Route | Before | After |
+|-------|--------|-------|
+| `/a2a/*`, `/v1/a2a/*` | 404, generic body | 404, typed body |
+| `GET /admin/a2a` | 200, empty page | 404, typed body |
+| `GET /admin/a2a/{agent_id}`, `/admin/a2a/ids`, `/admin/a2a/search`, `/admin/a2a/partial` | 500 or 200 | 404, typed body |
+| `POST /admin/a2a` | 403, `success: false` | 404, typed body |
+| `POST /admin/a2a/{agent_id}/test` | 403, `success: false` | 404, typed body |
+| `POST /metrics/reset`, entity `a2a` | 400, "A2A features are disabled" | 404, typed body |
 
 ### List All A2A Agents
 

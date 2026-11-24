@@ -7,3 +7,13 @@
     `/servers/<server_id>/mcp/` directly. stdio clients use the FastMCP
     bridge: `uvx fastmcp-remote <gateway-url>`. See
     [client configuration](using/clients/index.md).
+- Interface: "Rust MCP and A2A runtime sidecars"
+  Removed: "2026-10-29 (EPIC #5817)"
+  Notes: >-
+    Deprecated on 2026-06-11. Runtime proxies, configuration, crates, build
+    targets, and internal sidecar handlers are removed. Python affinity retains
+    `/_internal/mcp/rpc`, its HMAC, forwarded auth context, and authorization
+    checks. The external Rust dataplane, `DATAPLANE_PUBLISHER`, and
+    `/contextforge-rs` remain separate. See
+    [ADR-058](architecture/adr/058-remove-rust-runtime-and-workspace.md) and the
+    [removal notice](architecture/rust-mcp-runtime.md).

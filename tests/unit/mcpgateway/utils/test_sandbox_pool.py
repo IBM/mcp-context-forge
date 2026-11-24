@@ -89,6 +89,46 @@ def test_pool_serves_the_next_call_after_a_kill(pool):
     assert pool.submit(_echo, "still here") == "still here"
 
 
+def test_shutdown_kills_a_worker_running_a_runaway_call():
+    """Shutdown must not leave a running call behind, nor its caller blocked.
+
+    ``ProcessPoolExecutor.shutdown`` cannot stop a running task, and its own
+    ``atexit`` hook then blocks interpreter exit joining the worker. Reproduces
+    the race: a runaway call is running, shutdown clears the pool, and the
+    caller's own timeout would fire only afterwards.
+    """
+    instance = SandboxPool(name="test-shutdown", workers_fn=lambda: 1, timeout_fn=lambda: 30.0)
+    instance.start()
+    processes = list(instance._current_executor()._processes.values())  # pylint: disable=protected-access
+    assert processes
+    started = threading.Event()
+    errors = []
+
+    def runaway():
+        """Occupy the single worker with a call that never returns on its own."""
+        started.set()
+        try:
+            instance.submit(_runaway, r"^(a+)+$", "a" * 40 + "b")
+        except Exception as exc:  # pylint: disable=broad-except
+            errors.append(exc)
+
+    thread = threading.Thread(target=runaway, daemon=True)
+    thread.start()
+    started.wait(timeout=5)
+    time.sleep(0.5)
+    try:
+        instance.shutdown()
+        deadline = time.monotonic() + 15.0
+        while any(p.is_alive() for p in processes) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not any(p.is_alive() for p in processes), "the runaway worker outlived shutdown"
+        thread.join(timeout=15.0)
+        assert not thread.is_alive(), "the caller stayed blocked on a worker that shutdown killed"
+        assert errors and isinstance(errors[0], SandboxError)
+    finally:
+        instance.shutdown()
+
+
 def test_start_reads_worker_count_once():
     """Starting a pool must not evaluate its worker-count callable twice."""
     calls = 0

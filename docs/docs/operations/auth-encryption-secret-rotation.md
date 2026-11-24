@@ -31,19 +31,19 @@ that safely.
 >   standard steps.
 > - **Hit an error?** Jump to [Troubleshooting](#troubleshooting).
 > - **Need deployment-specific commands?** See the
->   [Appendix](#appendix--deployment-specific-rotation-commands).
+>   [Appendix](#appendix-deployment-specific-rotation-commands).
 
 | Step | Action |
 |------|--------|
-| [0a](#step-0--back-up-the-database-and-securely-store-the-old-key) | Back up the database |
-| [0b](#step-0--back-up-the-database-and-securely-store-the-old-key) | Securely store the old encryption key |
-| [1](#step-1--stop-the-contextforge-gateway) | Stop the ContextForge gateway |
-| [2](#step-2--get-the-latest-code-or-package) | Get the latest code or package |
-| [3](#step-3--generate-a-new-strong-key) | Generate a new strong key |
-| [4](#step-4--dry-run-the-rotation-recommended) | Dry-run the rotation *(recommended)* |
-| [5](#step-5--run-the-live-rotation) | Execute the live data rotation |
-| [6](#step-6--start-the-contextforge-gateway) | Start the ContextForge gateway |
-| [7](#step-6--start-the-contextforge-gateway) | Confirm everything is running as expected |
+| [0a](#step-0-back-up-the-database-and-securely-store-the-old-key) | Back up the database |
+| [0b](#step-0-back-up-the-database-and-securely-store-the-old-key) | Securely store the old encryption key |
+| [1](#step-1-stop-the-contextforge-gateway) | Stop the ContextForge gateway |
+| [2](#step-2-get-the-latest-code-or-package) | Get the latest code or package |
+| [3](#step-3-generate-a-new-strong-key) | Generate a new strong key |
+| [4](#step-4-dry-run-the-rotation-recommended) | Dry-run the rotation *(recommended)* |
+| [5](#step-5-run-the-live-rotation) | Execute the live data rotation |
+| [6](#step-6-start-the-contextforge-gateway) | Start the ContextForge gateway |
+| [7](#step-6-start-the-contextforge-gateway) | Confirm everything is running as expected |
 
 ---
 
@@ -113,7 +113,7 @@ secrets manager, a password vault, or an encrypted note). You will need it as
 `--old-key` in Step 5.
 
 > ⚠️ Once Step 3 sets a new value, the old one is no longer in your config source.
-> See the [Appendix](#appendix--deployment-specific-rotation-commands) for
+> See the [Appendix](#appendix-deployment-specific-rotation-commands) for
 > deployment-specific retrieval commands.
 
 ---
@@ -122,7 +122,7 @@ secrets manager, a password vault, or an encrypted note). You will need it as
 
 Stop the ContextForge gateway using whichever method your deployment uses, leaving
 the database running. No writes must happen to the database between key generation
-and rotation. See the [Appendix](#appendix--deployment-specific-rotation-commands)
+and rotation. See the [Appendix](#appendix-deployment-specific-rotation-commands)
 for deployment-specific commands.
 
 ---
@@ -154,7 +154,7 @@ in `.env.secrets`. For package consumers or environments without `make`, generat
 with Python: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`.
 
 > 📋 Note the new value — you will pass it as `--new-key` in Step 5.
-> See the [Appendix](#appendix--deployment-specific-rotation-commands) for how to
+> See the [Appendix](#appendix-deployment-specific-rotation-commands) for how to
 > set the value in each deployment type.
 
 ---
@@ -249,7 +249,7 @@ ROTATION SUMMARY:
 
 The guardrail now passes (strong key in your config) and all database rows are
 encrypted under the new key. Start the gateway using whichever method your
-deployment uses. See the [Appendix](#appendix--deployment-specific-rotation-commands)
+deployment uses. See the [Appendix](#appendix-deployment-specific-rotation-commands)
 for deployment-specific commands.
 
 ---

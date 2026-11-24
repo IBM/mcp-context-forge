@@ -44,7 +44,7 @@ async def test_successful_request_no_retry(client):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status_code", list(RETRYABLE_STATUS_CODES))
+@pytest.mark.parametrize("status_code", sorted(RETRYABLE_STATUS_CODES))
 async def test_retry_on_retryable_status(client, status_code):
     # Always return retryable error, until max_retries reached
     mock_response = httpx.Response(status_code)
@@ -56,7 +56,7 @@ async def test_retry_on_retryable_status(client, status_code):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status_code", list(NON_RETRYABLE_STATUS_CODES))
+@pytest.mark.parametrize("status_code", sorted(NON_RETRYABLE_STATUS_CODES))
 async def test_no_retry_on_non_retryable_status(client, status_code):
     mock_response = httpx.Response(status_code)
     with patch.object(client.client, "request", new=AsyncMock(return_value=mock_response)) as mock_req:

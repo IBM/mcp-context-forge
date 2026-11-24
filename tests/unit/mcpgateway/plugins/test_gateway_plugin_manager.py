@@ -35,7 +35,6 @@ from mcpgateway.plugins.gateway_plugin_manager import (
     GatewayTenantPluginManagerFactory,
     PluginConfigOverride,
     TenantPluginManagerFactory,
-    _CachedManager,
     make_context_id,
 )
 from mcpgateway.plugins.utils import apply_attribute_mapping
@@ -467,7 +466,7 @@ class TestBuildManager:
     @pytest.fixture
     def factory(self):
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            f = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=60)
+            f = TenantPluginManagerFactory(yaml_path="/fake.yaml")
         return f
 
     @pytest.mark.asyncio
@@ -491,16 +490,17 @@ class TestBuildManager:
 
     @pytest.mark.asyncio
     async def test_build_manager_shuts_down_old_manager(self, factory):
-        """Replacing an expired shared-key manager shuts the old manager down."""
+        """Replacing a manager for a context shuts the old manager down."""
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock()
-        factory._managers["team::*"] = _CachedManager(manager=old_manager, created_at=0)
+        factory._managers["team::tool"] = old_manager
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
 
+        bound = [SimpleNamespaceBinding("tool")]
         with (
-            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=bound),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -511,16 +511,17 @@ class TestBuildManager:
 
     @pytest.mark.asyncio
     async def test_build_manager_old_shutdown_failure_logged(self, factory):
-        """Shutdown failure on the old team-scoped manager is logged but does not raise."""
+        """Shutdown failure on the old manager is logged but does not raise."""
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock(side_effect=RuntimeError("boom"))
-        factory._managers["team::*"] = _CachedManager(manager=old_manager, created_at=0)
+        factory._managers["team::tool"] = old_manager
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
 
+        bound = [SimpleNamespaceBinding("tool")]
         with (
-            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
+            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=bound),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
             patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
         ):
@@ -607,36 +608,16 @@ class TestGetManager:
     @pytest.fixture
     def factory(self):
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            f = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=60)
+            f = TenantPluginManagerFactory(yaml_path="/fake.yaml")
         return f
 
     @pytest.mark.asyncio
     async def test_get_manager_returns_cached(self, factory):
         mock_manager = AsyncMock()
-        import time
 
-        factory._managers["ctx"] = _CachedManager(manager=mock_manager, created_at=time.monotonic())
+        factory._managers["ctx"] = mock_manager
         result = await factory.get_manager("ctx")
         assert result is mock_manager
-
-    @pytest.mark.asyncio
-    async def test_get_manager_rebuilds_expired(self, factory):
-        old_manager = AsyncMock()
-        old_manager.shutdown = AsyncMock()
-        factory._managers["ctx"] = _CachedManager(manager=old_manager, created_at=0)
-
-        new_manager = AsyncMock()
-        new_manager.initialize = AsyncMock()
-
-        with (
-            patch.object(factory, "_fetch_bindings", new_callable=AsyncMock, return_value=[]),
-            patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=lambda c: c),
-            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=new_manager),
-        ):
-            result = await factory.get_manager("ctx")
-        assert result is new_manager
-        old_manager.shutdown.assert_awaited_once()
-
 
     @pytest.mark.asyncio
     async def test_get_manager_race_returns_cached_entry(self, factory):
@@ -644,14 +625,23 @@ class TestGetManager:
         cached_manager = AsyncMock()
 
         async def build_and_inject(context_id):
-            import time
-            factory._managers[context_id] = _CachedManager(manager=cached_manager, created_at=time.monotonic())
+            factory._managers[context_id] = cached_manager
             return mock_manager
 
         with patch.object(factory, "_build_manager", side_effect=build_and_inject):
             result = await factory.get_manager("race_ctx")
 
         assert result is cached_manager
+
+    @pytest.mark.asyncio
+    async def test_get_manager_never_expires_over_time(self, factory):
+        """Ensure cached manager persists indefinitely across time advances."""
+        mock_manager = AsyncMock()
+        factory._managers["ctx"] = mock_manager
+
+        with patch("time.monotonic", return_value=time.monotonic() + 1_000_000.0):
+            result = await factory.get_manager("ctx")
+            assert result is mock_manager
 
 
 # ---------------------------------------------------------------------------
@@ -663,14 +653,14 @@ class TestReloadTenant:
     @pytest.fixture
     def factory(self):
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            f = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=60)
+            f = TenantPluginManagerFactory(yaml_path="/fake.yaml")
         return f
 
     @pytest.mark.asyncio
     async def test_reload_evicts_and_rebuilds(self, factory):
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock()
-        factory._managers["ctx"] = _CachedManager(manager=old_manager, created_at=0)
+        factory._managers["ctx"] = old_manager
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
@@ -707,7 +697,7 @@ class TestReloadTenant:
     async def test_reload_old_shutdown_failure_logged(self, factory):
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock(side_effect=RuntimeError("shutdown boom"))
-        factory._managers["ctx"] = _CachedManager(manager=old_manager, created_at=0)
+        factory._managers["ctx"] = old_manager
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
@@ -731,7 +721,7 @@ class TestShutdown:
     @pytest.fixture
     def factory(self):
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            f = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=60)
+            f = TenantPluginManagerFactory(yaml_path="/fake.yaml")
         return f
 
     @pytest.mark.asyncio
@@ -740,8 +730,8 @@ class TestShutdown:
         m1.shutdown = AsyncMock()
         m2 = AsyncMock()
         m2.shutdown = AsyncMock()
-        factory._managers["a"] = _CachedManager(manager=m1, created_at=0)
-        factory._managers["b"] = _CachedManager(manager=m2, created_at=0)
+        factory._managers["a"] = m1
+        factory._managers["b"] = m2
 
         await factory.shutdown()
 
@@ -763,7 +753,7 @@ class TestShutdown:
     async def test_shutdown_manager_failure_logged(self, factory):
         m = AsyncMock()
         m.shutdown = AsyncMock(side_effect=RuntimeError("shutdown fail"))
-        factory._managers["a"] = _CachedManager(manager=m, created_at=0)
+        factory._managers["a"] = m
 
         await factory.shutdown()
         assert len(factory._managers) == 0
@@ -947,27 +937,6 @@ class TestApplyAttributeMapping:
         assert result is not attrs
 
 
-# ---------------------------------------------------------------------------
-# _CachedManager.is_expired contract
-# ---------------------------------------------------------------------------
-
-
-class TestCachedManagerExpiry:
-    def test_ttl_zero_never_expires(self):
-        entry = _CachedManager(manager=MagicMock(), created_at=0.0)
-        assert entry.is_expired(0) is False
-
-    def test_ttl_positive_expires_after_deadline(self):
-        entry = _CachedManager(manager=MagicMock(), created_at=0.0)
-        with patch("time.monotonic", return_value=31.0):
-            assert entry.is_expired(30) is True
-
-    def test_ttl_positive_not_expired_before_deadline(self):
-        import time as _time
-
-        now = _time.monotonic()
-        entry = _CachedManager(manager=MagicMock(), created_at=now)
-        assert entry.is_expired(9999) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1023,9 +992,9 @@ class TestInvalidateTeamPrefixSafety:
 
         mock_mgr = MagicMock()
         factory._managers = {
-            "t::tool_a": _CachedManager(manager=mock_mgr, created_at=0.0),
-            "t2::tool_b": _CachedManager(manager=mock_mgr, created_at=0.0),
-            "t::tool_c": _CachedManager(manager=mock_mgr, created_at=0.0),
+            "t::tool_a": mock_mgr,
+            "t2::tool_b": mock_mgr,
+            "t::tool_c": mock_mgr,
         }
         factory.reload_tenant = AsyncMock()
 
@@ -1042,50 +1011,6 @@ class TestInvalidateTeamPrefixSafety:
 # ---------------------------------------------------------------------------
 
 
-class TestDefaultCacheTTL:
-    """The default TTL bounds staleness; 0 stays available to disable expiry."""
-
-    def test_default_cache_ttl_is_bounded(self):
-        assert TenantPluginManagerFactory.DEFAULT_CACHE_TTL == 300
-
-    def test_factory_uses_default_ttl(self):
-        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            f = TenantPluginManagerFactory(yaml_path="/fake.yaml")
-        assert f._cache_ttl == 300
-
-    @pytest.mark.asyncio
-    async def test_zero_ttl_cached_entry_never_expires(self):
-        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            f = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=0)
-        mock_manager = AsyncMock()
-        f._managers["ctx"] = _CachedManager(manager=mock_manager, created_at=0.0)
-
-        with patch.object(f, "_build_manager", new_callable=AsyncMock) as build:
-            result = await f.get_manager("ctx")
-
-        assert result is mock_manager
-        build.assert_not_awaited()
-
-
-_CFG_JWT = "T3stJwtS3cr3t!XyZ#9kPqR@vW2mN8hL"  # pragma: allowlist secret
-_CFG_ENC = "T3stEncS3cr3t!XyZ#9kPqR@vW2mN8hL"  # pragma: allowlist secret
-
-
-class TestPluginManagerCacheTTLConfigKnob:
-    """PLUGIN_MANAGER_CACHE_TTL defaults to 300 in Settings."""
-
-    @staticmethod
-    def _settings(**kwargs):
-        from mcpgateway.config import Settings
-
-        return Settings(jwt_secret_key=_CFG_JWT, auth_encryption_secret=_CFG_ENC, basic_auth_password="TestPassword1!", _env_file=None, **kwargs)  # pragma: allowlist secret
-
-    def test_default_is_300(self):
-        assert self._settings().plugin_manager_cache_ttl == 300
-
-    def test_accepts_zero_and_positive_values(self):
-        assert self._settings(plugin_manager_cache_ttl=0).plugin_manager_cache_ttl == 0
-        assert self._settings(plugin_manager_cache_ttl=600).plugin_manager_cache_ttl == 600
 
 
 # ---------------------------------------------------------------------------
@@ -1107,7 +1032,7 @@ class TestSharedTeamManager:
     @pytest.fixture
     def factory(self):
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            return TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=0)
+            return TenantPluginManagerFactory(yaml_path="/fake.yaml")
 
     @staticmethod
     def _patch_build(factory, bindings_by_context, built):
@@ -1188,36 +1113,17 @@ class TestSharedTeamManager:
         survivors = [m for m, _ in built if not m.shutdown.await_count]
         assert len(survivors) == 1
         assert m1 is m2 is survivors[0]
-        assert factory._managers["t::*"].manager is survivors[0]
+        assert factory._managers["t::*"] is survivors[0]
 
     @pytest.mark.asyncio
-    async def test_expired_bound_tool_rebuilds_with_bindings(self):
+    async def test_alias_returns_shared_manager(self):
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=60)
-        built = []
-        bound = [SimpleNamespaceBinding("tool_b")]
-        patches = self._patch_build(factory, {"t::tool_b": bound}, built)
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
         shared_manager = AsyncMock()
-        factory._managers["t::*"] = _CachedManager(manager=shared_manager, created_at=time.monotonic())
-        expired_manager = AsyncMock()
-        factory._managers["t::tool_b"] = _CachedManager(manager=expired_manager, created_at=0)
+        factory._managers["t::*"] = shared_manager
+        factory._aliases["t::tool_a"] = "t::*"
 
-        with patches[0], patches[1], patches[2], patches[3], patch.object(factory, "_bindings_to_overrides", side_effect=_overrides_for):
-            result = await factory.get_manager("t::tool_b")
-
-        assert result is not shared_manager
-        assert [config for _, config in built] == ["MERGED"]
-        expired_manager.shutdown.assert_awaited_once()
-        shared_manager.shutdown.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_alias_expires_with_ttl(self):
-        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
-            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml", cache_ttl=60)
-        factory._managers["t::*"] = _CachedManager(manager=AsyncMock(), created_at=time.monotonic())
-        factory._aliases["t::tool_a"] = ("t::*", 0)
-
-        assert factory._cached_manager("t::tool_a") is None
+        assert factory._cached_manager("t::tool_a") is shared_manager
 
     @pytest.mark.asyncio
     async def test_tool_named_like_old_sentinel_gets_own_slot(self, factory):
@@ -1230,7 +1136,7 @@ class TestSharedTeamManager:
             unbound = await factory.get_manager("t::tool_a")
 
         assert [config for _, config in built] == ["MERGED", "BASE"]
-        assert factory._managers["t::*"].manager is unbound
+        assert factory._managers["t::*"] is unbound
 
     @pytest.mark.asyncio
     async def test_invalidate_team_rebuilds_shared_slot(self, factory):
@@ -1280,8 +1186,13 @@ def _overrides_for(bindings):
 class SimpleNamespaceBinding:
     """Minimal stand-in for a ToolPluginBinding row."""
 
-    def __init__(self, tool_name):
+    def __init__(self, tool_name, plugin_id="OutputLengthGuardPlugin", mode=None, priority=10, config=None, on_error=None):
         self.tool_name = tool_name
+        self.plugin_id = plugin_id
+        self.mode = mode
+        self.priority = priority
+        self.config = config or {}
+        self.on_error = on_error
 
 
 class TestSharedTeamManagerWithRealBindings:

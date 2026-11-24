@@ -143,7 +143,7 @@ class TestAgentsEntity:
         assert input_type == "url", "Endpoint URL field should be URL input type"
 
     def test_oauth_grant_type_values(self, agents_page: AgentsPage):
-        """Test OAuth grant type enum values."""
+        """Test that A2A agents offer only the client_credentials OAuth grant type."""
         # Navigate to agents tab
         agents_page.navigate_to_agents_tab()
 
@@ -159,10 +159,7 @@ class TestAgentsEntity:
             if value:
                 option_values.append(value)
 
-        # Verify expected grant types
-        expected_grant_types = ["authorization_code", "client_credentials", "password"]
-        for expected_grant in expected_grant_types:
-            assert expected_grant in option_values, f"OAuth grant type '{expected_grant}' should be available"
+        assert option_values == ["client_credentials"], f"A2A agents should offer only client_credentials, got {option_values}"
 
     def test_tags_field_format(self, agents_page: AgentsPage):
         """Test that tags field accepts comma-separated values."""

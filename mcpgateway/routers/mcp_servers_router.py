@@ -87,6 +87,9 @@ async def check_mcp_server_connectivity(
     Returns:
         GatewayTestResponse: The response from the gateway, including status code, latency, and body.
 
+    Raises:
+        HTTPException: 403 if the team is out of token scope or the caller may not use the stored credential.
+
     Examples:
         >>> callable(check_mcp_server_connectivity)
         True
@@ -101,10 +104,23 @@ async def check_mcp_server_connectivity(
         if token_teams is not None and team_id not in token_teams:
             raise HTTPException(status_code=403, detail="Access to requested team is not permitted")
 
-    return await test_gateway_connectivity(request, team_id, user, db)
+    try:
+        return await test_gateway_connectivity(request, team_id, user, db)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
-@router.post("/test-handshake", response_model=GatewayHandshakeResponse)
+@router.post(
+    "/test-handshake",
+    response_model=GatewayHandshakeResponse,
+    responses={
+        200: {"description": "Handshake or validation outcome. Upstream failures return success=false with safe stage results."},
+        401: {"description": "Authentication required."},
+        403: {"description": "Gateway read permission required; post_authorization also requires gateway update permission."},
+        422: {"description": "Invalid input, missing exact gateway ID, or incompatible post-authorization header overrides."},
+        429: {"description": "Per-user connection-test rate limit exceeded."},
+    },
+)
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def check_mcp_server_handshake(
     request: GatewayHandshakeRequest,
@@ -129,6 +145,10 @@ async def check_mcp_server_handshake(
         GatewayHandshakeResponse: The handshake outcome, including negotiation path,
             server identity, capabilities, component counts, and failure classification.
 
+    Raises:
+        HTTPException: 403 if the team is out of scope, or the request shapes the path or headers
+            while carrying a stored credential the caller may not use.
+
     Examples:
         >>> callable(check_mcp_server_handshake)
         True
@@ -143,4 +163,7 @@ async def check_mcp_server_handshake(
         if token_teams is not None and team_id not in token_teams:
             raise HTTPException(status_code=403, detail="Access to requested team is not permitted")
 
-    return await test_gateway_handshake(request, team_id, user, db)
+    try:
+        return await test_gateway_handshake(request, team_id, user, db)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc

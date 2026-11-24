@@ -4,7 +4,7 @@ nav:
   - Roadmap: roadmap.md
   - Release History: releases.md
   - Performance Architecture: performance-architecture.md
-  - Rust MCP Runtime: rust-mcp-runtime.md
+  - Rust MCP Runtime (Removed): rust-mcp-runtime.md
   - MCP Apps: mcp-apps.md
   - Modular Runtime Architecture: modular-design.md
   - Modular Runtime Specification: modular-runtime

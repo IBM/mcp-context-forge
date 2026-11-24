@@ -34,6 +34,10 @@ _DEFAULT_REDACT_FIELDS = ",".join(
         "session_id",
         "sessionid",
         "session_token",
+        "secret_access_key",
+        "x-amz-security-token",
+        "x-amz-signature",
+        "x-amz-credential",
     ]
 )
 _DEFAULT_MAX_PAYLOAD_SIZE = 32768

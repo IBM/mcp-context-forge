@@ -1,5 +1,17 @@
 # Dynamic Client Registration (DCR)
 
+!!! warning "DCR is deprecated in favor of Client ID Metadata Documents (CIMD)"
+    MCP 2026-07-28 deprecates RFC 7591 Dynamic Client Registration. ContextForge now prefers CIMD: when the authorization server metadata sets `client_id_metadata_document_supported: true`, the gateway uses its published document at `{APP_DOMAIN}{APP_ROOT_PATH}/oauth/client-metadata.json` as the `client_id` and does not register. DCR runs only as a fallback, and the gateway logs a deprecation warning when it does.
+
+    ```bash
+    CIMD_ENABLED=true                # Prefer CIMD over DCR (default: true)
+    CIMD_CLIENT_NAME=ContextForge    # client_name in the published document
+    ```
+
+    **Upgrade note:** `CIMD_ENABLED` defaults to `true`. After you upgrade, a gateway with an issuer, no `client_id`, and no stored DCR registration uses CIMD instead of DCR when the authorization server advertises support. Gateways with configured credentials or an existing DCR registration are unchanged. Set `CIMD_ENABLED=false` to keep DCR, or set `oauth_config.registration_method` to `dcr` on a single gateway.
+
+    CIMD requires an `https://` `APP_DOMAIN`. `WELL_KNOWN_ENABLED` does not affect it. The document is public, holds no secrets, and declares a public client (`token_endpoint_auth_method: none`) that uses PKCE. `DCR_ALLOWED_ISSUERS` applies to both methods.
+
 Dynamic Client Registration (DCR) is an OAuth 2.0 extension that enables automatic client registration without manual configuration. This guide explains how to configure and use DCR with ContextForge for streamable HTTP servers.
 
 ## Overview

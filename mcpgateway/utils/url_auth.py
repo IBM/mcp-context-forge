@@ -37,6 +37,9 @@ STATIC_SENSITIVE_PARAMS: FrozenSet[str] = frozenset(
         "credentials",
         "tavilyapikey",  # Tavily-specific
         "tavilyApiKey",  # Tavily-specific (camelCase)
+        "x-amz-signature",  # AWS SigV4 presigned URL
+        "x-amz-credential",  # AWS SigV4 presigned URL
+        "x-amz-security-token",  # AWS SigV4 presigned URL
     }
 )
 
@@ -153,6 +156,14 @@ def sanitize_url_for_logging(
 # Regex to match URLs in text (http:// or https://)
 _URL_PATTERN = re.compile(r"https?://[^\s<>\"']+")
 
+_SIGV4_PARAMETER = r"[A-Za-z][\w-]*=(?:\"[^\"]*\"|[^\s,'\"]*)"
+
+# Regex to match a SigV4 Authorization header value: the algorithm name and its Name=value parameters in any order, quoted or not
+_SIGV4_AUTHORIZATION_PATTERN = re.compile(rf"AWS4-HMAC-SHA256\s+{_SIGV4_PARAMETER}(?:[,\s]+{_SIGV4_PARAMETER})*", re.IGNORECASE)
+
+# Regex to match a SigV4 key and value outside a URL, as ``key=value``, ``key: value`` or a quoted dict or JSON pair
+_SIGV4_KEY_VALUE_PATTERN = re.compile(r"(\bx[-_]amz[-_](?:signature|credential|security[-_]token)['\"]?\s*[=:]\s*['\"]?)[^\s'\",;&}\]]+", re.IGNORECASE)
+
 
 def sanitize_exception_message(
     message: str,
@@ -182,9 +193,20 @@ def sanitize_exception_message(
         ...     "Error connecting to https://api.example.com?api_key=abc&q=test"
         ... )
         'Error connecting to https://api.example.com?api_key=REDACTED&q=test'
+
+        >>> sanitize_exception_message(
+        ...     "Authorization: AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE0000000/20260101/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=" + "a" * 64
+        ... )
+        'Authorization: AWS4-HMAC-SHA256 REDACTED'
+
+        >>> sanitize_exception_message("{'x-amz-signature': '" + "a" * 64 + "', 'host': 'example.com'}")
+        "{'x-amz-signature': 'REDACTED', 'host': 'example.com'}"
     """
     if not message:
         return message
+
+    message = _SIGV4_AUTHORIZATION_PATTERN.sub("AWS4-HMAC-SHA256 REDACTED", message)
+    message = _SIGV4_KEY_VALUE_PATTERN.sub(r"\1REDACTED", message)
 
     def replace_url(match: re.Match) -> str:
         """Replace a matched URL with its sanitized version.

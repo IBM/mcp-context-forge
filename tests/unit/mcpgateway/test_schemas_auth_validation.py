@@ -113,7 +113,7 @@ def test_a2a_agent_create_auth_basic():
         endpoint_url="https://example.com",
         auth_type="basic",
         auth_username="user",
-        auth_password="pass",
+        auth_password="pass",  # HashiCorpIgnore
     )
     decoded = decode_auth(agent.auth_value)
     assert decoded["Authorization"].startswith("Basic ")
@@ -275,7 +275,7 @@ def test_public_registration_request_valid():
     """Test PublicRegistrationRequest with valid data."""
     request = PublicRegistrationRequest(
         email="test@example.com",
-        password="SecurePass123!",  # pragma: allowlist secret
+        password="SecurePass123!",  # pragma: allowlist secret  # HashiCorpIgnore
         full_name="Test User",
     )
     assert request.email == "test@example.com"
@@ -297,7 +297,7 @@ def test_public_registration_request_password_too_short():
     with pytest.raises(ValueError, match="at least 8 characters"):
         PublicRegistrationRequest(
             email="test@example.com",
-            password="Short1!",  # pragma: allowlist secret
+            password="Short1!",  # pragma: allowlist secret  # HashiCorpIgnore
             full_name="Test User",
         )
 
@@ -307,7 +307,7 @@ def test_public_registration_request_invalid_email():
     with pytest.raises(ValueError):
         PublicRegistrationRequest(
             email="not-an-email",
-            password="SecurePass123!",  # pragma: allowlist secret
+            password="SecurePass123!",  # pragma: allowlist secret  # HashiCorpIgnore
             full_name="Test User",
         )
 
@@ -317,21 +317,21 @@ def test_public_registration_request_rejects_admin_fields():
     with pytest.raises(ValueError):
         PublicRegistrationRequest(
             email="test@example.com",
-            password="SecurePass123!",  # pragma: allowlist secret
+            password="SecurePass123!",  # pragma: allowlist secret  # HashiCorpIgnore
             full_name="Test User",
             is_admin=True,
         )
     with pytest.raises(ValueError):
         PublicRegistrationRequest(
             email="test@example.com",
-            password="SecurePass123!",  # pragma: allowlist secret
+            password="SecurePass123!",  # pragma: allowlist secret  # HashiCorpIgnore
             full_name="Test User",
             is_active=False,
         )
     with pytest.raises(ValueError):
         PublicRegistrationRequest(
             email="test@example.com",
-            password="SecurePass123!",  # pragma: allowlist secret
+            password="SecurePass123!",  # pragma: allowlist secret  # HashiCorpIgnore
             full_name="Test User",
             password_change_required=True,
         )
@@ -346,7 +346,7 @@ def test_admin_create_user_request_valid():
     """Test AdminCreateUserRequest with password provided."""
     request = AdminCreateUserRequest(
         email="test@example.com",
-        password="SecurePass123!",  # pragma: allowlist secret
+        password="SecurePass123!",  # pragma: allowlist secret  # HashiCorpIgnore
         full_name="Test User",
     )
     assert request.email == "test@example.com"
@@ -370,14 +370,14 @@ def test_admin_create_user_request_with_all_fields():
     """Test AdminCreateUserRequest with all fields set."""
     request = AdminCreateUserRequest(
         email="complete@example.com",
-        password="CompletePass123!",  # pragma: allowlist secret
+        password="CompletePass123!",  # pragma: allowlist secret  # HashiCorpIgnore
         full_name="Complete User",
         is_admin=True,
         is_active=False,
         password_change_required=True,
     )
     assert request.email == "complete@example.com"
-    assert request.password == "CompletePass123!"
+    assert request.password == "CompletePass123!"  # pragma: allowlist secret # HashiCorpIgnore
     assert request.full_name == "Complete User"
     assert request.is_admin is True
     assert request.is_active is False
@@ -389,7 +389,7 @@ def test_admin_create_user_request_password_too_short():
     with pytest.raises(ValueError, match="at least 8 characters"):
         AdminCreateUserRequest(
             email="test@example.com",
-            password="Short1!",  # pragma: allowlist secret
+            password="Short1!",  # pragma: allowlist secret  # HashiCorpIgnore
             full_name="Test User",
         )
 
@@ -399,7 +399,7 @@ def test_admin_create_user_request_invalid_email():
     with pytest.raises(ValueError):
         AdminCreateUserRequest(
             email="not-an-email",
-            password="SecurePass123!",  # pragma: allowlist secret
+            password="SecurePass123!",  # pragma: allowlist secret  # HashiCorpIgnore
             full_name="Test User",
         )
 
@@ -408,7 +408,7 @@ def test_admin_create_user_request_with_is_active_false():
     """Test AdminCreateUserRequest with is_active=False."""
     request = AdminCreateUserRequest(
         email="inactive@example.com",
-        password="SecurePass123!",  # pragma: allowlist secret
+        password="SecurePass123!",  # pragma: allowlist secret  # HashiCorpIgnore
         full_name="Inactive User",
         is_active=False,
     )
@@ -419,7 +419,7 @@ def test_admin_create_user_request_with_pcr_true():
     """Test AdminCreateUserRequest with password_change_required=True."""
     request = AdminCreateUserRequest(
         email="pwchange@example.com",
-        password="TempPass123!",  # pragma: allowlist secret
+        password="TempPass123!",  # pragma: allowlist secret  # HashiCorpIgnore
         full_name="PCR User",
         password_change_required=True,
     )
@@ -938,13 +938,13 @@ def test_gateway_create_bearer_token_strips_invisible_char():
 def test_gateway_create_bearer_token_leaves_other_non_ascii_untouched():
     """Non-format non-ASCII content (e.g. accented Latin) is legitimate and must not be
     altered or rejected -- only invisible format characters are stripped."""
-    gateway = GatewayCreate(name="gw", url="https://example.com", auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret
+    gateway = GatewayCreate(name="gw", url="https://example.com", auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret  # HashiCorpIgnore
     decoded = decode_auth(gateway.auth_value)
     assert decoded["Authorization"] == "Bearer café-token"
 
 
 def test_gateway_create_basic_auth_leaves_other_non_ascii_untouched():
-    gateway = GatewayCreate(name="gw", url="https://example.com", auth_type="basic", auth_username="café", auth_password="café")  # pragma: allowlist secret
+    gateway = GatewayCreate(name="gw", url="https://example.com", auth_type="basic", auth_username="café", auth_password="café")  # pragma: allowlist secret  # HashiCorpIgnore
     decoded = decode_auth(gateway.auth_value)
     assert decoded["Authorization"].startswith("Basic ")
 
@@ -987,7 +987,7 @@ def test_gateway_create_authheaders_list_value_leaves_other_non_ascii_untouched(
 
 
 def test_gateway_update_bearer_token_leaves_other_non_ascii_untouched():
-    gateway = GatewayUpdate(auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret
+    gateway = GatewayUpdate(auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret  # HashiCorpIgnore
     decoded = decode_auth(gateway.auth_value)
     assert decoded["Authorization"] == "Bearer café-token"
 
@@ -1018,7 +1018,7 @@ def test_tool_create_authheaders_legacy_value_leaves_other_non_ascii_untouched()
 
 
 def test_tool_update_bearer_token_leaves_other_non_ascii_untouched():
-    tool = ToolUpdate(auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret
+    tool = ToolUpdate(auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret  # HashiCorpIgnore
     decoded = decode_auth(tool.auth.auth_value)
     assert decoded["Authorization"] == "Bearer café-token"
 
@@ -1030,7 +1030,7 @@ def _rsa_private_key_stub():
     # Opaque placeholder: schema validation checks structural presence of the
     # key, not its format. Real keys are generated ephemerally in the runtime
     # unit tests.
-    return "dummy-private-key-material"  # pragma: allowlist secret
+    return "dummy-private-key-material"  # pragma: allowlist secret  # HashiCorpIgnore
 
 
 def _oauth_config(**overrides):
@@ -1102,3 +1102,51 @@ class TestOauthConfigPrivateKeyJwtValidation:
 def test_update_empty_credential_without_auth_type_treated_as_unset(model):
     """Empty credential strings count as unset, so they do not require auth_type."""
     assert model(auth_token="", auth_password="", auth_header_value="").auth_type is None
+
+
+# ---------- token-exchange discovery credential validation ----------
+
+
+def _token_exchange_config(**overrides):
+    config = {
+        "grant_type": "token-exchange",
+        "client_id": "client-1",
+        "token_url": "https://issuer.example.com/token",
+        "target_audience": "mcp-upstream",
+    }
+    config.update(overrides)
+    return config
+
+
+class TestOauthConfigDiscoveryValidation:
+    @pytest.mark.parametrize("schema", [GatewayCreate, GatewayUpdate])
+    def test_discovery_accepted_on_token_exchange(self, schema):
+        kwargs = {"name": "gw", "url": "https://example.com"} if schema is GatewayCreate else {}
+        gateway = schema(oauth_config=_token_exchange_config(discovery={"grant_type": "client_credentials", "token_url": "https://issuer.example.com/discovery"}), **kwargs)
+        assert gateway.oauth_config["discovery"]["token_url"] == "https://issuer.example.com/discovery"
+
+    @pytest.mark.parametrize("schema", [GatewayCreate, GatewayUpdate])
+    @pytest.mark.parametrize("grant_type", ["client_credentials", "authorization_code"])
+    def test_discovery_rejected_on_other_grants(self, schema, grant_type):
+        kwargs = {"name": "gw", "url": "https://example.com"} if schema is GatewayCreate else {}
+        with pytest.raises(ValidationError, match="discovery is only supported for the token-exchange grant type"):
+            schema(oauth_config=_token_exchange_config(grant_type=grant_type, discovery={"grant_type": "client_credentials"}), **kwargs)
+
+    @pytest.mark.parametrize("schema", [GatewayCreate, GatewayUpdate])
+    def test_discovery_token_url_validated(self, schema):
+        kwargs = {"name": "gw", "url": "https://example.com"} if schema is GatewayCreate else {}
+        with pytest.raises(ValidationError, match="discovery.token_url"):
+            schema(oauth_config=_token_exchange_config(discovery={"grant_type": "client_credentials", "token_url": "javascript:alert(1)"}), **kwargs)
+
+    def test_discovery_token_url_must_be_string(self):
+        with pytest.raises(ValidationError, match="discovery.token_url must be a string URL"):
+            GatewayUpdate(oauth_config=_token_exchange_config(discovery={"grant_type": "client_credentials", "token_url": 123}))
+
+    def test_discovery_must_be_object(self):
+        with pytest.raises(ValidationError, match="discovery must be an object"):
+            GatewayUpdate(oauth_config=_token_exchange_config(discovery="client_credentials"))
+
+    @pytest.mark.parametrize("grant_type", [None, "authorization_code", "token-exchange"])
+    def test_unsupported_discovery_grant_rejected(self, grant_type):
+        with pytest.raises(ValidationError, match="discovery.grant_type"):
+            GatewayUpdate(oauth_config=_token_exchange_config(discovery={"grant_type": grant_type}))

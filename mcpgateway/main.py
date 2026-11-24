@@ -41,13 +41,13 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple, TypeAlias, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, cast, Dict, List, Optional, Tuple, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
 
 # Third-Party
-from cpex.framework import HttpHookType, PluginError, PluginViolationError, PromptHookType, ResourceHookType
+from cpex.framework import PluginError, PluginViolationError
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exceptions import RequestValidationError
@@ -83,9 +83,11 @@ from mcpgateway.auth_context import (
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
+    get_user_id,
     import_envelope_includes_roots,
     is_trusted_internal_mcp_request,
     is_unrestricted_platform_admin,
+    require_server_oauth_admin,
     selective_selection_includes_roots,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
@@ -96,8 +98,6 @@ from mcpgateway.common.query_params import QueryGatewayId, QueryMcpServerId, Que
 from mcpgateway.common.validators import SecurityValidator, url_scheme_allowed
 from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2APushNotificationConfig
-from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
@@ -109,7 +109,7 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
-from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
+from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, check_permission_inline, get_current_user_with_permissions, PermissionChecker, require_permission
@@ -132,14 +132,21 @@ from mcpgateway.routers.openapi_schema_router import router as openapi_schema_ro
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
     A2AAgentCreate,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2AFetchCardRequest,
+    A2AFetchCardResponse,
     A2AInvokeResponse,
     A2AJsonRpcResponse,
-    A2APushNotificationConfigCreate,
     A2APushNotificationConfigRequest,
+    A2AStoredCardRead,
+    A2ATaskMessageRequest,
     A2ATaskState,
+    A2ATestErrorResponse,
+    A2ATestRequest,
+    A2ATestResponse,
     AgentCard,
     CursorPaginatedA2AAgentsResponse,
     CursorPaginatedGatewaysResponse,
@@ -170,6 +177,7 @@ from mcpgateway.schemas import (
     RPCRequest,
     ServerCreateRequest,
     ServerHandshakeRequest,
+    ServerOAuthApprovalRequest,
     ServerRead,
     ServerUpdate,
     TaggedEntity,
@@ -180,19 +188,20 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_server_service import A2AServerService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, A2ATaskStateError, raise_if_a2a_disabled
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
+    completion_error_code,
     CompletionError,
     CompletionInvalidParamsError,
     CompletionNotSupportedError,
     CompletionService,
-    completion_error_code,
 )
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
-from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import (
@@ -228,28 +237,35 @@ from mcpgateway.services.modern_listener_service import get_modern_listener_serv
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
+from mcpgateway.services.resource_subscription_relay import get_resource_subscription_relay
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
-    _validate_streamable_session_access,
-    get_streamable_http_auth_context,
     MCPOriginHostGate,
     SessionManagerWrapper,
     set_shared_session_registry,
     streamable_http_auth,
-    user_context_var,
     text_content_carries,
 )
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.cel_runner import shutdown_cel_pool, start_cel_pool
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-from mcpgateway.utils.error_formatter import PUBLIC_REASON_CODES, ErrorFormatter, extract_reason_code, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
+from mcpgateway.utils.env_deprecation import warn_deprecated_envs
+from mcpgateway.utils.error_formatter import (
+    ErrorFormatter,
+    extract_reason_code,
+    PUBLIC_REASON_CODES,
+    PublicValidationError,
+    safe_error_detail,
+    sanitize_validation_error_for_log,
+    unexpected_error_detail,
+)
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
-from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
@@ -266,6 +282,7 @@ from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
     extract_websocket_bearer_token,
     get_auth_header_value,
+    get_request_auth_token,
     is_proxy_auth_trust_active,
     require_admin_auth,
     require_docs_auth_override,
@@ -281,11 +298,21 @@ logger = logging_service.get_logger("mcpgateway")
 # Note: DB readiness probing and bootstrap_db() are deferred to the lifespan
 # startup hook so that `import mcpgateway.main` does no I/O. See lifespan().
 
-# Enable plugin subsystem at module load time, mirroring the old singleton pattern.
-# get_plugin_manager() guards on this flag, so it must be set before lifespan runs.
-if settings.plugins.enabled:
-    enable_plugins(True)
-    logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
+
+def _enable_plugin_subsystem_if_configured() -> None:
+    """Enable the in-memory plugin flag when plugin settings mark the subsystem enabled.
+
+    Runs at module load time, mirroring the old singleton pattern.
+    ``get_plugin_manager()`` guards on this flag, so it must be set before lifespan runs.
+    Plugin settings are only consulted when the subsystem is enabled, so invalid
+    plugin configuration never blocks startup while the feature is off.
+    """
+    if settings.plugins.enabled:
+        enable_plugins(True)
+        logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
+
+
+_enable_plugin_subsystem_if_configured()
 
 # First-Party
 # First-Party - import module-level service singletons
@@ -302,24 +329,33 @@ sampling_handler = SamplingHandler()
 tag_service = TagService()
 export_service = ExportService()
 import_service = ImportService()
-# Initialize A2A service only if A2A features are enabled
-a2a_service = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
+# Created only when A2A is enabled. A2A routes reach handlers only after require_a2a_enabled, so handlers treat it as present.
+a2a_service = cast(A2AAgentService, A2AAgentService() if settings.mcpgateway_a2a_enabled else None)
 
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
 
-# Wait for redis to be ready
-if settings.cache_type == "redis" and settings.redis_url is not None:
-    # First-Party
-    from mcpgateway.utils.redis_client import _build_ssl_kwargs
 
-    wait_for_redis_ready(
-        redis_url=settings.redis_url,
-        max_retries=int(settings.redis_max_retries),
-        retry_interval_ms=int(settings.redis_retry_interval_ms),
-        ssl_kwargs=_build_ssl_kwargs(settings),
-        sync=True,
-    )
+def _wait_for_redis_at_startup() -> None:
+    """Block until Redis answers when the redis cache backend is configured.
+
+    Runs at module load; a no-op for non-redis backends.
+    """
+    if settings.cache_type == "redis" and settings.redis_url is not None:
+        # First-Party
+        from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
+
+        wait_for_redis_ready(
+            redis_url=settings.redis_url,
+            max_retries=int(settings.redis_max_retries),
+            retry_interval_ms=int(settings.redis_retry_interval_ms),
+            ssl_kwargs=_build_ssl_kwargs(settings),
+            sync=True,
+        )
+
+
+# Wait for redis to be ready
+_wait_for_redis_at_startup()
 
 # Initialize session registry
 session_registry = SessionRegistry(
@@ -333,29 +369,6 @@ set_shared_session_registry(session_registry)
 
 
 _INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
-
-
-def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
-    """Return whether the request came from a trusted local internal source.
-
-    Two callers are trusted today:
-
-    - ``"rust"`` — the local Rust runtime sidecar (over loopback).
-    - ``"affinity"`` — the in-process dispatch used by session-affinity
-      forwarding to reach the owner worker, carrying the identity the edge
-      already validated.
-
-    Both share the same gates: a shared-secret HMAC header AND a loopback client
-    address. Only the ``x-contextforge-mcp-runtime`` marker value differs.
-
-    Args:
-        request: Incoming request to inspect.
-
-    Returns:
-        ``True`` when the request carries a trusted internal-runtime marker
-        from loopback, otherwise ``False``.
-    """
-    return is_trusted_internal_mcp_request(request)
 
 
 def _is_jwt_token(token: str) -> bool:
@@ -421,15 +434,15 @@ def _validate_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> None:
             raise HTTPException(status_code=400, detail="Invalid public-only auth context: teams must be empty")
         if auth_context.get("is_admin") is True or auth_context.get("permission_is_admin") is True:
             raise HTTPException(status_code=400, detail="Invalid public-only auth context: admin not permitted")
-        if auth_context.get("email"):
-            raise HTTPException(status_code=400, detail="Invalid public-only auth context: email not permitted")
+        if auth_context.get("email") or auth_context.get("user_id"):
+            raise HTTPException(status_code=400, detail="Invalid public-only auth context: identity not permitted")
 
 
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
-    """Build the authenticated user payload for internal Rust -> Python MCP dispatch.
+    """Build the authenticated user payload for Python affinity dispatch.
 
     Args:
-        request: Trusted internal request forwarded from the Rust runtime.
+        request: Trusted internal request forwarded by the session owner worker.
 
     Returns:
         Synthetic authenticated user payload used by internal MCP handlers.
@@ -438,8 +451,8 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
         HTTPException: If the request is not trusted or the forwarded auth context
             is missing or invalid.
     """
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        raise HTTPException(status_code=403, detail="Internal MCP dispatch is only available to the local Rust runtime")
+    if not is_trusted_internal_mcp_request(request):
+        raise HTTPException(status_code=403, detail="Internal MCP dispatch requires trusted Python session affinity")
 
     header_value = request.headers.get(_INTERNAL_MCP_AUTH_CONTEXT_HEADER)
     if not header_value:
@@ -471,6 +484,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     )
 
     return {
+        "user_id": auth_context.get("user_id") or auth_context.get("email"),
         "email": auth_context.get("email"),
         "full_name": auth_context.get("email") or "MCP Internal Forward",
         "is_admin": bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
@@ -516,6 +530,7 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
     scoped_server_id = scopes.get("server_id")
 
     context: Dict[str, Any] = {
+        "user_id": email,
         "email": email,
         # Authenticated callers keep their token teams (None == admin bypass); public-only
         # callers are floored to no teams so _validate_internal_mcp_auth_context accepts them.
@@ -531,208 +546,6 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
     if scoped_server_id:
         context["scoped_server_id"] = scoped_server_id
     return context
-
-
-def _enforce_internal_mcp_server_scope(request: Request, server_id: str) -> None:
-    """Validate trusted internal server scope against any forwarded token server scope.
-
-    Args:
-        request: Trusted internal MCP request.
-        server_id: Effective virtual server identifier for the operation.
-
-    Raises:
-        HTTPException: If the forwarded token scope does not authorize the server.
-    """
-    auth_context = get_internal_mcp_auth_context(request)
-    if not isinstance(auth_context, dict):
-        return
-
-    scoped_server_id = auth_context.get("scoped_server_id")
-    if isinstance(scoped_server_id, str) and scoped_server_id and not validate_server_access({"server_id": scoped_server_id}, server_id):
-        raise HTTPException(status_code=403, detail=f"Token not authorized for server: {server_id}")
-
-
-async def _authorize_internal_mcp_request(request: Request, db: Session, *, permission: str, method: str, server_id: Optional[str] = None):
-    """Authorize trusted Rust-side MCP dispatch while preserving permissive MCP semantics.
-
-    For authenticated callers, this enforces the same token-scope and RBAC rules as
-    the regular RPC dispatcher. For unauthenticated MCP callers in permissive mode,
-    StreamableHTTP middleware already downgraded them to public-only scope and
-    enforced per-server OAuth, so the internal Rust -> Python hop should not re-deny
-    public-only requests merely because there is no authenticated RBAC identity.
-
-    Args:
-        request: Trusted internal MCP request.
-        db: Active database session.
-        permission: RBAC permission required for the method.
-        method: MCP method name being authorized.
-        server_id: Optional virtual server identifier used for additional scope checks.
-
-    Returns:
-        The forwarded user payload used for downstream authorization and scoping.
-    """
-    user = _build_internal_mcp_forwarded_user(request)
-    auth_context = get_internal_mcp_auth_context(request) or {}
-
-    if server_id:
-        _enforce_internal_mcp_server_scope(request, server_id)
-
-    if auth_context.get("is_authenticated", True) is True:
-        await _ensure_rpc_permission(user, db, permission, method, request=request)
-
-    return user
-
-
-def _build_internal_mcp_auth_scope(
-    *,
-    method: str,
-    path: str,
-    query_string: str,
-    headers: Dict[str, str],
-    client_ip: Optional[str],
-) -> Dict[str, Any]:
-    """Construct a synthetic ASGI scope for internal Rust -> Python MCP auth.
-
-    Args:
-        method: HTTP method of the original public MCP request.
-        path: Public MCP path, for example ``/mcp`` or ``/servers/<id>/mcp``.
-        query_string: Raw query string without the leading ``?``.
-        headers: Public request headers to replay through auth/token scoping.
-        client_ip: Effective client IP derived by Rust from the public request.
-
-    Returns:
-        ASGI scope dictionary suitable for token scoping and ``streamable_http_auth``.
-    """
-    raw_headers = []
-    for name, value in headers.items():
-        if not isinstance(name, str) or not isinstance(value, str):
-            continue
-        raw_headers.append((name.lower().encode("latin-1"), value.encode("latin-1")))
-
-    return {
-        "type": "http",
-        "method": method.upper(),
-        "path": path,
-        "raw_path": path.encode("latin-1"),
-        "query_string": query_string.encode("latin-1"),
-        "headers": raw_headers,
-        "client": (client_ip or "unknown", 0),
-        "state": {},
-    }
-
-
-async def _run_internal_mcp_authentication(
-    *,
-    method: str,
-    path: str,
-    query_string: str,
-    headers: Dict[str, str],
-    client_ip: Optional[str],
-) -> tuple[Optional[Response], Dict[str, Any]]:
-    """Run token scoping and MCP transport auth for a direct Rust ingress request.
-
-    Runs HTTP_PRE_REQUEST plugin hooks (e.g. WXO auth token exchange) before
-    authentication so the Rust MCP path gets identical plugin behavior to the
-    Python middleware chain.
-
-    Args:
-        method: HTTP method of the public request.
-        path: Public request path.
-        query_string: Raw query string without the leading ``?``.
-        headers: Public request headers replayed from Rust.
-        client_ip: Effective client IP for token-scope IP restriction checks.
-
-    Returns:
-        Tuple of ``(error_response, auth_context)``.
-        ``error_response`` is ``None`` on success; otherwise it contains the exact
-        response generated by the existing token-scoping/auth layers.
-    """
-    # Run pre-request plugin hooks (e.g. WXO JWT → team token exchange)
-    # before building the auth scope, so plugins can transform headers.
-    plugin_manager = await get_plugin_manager()
-    if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST):
-        headers, _, _ = await run_pre_request_hooks(
-            plugin_manager=plugin_manager,
-            headers=headers,
-            path=path,
-            method=method,
-            client_host=client_ip,
-        )
-
-    scope = _build_internal_mcp_auth_scope(
-        method=method,
-        path=path,
-        query_string=query_string,
-        headers=headers,
-        client_ip=client_ip,
-    )
-    request = starletteRequest(scope)
-    sent_messages: list[dict[str, Any]] = []
-
-    async def _receive() -> dict[str, Any]:
-        """Return an empty request body for the synthetic auth probe.
-
-        Returns:
-            Minimal ASGI ``http.request`` message with no body content.
-        """
-        return {"type": "http.request", "body": b"", "more_body": False}
-
-    async def _send(message: dict[str, Any]) -> None:
-        """Capture ASGI response messages emitted by auth middleware.
-
-        Args:
-            message: ASGI response message emitted by the auth stack.
-        """
-        sent_messages.append(message)
-
-    def _captured_response() -> Response:
-        """Build a concrete response from the captured ASGI messages.
-
-        Returns:
-            Response reconstructed from the captured auth middleware output.
-        """
-        status_code = 500
-        response_headers: Dict[str, str] = {}
-        body = b""
-        for message in sent_messages:
-            if message.get("type") == "http.response.start":
-                status_code = int(message.get("status", 500))
-                response_headers = {
-                    key.decode("latin-1"): value.decode("latin-1") for key, value in message.get("headers", []) if isinstance(key, (bytes, bytearray)) and isinstance(value, (bytes, bytearray))
-                }
-            elif message.get("type") == "http.response.body":
-                body += message.get("body", b"")
-        return Response(content=body, status_code=status_code, headers=response_headers)
-
-    async def _call_next(_request: starletteRequest) -> Response:
-        """Run the existing Streamable HTTP auth layer for the synthetic request.
-
-        Returns:
-            Success response when authentication passes, otherwise the captured
-            failure response emitted by the existing middleware chain.
-        """
-        auth_ok = await streamable_http_auth(scope, _receive, _send)
-        if auth_ok:
-            return ORJSONResponse(status_code=200, content={"authenticated": True})
-        return _captured_response()
-
-    original_context = user_context_var.get()
-    user_context_var.set({})
-    try:
-        if settings.email_auth_enabled:
-            response = await token_scoping_middleware(request, _call_next)
-        else:
-            response = await _call_next(request)
-
-        if response is None:
-            response = _captured_response()
-
-        if response.status_code >= 400:
-            return response, {}
-
-        return None, get_streamable_http_auth_context()
-    finally:
-        user_context_var.set(original_context)
 
 
 def _normalize_token_teams(teams: Optional[List]) -> List[str]:
@@ -1099,6 +912,73 @@ async def _assert_session_owner_or_admin(request: Request, user, session_id: str
     if requester_email and requester_email == session_owner:
         return
     raise HTTPException(status_code=403, detail="Session access denied")
+
+
+async def _resolve_elicitation_target(request: Request, user, params: Dict[str, Any]) -> str:
+    """Pick the session that receives an ``elicitation/create`` request.
+
+    A named session must belong to the requester (admins may name any session).
+    Without a named session, only elicitation-capable sessions owned by the
+    requester are candidates, for admins too.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context.
+        params: JSON-RPC params of the ``elicitation/create`` call.
+
+    Returns:
+        The target session identifier.
+
+    Raises:
+        JSONRPCError: -32602 for a malformed session id, -32002 if the named session
+            does not exist, -32003 if the requester does not own it, -32000 if no
+            owned elicitation-capable session exists.
+    """
+    session_id = params.get("session_id") or params.get("sessionId")
+    if session_id is not None and not isinstance(session_id, str):
+        raise JSONRPCError(-32602, "Invalid elicitation session_id", {"method": "elicitation/create"})
+
+    requester_email, requester_is_admin = get_request_identity(request, user)
+    # get_user_email() falls back to "unknown"; such identities must never match each other's sessions.
+    has_identity = bool(requester_email) and requester_email != "unknown"
+
+    if session_id:
+        if not requester_is_admin and not has_identity:
+            raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": "elicitation/create"})
+        try:
+            await _assert_session_owner_or_admin(request, user, session_id)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                raise JSONRPCError(-32002, "Session not found", {"method": "elicitation/create"}) from exc
+            raise JSONRPCError(-32003, str(exc.detail), {"method": "elicitation/create"}) from exc
+        return session_id
+
+    if has_identity:
+        for candidate in await session_registry.get_elicitation_capable_sessions():
+            if await session_registry.get_session_owner(candidate) == requester_email:
+                return candidate
+    raise JSONRPCError(-32000, "No elicitation-capable clients available", {"method": "elicitation/create"})
+
+
+def _bounded_elicitation_timeout(params: Dict[str, Any]) -> float:
+    """Validate the caller-supplied elicitation timeout and cap it at the configured default.
+
+    Args:
+        params: JSON-RPC params of the ``elicitation/create`` call.
+
+    Returns:
+        Timeout in seconds, at most ``settings.mcpgateway_elicitation_timeout``.
+
+    Raises:
+        JSONRPCError: -32602 if the timeout is not a positive finite number.
+    """
+    ceiling = settings.mcpgateway_elicitation_timeout
+    value = params.get("timeout")
+    if value is None:
+        return float(ceiling)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not math.isfinite(value)) or value <= 0:
+        raise JSONRPCError(-32602, "Invalid elicitation timeout", {"method": "elicitation/create"})
+    return float(min(value, ceiling))
 
 
 async def _authorize_run_cancellation(request: Request, user, request_id: str, *, as_jsonrpc_error: bool) -> None:
@@ -1485,16 +1365,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
-    if settings.expose_error_details:
-        logger.warning("EXPOSE_ERROR_DETAILS is deprecated and ignored: error responses are always sanitized. Remove it from your configuration.")
+    warn_deprecated_envs()
 
-    # Start the sandboxed jq worker pool before any service that might invoke
-    # tool response filters is initialised. A failure here (BrokenProcessPool,
-    # TimeoutError, or OSError from the sandbox warm-up on Linux/subprocess
-    # mode) is a hard startup failure and must propagate rather than letting
-    # the gateway boot with a broken or absent sandbox.
-    start_jq_pool()
+    # Fork the sandbox pools while the process holds no sockets or threads.
+    # A pool that fails to start aborts the boot; a missing sandbox is unsafe.
     start_validation_pool()
+    start_cel_pool()
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
     # This used to run at module-import time, which made every test that
@@ -1609,13 +1485,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
     logger.info("Upstream session registry initialized (notification fanout enabled)")
 
-    # Standing subscriptions/listen streams to modern (2026-07-28) servers
-    if settings.gateway_modern_listeners_enabled:
-        if settings.mcp_client_connect_mode == "legacy":
-            logger.warning("gateway_modern_listeners_enabled=true ignored: MCP_CLIENT_CONNECT_MODE=legacy disables modern protocol paths")
-        else:
-            await init_modern_listener_service(_notification_svc).initialize()
-
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
     # seconds of cold-start cost).
@@ -1649,8 +1518,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             # First-Party
             from mcpgateway.services.leader_election import start_primary_worker_elector  # pylint: disable=import-outside-toplevel
 
-            await start_primary_worker_elector()
+            await start_primary_worker_elector(await get_redis_client())
             logger.info("Primary-worker elector started (backend=redis)")
+
+        # Standing subscriptions/listen streams to modern (2026-07-28) servers
+        if settings.gateway_modern_listeners_enabled:
+            if settings.mcp_client_connect_mode == "legacy":
+                logger.warning("gateway_modern_listeners_enabled=true ignored: MCP_CLIENT_CONNECT_MODE=legacy disables modern protocol paths")
+            else:
+                if settings.cache_type == "redis" and settings.primary_worker_election_backend == "filelock":
+                    logger.warning("Modern listeners run on the primary worker: one listener per host; set PRIMARY_WORKER_ELECTION_BACKEND=redis for one per cluster")
+                await init_modern_listener_service(_notification_svc).initialize()
 
         try:
             init_plugin_manager_factory(
@@ -1659,7 +1537,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 hook_policies=HOOK_PAYLOAD_POLICIES,
                 observability=None,  # Will be set later if needed
                 db_factory=SessionLocal,
-                cache_ttl=settings.plugin_manager_cache_ttl,
             )
             logger.info("Plugin manager factory initialized")
         except Exception as init_exc:
@@ -2034,6 +1911,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             if modern_listener_service is not None:
                 services_to_shutdown.insert(0, modern_listener_service)
 
+        services_to_shutdown.insert(0, get_resource_subscription_relay())
+
         await shutdown_services(services_to_shutdown)
 
         # Stop the primary-worker elector (releases the redis lease if held).
@@ -2063,11 +1942,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Close Redis client last (after all services that use it)
         await close_redis_client()
 
-        # Shut down the sandboxed jq worker pool
-        shutdown_jq_pool()
-
         # Shut down the sandboxed schema-validation worker pool
         shutdown_validation_pool()
+
+        # Shut down the sandboxed CEL worker pool
+        shutdown_cel_pool()
 
         logger.info("Shutdown complete")
 
@@ -2956,20 +2835,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # For protected admin routes, verify admin status
         try:
-            raw_token = None
             auth_user_email = None
             auth_user_is_admin = False
 
-            auth_header = get_auth_header_value(request.headers)
-            cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
-
-            # Preserve existing precedence: cookie first, then Authorization bearer.
-            if cookie_token:
-                raw_token = cookie_token
-            elif auth_header:
-                scheme, _, credentials_value = auth_header.partition(" ")
-                if scheme.lower() == "bearer" and credentials_value:
-                    raw_token = credentials_value.strip() or None
+            raw_token = get_request_auth_token(request)
 
             if raw_token:
                 try:
@@ -3452,15 +3321,16 @@ def _register_middleware(app: FastAPI) -> tuple[Optional[Any], bool, list]:  # p
     # but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
     # This ensures request.base_url reflects the proxy's public host, fixing the
     # OAuth redirect_uri hint and other URL construction throughout the admin UI.
-    # Registered alongside ProxyHeadersMiddleware with the same trust model.
+    # It does not apply the FORWARDED_ALLOW_IPS peer check below.
     #
     # Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
     # ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme
     # already being corrected when deriving the default port for scope["server"].
     app.add_middleware(ForwardedHostMiddleware)
 
-    # Trust all proxies (or lock down with a list of host patterns)
-    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+    # Honor X-Forwarded-For/Proto only from peers in FORWARDED_ALLOW_IPS; any other
+    # peer could otherwise spoof the client IP that IP restrictions and rate limits use.
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.forwarded_allow_ips)
 
     # Add correlation ID middleware if enabled
     # Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
@@ -3642,7 +3512,23 @@ server_router = APIRouter(tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
 tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 export_import_router = APIRouter(tags=["Export/Import"])
-a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"])
+
+
+async def require_a2a_enabled(_user=Depends(get_current_user_with_permissions)) -> None:
+    """Reject A2A requests with a typed 404 when A2A is disabled.
+
+    Authentication runs first, so only authenticated callers learn that A2A is off.
+
+    Args:
+        _user: Authenticated user; resolved to enforce authentication before the flag check.
+
+    Raises:
+        HTTPException: 404 with ``detail.error == "a2a_disabled"`` when A2A is disabled.
+    """
+    raise_if_a2a_disabled()
+
+
+a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"], dependencies=[Depends(require_a2a_enabled)])
 
 # Basic Auth setup
 
@@ -4330,6 +4216,7 @@ async def create_server(
     """
     try:
         server = payload.server
+        oauth_authorized = await require_server_oauth_admin(request, user, db, server.model_fields_set)
         team_id = payload.team_id
         visibility = payload.visibility
 
@@ -4355,6 +4242,7 @@ async def create_server(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            oauth_authorized=oauth_authorized,
         )
         db.commit()
         db.close()
@@ -4398,6 +4286,7 @@ async def update_server(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is updating server with ID {server_id}")
+        oauth_authorized = await require_server_oauth_admin(request, user, db, server.model_fields_set)
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
@@ -4412,6 +4301,7 @@ async def update_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            oauth_authorized=oauth_authorized,
         )
         db.commit()
         db.close()
@@ -4430,6 +4320,41 @@ async def update_server(
     except IntegrityError as e:
         logger.error(f"Integrity error while updating server {server_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+
+
+@server_router.post("/{server_id}/oauth/approve")
+@require_permission("servers.update")
+async def approve_server_oauth(
+    server_id: str,
+    payload: ServerOAuthApprovalRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> dict[str, Any]:
+    """Approve the virtual-server OAuth settings displayed during administrator review.
+
+    Args:
+        server_id: Reviewed server identifier.
+        payload: Server version displayed during review.
+        request: Authenticated request.
+        db: Active database session.
+        user: Authenticated principal.
+
+    Returns:
+        Approval status and updated server version.
+
+    Raises:
+        HTTPException: If authorization, configuration validation, or version checks fail.
+    """
+    await require_server_oauth_admin(request, user, db, {"oauth_config"})
+    try:
+        return await server_service.approve_oauth_config(db, server_id, payload.version, user_id=get_user_id(user))
+    except ServerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ServerLockConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ServerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @server_router.post("/{server_id}/state", response_model=ServerRead)
@@ -4778,8 +4703,9 @@ async def message_endpoint(
 
                     elicitation_service = get_elicitation_service()
                     try:
+                        pending = elicitation_service.get_pending_elicitation(request_id)
                         elicit_result = ElicitResult(**result_data)
-                        if elicitation_service.complete_elicitation(request_id, elicit_result):
+                        if pending is not None and pending.downstream_session_id == session_id and elicitation_service.complete_elicitation(request_id, elicit_result):
                             logger.info(f"Completed elicitation {request_id} from session {session_id}")
                             is_elicitation_response = True
                     except Exception as e:
@@ -4963,9 +4889,6 @@ async def list_a2a_agents(
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    if a2a_service is None:
-        raise HTTPException(status_code=503, detail="A2A service not available")
-
     # Get filtering context from token (respects token scope)
     user_email, token_teams = get_scoped_resource_access_context(request, user)
 
@@ -5002,6 +4925,41 @@ async def list_a2a_agents(
     return data
 
 
+@a2a_router.get("/metrics", response_model=A2AAgentAggregateMetrics)
+@require_permission("a2a.read")
+async def get_a2a_agent_metrics(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2AAgentAggregateMetrics:
+    """
+    Retrieve aggregate metrics for the A2A agents visible to the caller.
+
+    Registered before ``/{agent_id}`` so ``metrics`` is not read as an agent ID.
+
+    Args:
+        request (Request): The FastAPI request object for scope derivation.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AAgentAggregateMetrics: Counts, success rate, and response times over visible agents.
+
+    Raises:
+        HTTPException: 503 when A2A is unavailable. 404 when ``MCPGATEWAY_A2A_METRICS_ENABLED`` is false.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    if not settings.mcpgateway_a2a_metrics_enabled:
+        logger.debug(f"User {safe_log_user(user)} requested A2A metrics while MCPGATEWAY_A2A_METRICS_ENABLED is false")
+        raise HTTPException(status_code=404, detail="A2A metrics are disabled")
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    if user_email is None and token_teams is None:
+        token_teams = []  # (None, None) selects the unscoped aggregate; fail closed to public-only.
+    return await a2a_service.aggregate_metrics(db, user_email=user_email, token_teams=token_teams)
+
+
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
 @require_permission("a2a.read")
 async def get_a2a_agent(
@@ -5027,8 +4985,6 @@ async def get_a2a_agent(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} requested A2A agent with ID {agent_id}")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Get filtering context from token (respects token scope)
         user_email, token_teams = get_scoped_resource_access_context(request, user)
@@ -5055,9 +5011,8 @@ async def get_a2a_agent_card(
     """Retrieve the A2A AgentCard for an agent or agent-exposing virtual server.
 
     Resolves ``agent_id`` against standalone A2A agents first, then against
-    virtual servers with an enabled A2A interface, mirroring the internal
-    ``/_internal/a2a/agents/{agent_name}/card`` lookup used by the Rust
-    sidecar. Layer-1 visibility is enforced inside the service calls.
+    virtual servers with an enabled A2A interface. Layer-1 visibility is
+    enforced inside the service calls.
 
     Args:
         agent_id (str): The ID of the agent or agent-exposing virtual server.
@@ -5073,8 +5028,6 @@ async def get_a2a_agent_card(
         HTTPException: If the agent is not found or the caller lacks access.
     """
     logger.debug("User %s requested A2A agent card for ID %s", safe_log_user(user), agent_id)
-    if a2a_service is None:
-        raise HTTPException(status_code=503, detail="A2A service not available")
 
     user_email, token_teams = get_scoped_resource_access_context(request, user)
 
@@ -5088,6 +5041,80 @@ async def get_a2a_agent_card(
         raise HTTPException(status_code=404, detail="agent not found")
 
     response.headers["Cache-Control"] = "private, no-store"
+    return card
+
+
+@a2a_router.get("/{agent_id}/stored-card", response_model=A2AStoredCardRead)
+@require_permission("a2a.read")
+async def get_a2a_agent_stored_card(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2AStoredCardRead:
+    """Return the Agent Card stored for a registered agent, as fetched.
+
+    Every caller with ``a2a.read`` who can see the agent receives the card, including a card fetched with credentials.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AStoredCardRead: The current stored card.
+
+    Raises:
+        HTTPException: If the agent is not visible, or has no stored card.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        card = await a2a_service.get_stored_card(db, agent_id, user_email=user_email, token_teams=token_teams)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if card is None:
+        raise HTTPException(status_code=404, detail="No stored Agent Card for this agent")
+    return card
+
+
+@a2a_router.get("/{agent_id}/stored-card/extended", response_model=A2AStoredCardRead)
+@require_permission("a2a.update")
+async def get_a2a_agent_stored_extended_card(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2AStoredCardRead:
+    """Return the authenticated extended Agent Card stored for a registered agent.
+
+    The extended card is content the agent shows only to credentialed callers, so the route
+    needs ``a2a.update`` and agent ownership, not only ``a2a.read`` and visibility.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2AStoredCardRead: The current stored extended card.
+
+    Raises:
+        HTTPException: If the agent is not visible, the caller does not own it, or it has no stored extended card.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    user_email, token_teams = await _require_manageable_a2a_agent(a2a_service, db, request, user, agent_id)
+    try:
+        card = await a2a_service.get_stored_card(db, agent_id, user_email=user_email, token_teams=token_teams, kind="extended")
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if card is None:
+        raise HTTPException(status_code=404, detail="No stored extended Agent Card for this agent")
+    _audit_a2a_extended_card_read(request, user, agent_id)
     return card
 
 
@@ -5151,8 +5178,6 @@ async def create_a2a_agent(
             team_id = team_id or token_team_id
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new A2A agent for team {team_id}")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.register_agent(
             db,
             agent,
@@ -5176,6 +5201,32 @@ async def create_a2a_agent(
     except IntegrityError as e:
         logger.error(f"Integrity error while creating A2A agent: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+
+
+@a2a_router.post("/fetch-card", response_model=A2AFetchCardResponse)
+@require_permission("a2a.create")
+async def fetch_a2a_agent_card(
+    payload: A2AFetchCardRequest,
+    request: Request,  # pylint: disable=unused-argument
+    user=Depends(get_current_user_with_permissions),
+) -> A2AFetchCardResponse:
+    """Fetch and normalize an A2A Agent Card from an unregistered endpoint.
+
+    A failed fetch returns ``found: false`` with an ``outcome`` of ``no_card``,
+    ``auth_required`` or ``unreachable``. A blocked address and a network failure both
+    return ``unreachable``. An unsafe ``path`` or ``baseUrl`` returns 422.
+
+    Args:
+        payload (A2AFetchCardRequest): Base endpoint or card URL, optional path and headers.
+        request (Request): The FastAPI request object, used by the RBAC check.
+        user: The authenticated user making the request.
+
+    Returns:
+        A2AFetchCardResponse: The normalized card with a suggested agent mapping, or a result naming the failure outcome.
+    """
+    result = await fetch_agent_card(str(payload.base_url), payload.path, payload.headers)
+    logger.info(f"User {safe_log_user(user)} fetched A2A agent card from {sanitize_url_for_logging(str(payload.base_url))}: {result.outcome}")
+    return result
 
 
 @a2a_router.put("/{agent_id}", response_model=A2AAgentRead)
@@ -5208,8 +5259,6 @@ async def update_a2a_agent(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = get_user_email(user)
         return await a2a_service.update_agent(
             db,
@@ -5263,8 +5312,6 @@ async def set_a2a_agent_state(
     try:
         user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -5325,8 +5372,6 @@ async def delete_a2a_agent(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting A2A agent with ID {agent_id}")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = get_user_email(user)
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
         return {
@@ -5474,8 +5519,6 @@ def _decode_a2a_page_token(page_token: Optional[str]) -> Optional[Tuple[datetime
 
 def _require_a2a_service() -> A2AAgentService:
     """Return the A2A service or raise 503 when A2A is disabled."""
-    if a2a_service is None:
-        raise HTTPException(status_code=503, detail="A2A service not available")
     return a2a_service
 
 
@@ -5509,6 +5552,22 @@ def _audit_a2a_task_action(request: Request, user: Any, action: str, agent_id: s
         request_path=request.url.path,
         request_method=request.method,
         details={"agent_id": agent_id, **(details or {})},
+    )
+
+
+def _audit_a2a_extended_card_read(request: Request, user: Any, agent_id: str) -> None:
+    """Record an audit entry for a read of the stored extended Agent Card."""
+    user_email, _ = get_request_identity(request, user)
+    get_audit_trail_service().log_action(
+        action="read_a2a_extended_card",
+        resource_type="a2a_agent",
+        resource_id=agent_id,
+        user_id=user_email or "unknown",
+        user_email=user_email,
+        client_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        request_path=request.url.path,
+        request_method=request.method,
     )
 
 
@@ -5753,6 +5812,49 @@ async def delete_a2a_push_config(
     return {"deleted": True}
 
 
+@a2a_router.post("/{agent_id}/tasks/{task_id}/messages", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
+@require_permission("a2a.invoke")
+async def send_a2a_task_message(
+    agent_id: str,
+    task_id: str,
+    body: A2ATaskMessageRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Send a follow-up message to an existing task, such as the answer to an input-required task.
+
+    Args:
+        agent_id: Owning agent ID (UUID).
+        task_id: Agent-side task ID.
+        body: The follow-up message, as ``message`` or ``text``.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Tasks have no owner of their own, so the caller must own the agent, like on the cancel route.
+
+    Returns:
+        The agent response, unchanged.
+
+    Raises:
+        HTTPException: 404 if the caller does not own the agent or the task does not exist or is not visible,
+            409 if the task is in a terminal state, 400 if the message names a different task or the agent fails.
+    """
+    service = _require_a2a_service()
+    await _require_manageable_a2a_agent(service, db, request, user, agent_id)
+    try:
+        response = await service.continue_task(db, agent_id, task_id, body.to_message(), **_extract_a2a_request_context(request, user))
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2ATaskStateError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _audit_a2a_task_action(request, user, "continue_a2a_task", agent_id, task_id)
+    return response
+
+
 # response_model_exclude_unset keeps the passthrough contract: only the keys the agent
 # actually returned are serialized, instead of the whole envelope with nulls filled in.
 @a2a_router.post("/{agent_name}/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
@@ -5784,8 +5886,6 @@ async def invoke_a2a_agent(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Extract authentication and request context (shared with /jsonrpc endpoint)
         context = _extract_a2a_request_context(request, user)
@@ -5801,6 +5901,51 @@ async def invoke_a2a_agent(
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post(
+    "/{agent_id}/test",
+    response_model=A2ATestResponse,
+    responses={
+        404: {"model": A2ATestErrorResponse, "description": "Agent not found or not accessible"},
+        422: {"model": A2ATestErrorResponse, "description": "Invalid test parameters. Request body validation failures return the default FastAPI 422 with a list in detail"},
+        500: {"model": A2ATestErrorResponse, "description": "Unexpected error"},
+        502: {"model": A2ATestErrorResponse, "description": "Agent disabled, unreachable or returned an error"},
+    },
+)
+@require_permission("a2a.invoke")
+async def test_a2a_agent(
+    agent_id: str,
+    request: Request,
+    payload: Optional[A2ATestRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Invoke an A2A agent with a test message.
+
+    Error text is fixed and sanitized. ``result`` relays the upstream agent response unchanged. A test call counts in the agent metrics.
+
+    Args:
+        agent_id: Agent ID.
+        request: The FastAPI request object for scope derivation.
+        payload: Optional body carrying a custom test ``query``.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Dict[str, Any]: ``success``, ``result``, ``agent_name`` and ``test_timestamp``.
+
+    Raises:
+        HTTPException: 503 when A2A is unavailable. Otherwise 404, 502, 422 or 500 with a
+            ``detail`` object holding ``success``, ``error``, ``error_type`` and ``agent_id``.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    outcome = await a2a_service.test_agent(db, agent_id, query=payload.query if payload else None, **_extract_a2a_request_context(request, user))
+    if outcome.status_code != 200:
+        raise HTTPException(status_code=outcome.status_code, detail=outcome.body)
+    return outcome.body
 
 
 @a2a_router.post("/invoke", response_model=A2AInvokeResponse, response_model_exclude_unset=True)
@@ -5836,8 +5981,6 @@ async def invoke_a2a_agent_by_id(
     """
     try:
         logger.debug(f"User {safe_log_user(user)} is invoking A2A agent '{agent_id}' with type '{interaction_type}'")
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Extract authentication and request context (shared with /invoke and /jsonrpc endpoints)
         context = _extract_a2a_request_context(request, user)
@@ -6013,9 +6156,6 @@ async def invoke_a2a_agent_jsonrpc(
             return ORJSONResponse(status_code=400, content=error_response)
 
         logger.debug(f"User {safe_log_user(user)} invoking A2A agent '{agent_name}' via JSON-RPC passthrough with method '{method}'")
-
-        if a2a_service is None:
-            raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Extract authentication and request context (shared with /invoke endpoint)
         context = _extract_a2a_request_context(request, user)
@@ -6243,6 +6383,7 @@ async def create_tool(
             return ORJSONResponse(content={"message": str(exc)}, status_code=status.HTTP_403_FORBIDDEN)
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new tool for team {team_id}")
+        _, token_teams = get_scoped_resource_access_context(request, user)
         result = await tool_service.register_tool(
             db,
             tool,
@@ -6255,12 +6396,16 @@ async def create_tool(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            user_id=get_user_id(user),
+            token_teams=token_teams,
         )
         db.commit()
         db.close()
         return result
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
+        if isinstance(ex, PermissionError):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(ex))
         if isinstance(ex, ToolNameConflictError):
             if not ex.enabled and ex.tool_id:
                 raise HTTPException(
@@ -6469,6 +6614,7 @@ async def update_tool(
 
         logger.debug(f"User {safe_log_user(user)} is updating tool with ID {tool_id}")
         user_email = get_user_email(user)
+        _, token_teams = get_scoped_resource_access_context(request, user)
         result = await tool_service.update_tool(
             db,
             tool_id,
@@ -6478,6 +6624,8 @@ async def update_tool(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_user_id(user),
+            token_teams=token_teams,
         )
         db.commit()
         db.close()
@@ -6525,7 +6673,7 @@ async def delete_tool(
     try:
         logger.debug(f"User {safe_log_user(user)} is deleting tool with ID {tool_id}")
         user_email = get_user_email(user)
-        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics, user_id=get_user_id(user))
         db.commit()
         db.close()
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
@@ -6564,7 +6712,7 @@ async def set_tool_state(
     try:
         logger.debug(f"User {safe_log_user(user)} is setting tool state for ID {tool_id} to {'active' if activate else 'inactive'}")
         user_email = get_user_email(user)
-        tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
+        tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email, user_id=get_user_id(user))
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
@@ -7735,6 +7883,7 @@ async def set_gateway_state(
             gateway_id,
             activate,
             user_email=user_email,
+            user_id=get_user_id(user),
         )
         return {
             "status": "success",
@@ -7924,6 +8073,7 @@ async def register_gateway(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            user_id=get_user_id(user),
         )
         result_status = getattr(result, "status", None)
         if result_status is None and isinstance(result, dict):
@@ -7940,6 +8090,8 @@ async def register_gateway(
         if isinstance(ex, GatewayConnectionError):
             logger.warning("Gateway registration rejected: reason_code=%s request_id=%s", getattr(ex, "reason_code", "gateway_connection_failed"), get_correlation_id())
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
+        if isinstance(ex, PublicValidationError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
@@ -8061,6 +8213,7 @@ async def update_gateway(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_user_id(user),
         )
         result_status = getattr(result, "status", None)
         if result_status is None and isinstance(result, dict):
@@ -8081,6 +8234,8 @@ async def update_gateway(
         if isinstance(ex, GatewayConnectionError):
             logger.warning("Gateway update rejected: reason_code=%s request_id=%s", getattr(ex, "reason_code", "gateway_connection_failed"), get_correlation_id())
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
+        if isinstance(ex, PublicValidationError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
@@ -8129,7 +8284,7 @@ async def delete_gateway(
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         has_resources = bool(current.capabilities.get("resources"))
-        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, user_id=get_user_id(user))
 
         # If the gateway had resources and was successfully deleted, invalidate
         # the whole resource cache. This is needed since the cache holds both
@@ -8197,6 +8352,7 @@ async def refresh_gateway_tools(
         user_email = get_user_email(user)
         # Build user_context for Vault token path selection on authorization_code gateways.
         # Uses jwt_teams_claim for session tokens so admin bypass doesn't erase team scope.
+        # First-Party
         from mcpgateway.routers.oauth_router import _build_user_context  # pylint: disable=import-outside-toplevel
 
         user_context = _build_user_context(user)
@@ -8514,62 +8670,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
     return await _handle_rpc_authenticated(request, db=db, user=user)
 
 
-@utility_router.post("/_internal/mcp/authenticate/")
-@utility_router.post("/_internal/mcp/authenticate")
-async def handle_internal_mcp_authenticate(request: Request):
-    """Authenticate a public MCP request for direct Rust ingress.
-
-    Args:
-        request: Trusted internal request sent by the local Rust runtime.
-
-    Returns:
-        Auth context payload that Rust can forward on subsequent internal MCP calls.
-
-    Raises:
-        HTTPException: If the request is not trusted or the forwarded payload is invalid.
-    """
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        raise HTTPException(status_code=403, detail="Internal MCP authenticate is only available to the local Rust runtime")
-
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Invalid internal MCP authenticate payload")
-
-    method = str(payload.get("method") or "GET").upper()
-    path = payload.get("path")
-    query_string = payload.get("queryString", "")
-    forwarded_headers = payload.get("headers", {})
-    client_ip = payload.get("clientIp")
-
-    if not isinstance(path, str) or not path:
-        raise HTTPException(status_code=400, detail="Internal MCP authenticate payload requires path")
-    if not isinstance(query_string, str):
-        raise HTTPException(status_code=400, detail="Internal MCP authenticate payload queryString must be a string")
-    if not isinstance(forwarded_headers, dict) or not all(isinstance(name, str) and isinstance(value, str) for name, value in forwarded_headers.items()):
-        raise HTTPException(status_code=400, detail="Internal MCP authenticate payload headers must be a string map")
-    if client_ip is not None and not isinstance(client_ip, str):
-        raise HTTPException(status_code=400, detail="Internal MCP authenticate payload clientIp must be a string")
-
-    error_response, auth_context = await _run_internal_mcp_authentication(
-        method=method,
-        path=path,
-        query_string=query_string,
-        headers=forwarded_headers,
-        client_ip=client_ip,
-    )
-    if error_response is not None:
-        return error_response
-
-    return ORJSONResponse(status_code=200, content={"authContext": auth_context})
-
-
 @utility_router.post("/_internal/mcp/rpc/")
 @utility_router.post("/_internal/mcp/rpc")
 async def handle_internal_mcp_rpc(request: Request):
-    """Handle trusted MCP dispatch forwarded from the local Rust runtime.
+    """Handle trusted MCP dispatch forwarded by Python session affinity.
 
     Args:
-        request: Trusted internal MCP request from the Rust runtime.
+        request: Trusted internal MCP request from the session owner worker.
 
     Returns:
         JSON-RPC response from the shared authenticated RPC dispatcher.
@@ -8580,6 +8687,12 @@ async def handle_internal_mcp_rpc(request: Request):
     user = _build_internal_mcp_forwarded_user(request)
     db = SessionLocal()
     try:
+        # First-Party
+        from mcpgateway.utils.server_oauth import server_oauth_context_is_current  # pylint: disable=import-outside-toplevel
+
+        auth_context = get_internal_mcp_auth_context(request) or {}
+        if not server_oauth_context_is_current(db, auth_context):
+            raise HTTPException(status_code=401, detail="OAuth configuration requires administrator approval or session reauthentication")
         response = await _handle_rpc_authenticated(request, db=db, user=user)
         if db.is_active and db.in_transaction() is not None:
             db.commit()
@@ -8595,323 +8708,6 @@ async def handle_internal_mcp_rpc(request: Request):
         raise
     finally:
         db.close()
-
-
-@utility_router.post("/_internal/mcp/initialize/")
-@utility_router.post("/_internal/mcp/initialize")
-async def handle_internal_mcp_initialize(request: Request):
-    """Handle trusted MCP initialize requests forwarded from the local Rust runtime.
-
-    Args:
-        request: Trusted internal MCP initialize request.
-
-    Returns:
-        JSON-RPC initialize response payload.
-    """
-    user = _build_internal_mcp_forwarded_user(request)
-    req_id = None
-    try:
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id")
-        if req_id is None:
-            req_id = str(uuid.uuid4())
-
-        if body.get("method") != "initialize":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
-
-        db = SessionLocal()
-        try:
-            result = await _execute_rpc_initialize(
-                request,
-                db,
-                user,
-                params=params,
-                server_id=server_id,
-                mcp_session_id=_extract_mcp_session_id(request),
-            )
-        finally:
-            db.close()
-        return ORJSONResponse(content={"jsonrpc": "2.0", "result": result, "id": req_id})
-    except JSONRPCError as exc:
-        error = exc.to_dict()
-        return ORJSONResponse(content={"jsonrpc": "2.0", "error": error["error"], "id": req_id})
-    except Exception as exc:
-        logger.error("Internal MCP initialize error: %s", exc)
-        return ORJSONResponse(
-            content={
-                "jsonrpc": "2.0",
-                "error": {"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)},
-                "id": req_id,
-            }
-        )
-
-
-@utility_router.delete("/_internal/mcp/session/")
-@utility_router.delete("/_internal/mcp/session")
-async def handle_internal_mcp_session_delete(request: Request):
-    """Handle trusted MCP session teardown forwarded from the local Rust runtime.
-
-    Args:
-        request: Trusted internal MCP session-delete request.
-
-    Returns:
-        Empty HTTP response indicating the session was removed.
-    """
-    _build_internal_mcp_forwarded_user(request)
-    auth_context = get_internal_mcp_auth_context(request) or {}
-    mcp_session_id = _extract_mcp_session_id(request)
-    if not mcp_session_id:
-        return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
-
-    session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
-        mcp_session_id=mcp_session_id,
-        user_context=auth_context,
-    )
-    if not session_allowed:
-        return ORJSONResponse(status_code=deny_status, content={"detail": deny_detail})
-
-    server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-    if server_id:
-        _enforce_internal_mcp_server_scope(request, server_id)
-
-    await session_registry.remove_session(mcp_session_id)
-
-    if settings.mcpgateway_session_affinity_enabled:
-        try:
-            # First-Party
-            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
-
-            pool = get_session_affinity()
-            await pool.cleanup_session_owner(mcp_session_id)
-        except RuntimeError:
-            pass
-
-    return Response(status_code=204)
-
-
-@utility_router.post("/_internal/mcp/notifications/initialized/")
-@utility_router.post("/_internal/mcp/notifications/initialized")
-async def handle_internal_mcp_notifications_initialized(request: Request):
-    """Handle trusted MCP notifications/initialized requests from the local Rust runtime.
-
-    Args:
-        request: Trusted internal MCP notification request.
-
-    Returns:
-        Empty HTTP response acknowledging the notification.
-
-    Raises:
-        HTTPException: If trusted server-scope validation fails.
-    """
-    _build_internal_mcp_forwarded_user(request)
-    req_id = None
-    try:
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id")
-        if body.get("method") != "notifications/initialized":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-
-        logger.info("Client initialized")
-        await logging_service.notify("Client initialized", LogLevel.INFO)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Internal MCP notifications/initialized error: %s", exc)
-        return ORJSONResponse(
-            content={
-                "jsonrpc": "2.0",
-                "error": {"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)},
-                "id": req_id,
-            }
-        )
-
-
-@utility_router.post("/_internal/mcp/notifications/message/")
-@utility_router.post("/_internal/mcp/notifications/message")
-async def handle_internal_mcp_notifications_message(request: Request):
-    """Handle trusted MCP notifications/message requests from the local Rust runtime.
-
-    Args:
-        request: Trusted internal MCP notification request.
-
-    Returns:
-        Empty HTTP response acknowledging the notification.
-
-    Raises:
-        HTTPException: If trusted server-scope validation fails.
-    """
-    _build_internal_mcp_forwarded_user(request)
-    req_id = None
-    try:
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id")
-        if body.get("method") != "notifications/message":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        await logging_service.notify(
-            params.get("data"),
-            LogLevel(params.get("level", "info")),
-            params.get("logger"),
-        )
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Internal MCP notifications/message error: %s", exc)
-        return ORJSONResponse(
-            content={
-                "jsonrpc": "2.0",
-                "error": {"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)},
-                "id": req_id,
-            }
-        )
-
-
-@utility_router.post("/_internal/mcp/notifications/cancelled/")
-@utility_router.post("/_internal/mcp/notifications/cancelled")
-async def handle_internal_mcp_notifications_cancelled(request: Request):
-    """Handle trusted MCP notifications/cancelled requests from the local Rust runtime.
-
-    Args:
-        request: Trusted internal MCP cancellation notification.
-
-    Returns:
-        Empty HTTP response acknowledging the cancellation.
-
-    Raises:
-        HTTPException: If cancellation authorization or trusted scope validation fails.
-    """
-    user = _build_internal_mcp_forwarded_user(request)
-    req_id = None
-    try:
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id")
-        if body.get("method") != "notifications/cancelled":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        raw_request_id = params.get("requestId")
-        request_id = str(raw_request_id) if raw_request_id is not None else None
-        reason = params.get("reason")
-        logger.info("Request cancelled: %s, reason: %s", request_id, reason)
-        if request_id is not None:
-            await _authorize_run_cancellation(request, user, request_id, as_jsonrpc_error=False)
-            await cancellation_service.cancel_run(request_id, reason=reason)
-        await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Internal MCP notifications/cancelled error: %s", exc)
-        return ORJSONResponse(
-            content={
-                "jsonrpc": "2.0",
-                "error": {"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)},
-                "id": req_id,
-            }
-        )
 
 
 async def _catalog_page_for_request(request: Request, db: Session, user: Any, method: str, server_id: Optional[str], cursor: Any = None, meta: Any = None) -> dict[str, Any]:
@@ -8940,1859 +8736,6 @@ async def _catalog_page_for_request(request: Request, db: Session, user: Any, me
         request_headers=dict(request.headers),
         meta=meta,
     )
-
-
-def _catalog_error_status(code: int) -> int:
-    """Map catalog protocol errors to internal HTTP status codes.
-
-    Args:
-        code: JSON-RPC error code.
-
-    Returns:
-        HTTP status for invalid parameters, denied access, capacity, or internal failures.
-    """
-    return {-32602: 400, -32003: 403, -32000: 503}.get(code, 500)
-
-
-@utility_router.post("/_internal/mcp/tools/list/")
-@utility_router.post("/_internal/mcp/tools/list")
-async def handle_internal_mcp_tools_list(request: Request):
-    """Handle trusted server-scoped tools/list requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP tools/list request.
-
-    Returns:
-        MCP tools/list response payload for the requested virtual server.
-
-    Raises:
-        HTTPException: If the trusted server scope is missing or invalid.
-    """
-    server_id = request.headers.get("x-contextforge-server-id")
-    if not server_id:
-        raise HTTPException(status_code=400, detail="Missing trusted MCP server scope")
-
-    db = SessionLocal()
-    try:
-        user = await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="tools.read",
-            method="tools/list",
-            server_id=server_id,
-        )
-        raw_body = await request.body()
-        body = orjson.loads(raw_body) if raw_body else {}
-        params = body.get("params", {}) if isinstance(body, dict) else None
-        if not isinstance(params, dict):
-            raise JSONRPCError(-32602, "Invalid list parameters")
-        payload = await _catalog_page_for_request(request, db, user, "tools/list", server_id, params.get("cursor"), params.get("_meta"))
-        # The Rust tools bridge sends no body and cannot forward client continuation cursors.
-        if not raw_body:
-            while "nextCursor" in payload:
-                page = await _catalog_page_for_request(request, db, user, "tools/list", server_id, payload.pop("nextCursor"))
-                payload["tools"].extend(page["tools"])
-                if "nextCursor" in page:
-                    payload["nextCursor"] = page["nextCursor"]
-        db.commit()
-        return ORJSONResponse(content=payload)
-    except HTTPException:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=_catalog_error_status(exc.code), content={"code": exc.code, "message": exc.message, "data": exc.data})
-    except Exception as exc:
-        logger.exception("Unexpected error in handle_internal_mcp_tools_list")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/resources/list/")
-@utility_router.post("/_internal/mcp/resources/list")
-async def handle_internal_mcp_resources_list(request: Request):
-    """Handle trusted resources/list requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP resources/list request.
-
-    Returns:
-        MCP resources/list response payload.
-    """
-    db = SessionLocal()
-    req_id = None
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "resources/list":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="resources.read",
-            method="resources/list",
-            server_id=server_id,
-        )
-
-        payload = await _catalog_page_for_request(request, db, user, "resources/list", server_id, params.get("cursor"), params.get("_meta"))
-
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content=payload)
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=_catalog_error_status(exc.code), content=exc.to_dict()["error"])
-    except Exception as exc:
-        logger.exception("Unexpected error in handle_internal_mcp_resources_list")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/resources/read/")
-@utility_router.post("/_internal/mcp/resources/read")
-async def handle_internal_mcp_resources_read(request: Request):
-    """Handle trusted resources/read requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP resources/read request.
-
-    Returns:
-        MCP resources/read response payload.
-    """
-    db = SessionLocal()
-    req_id = None
-    uri = None
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "resources/read":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="resources.read",
-            method="resources/read",
-            server_id=server_id,
-        )
-
-        uri = params.get("uri")
-        request_id = params.get("requestId")
-        meta_data = params.get("_meta")
-        if not uri:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "code": -32602,
-                    "message": "Missing resource URI in parameters",
-                    "data": params,
-                },
-            )
-
-        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
-
-        plugin_context_table = getattr(request.state, "plugin_context_table", None)
-        plugin_global_context = getattr(request.state, "plugin_global_context", None)
-        result = await resource_service.read_resource(
-            db,
-            resource_uri=uri,
-            request_id=request_id,
-            user=auth_user_email,
-            server_id=server_id,
-            token_teams=auth_token_teams,
-            plugin_context_table=plugin_context_table,
-            plugin_global_context=plugin_global_context,
-            meta_data=meta_data,
-            request_headers=dict(request.headers),
-        )
-        payload = {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}
-
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content=payload)
-    except ResourceNotFoundError as exc:
-        return ORJSONResponse(
-            status_code=404,
-            content={
-                "code": -32002,
-                "message": str(exc),
-                "data": {"uri": uri} if uri else None,
-            },
-        )
-    except ResourceError as exc:
-        return ORJSONResponse(
-            status_code=400,
-            content={
-                "code": -32602,
-                "message": str(exc),
-                "data": {"uri": uri} if uri else None,
-            },
-        )
-    except JSONRPCError as exc:
-        status_code = 403 if exc.code == -32003 else 400
-        return ORJSONResponse(status_code=status_code, content=exc.to_dict()["error"])
-    except Exception as exc:
-        logger.exception("Unexpected error in handle_internal_mcp_resources_read")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/resources/subscribe/")
-@utility_router.post("/_internal/mcp/resources/subscribe")
-async def handle_internal_mcp_resources_subscribe(request: Request):
-    """Handle trusted resources/subscribe requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP resources/subscribe request.
-
-    Returns:
-        Empty JSON response confirming the subscription.
-    """
-    db = SessionLocal()
-    req_id = None
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "resources/subscribe":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="resources.read",
-            method="resources/subscribe",
-            server_id=server_id,
-        )
-
-        uri = params.get("uri")
-        if not uri:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "code": -32602,
-                    "message": "Missing resource URI in parameters",
-                    "data": params,
-                },
-            )
-
-        access_user_email, access_token_teams = get_scoped_resource_access_context(request, user)
-        user_email = get_user_email(user)
-        subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
-        await resource_service.subscribe_resource(
-            db,
-            subscription,
-            user_email=access_user_email,
-            token_teams=access_token_teams,
-        )
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content={})
-    except ResourceNotFoundError as exc:
-        return ORJSONResponse(
-            status_code=404,
-            content={"code": -32002, "message": str(exc), "data": None},
-        )
-    except PermissionError:
-        return ORJSONResponse(
-            status_code=403,
-            content={"code": -32003, "message": _ACCESS_DENIED_MSG, "data": {"method": "resources/subscribe"}},
-        )
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
-    except Exception as exc:
-        logger.exception("Unexpected error in handle_internal_mcp_resources_subscribe")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/resources/unsubscribe/")
-@utility_router.post("/_internal/mcp/resources/unsubscribe")
-async def handle_internal_mcp_resources_unsubscribe(request: Request):
-    """Handle trusted resources/unsubscribe requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP resources/unsubscribe request.
-
-    Returns:
-        Empty JSON response confirming the unsubscription.
-    """
-    db = SessionLocal()
-    req_id = None
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "resources/unsubscribe":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="resources.read",
-            method="resources/unsubscribe",
-            server_id=server_id,
-        )
-
-        uri = params.get("uri")
-        if not uri:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "code": -32602,
-                    "message": "Missing resource URI in parameters",
-                    "data": params,
-                },
-            )
-
-        user_email = get_user_email(user)
-        subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
-        await resource_service.unsubscribe_resource(db, subscription)
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content={})
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
-    except Exception as exc:
-        logger.exception("Unexpected error in handle_internal_mcp_resources_unsubscribe")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/resources/templates/list/")
-@utility_router.post("/_internal/mcp/resources/templates/list")
-async def handle_internal_mcp_resource_templates_list(request: Request):
-    """Handle trusted resources/templates/list requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP resources/templates/list request.
-
-    Returns:
-        MCP resources/templates/list response payload.
-
-    Raises:
-        Exception: Propagated after best-effort rollback when unexpected failures occur.
-    """
-    db = SessionLocal()
-    req_id = None
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "resources/templates/list":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="resources.read",
-            method="resources/templates/list",
-            server_id=server_id,
-        )
-
-        payload = await _catalog_page_for_request(request, db, user, "resources/templates/list", server_id, params.get("cursor"), params.get("_meta"))
-
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content=payload)
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=_catalog_error_status(exc.code), content=exc.to_dict()["error"])
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/roots/list/")
-@utility_router.post("/_internal/mcp/roots/list")
-async def handle_internal_mcp_roots_list(request: Request):
-    """Handle trusted roots/list requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP roots/list request.
-
-    Returns:
-        MCP roots/list response payload.
-
-    Raises:
-        Exception: Propagated after best-effort rollback when unexpected failures occur.
-    """
-    db = SessionLocal()
-    req_id = None
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "roots/list":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="admin.system_config",
-            method="roots/list",
-            server_id=None,
-        )
-        if not await is_unrestricted_platform_admin(request, user, db):
-            raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": "roots/list"})
-        roots = await root_service.list_roots()
-        payload = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content=payload)
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/completion/complete/")
-@utility_router.post("/_internal/mcp/completion/complete")
-async def handle_internal_mcp_completion_complete(request: Request):
-    """Handle trusted completion/complete requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP completion/complete request.
-
-    Returns:
-        MCP completion response payload.
-    """
-    db = SessionLocal()
-    req_id = None
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "completion/complete":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="tools.read",
-            method="completion/complete",
-            server_id=server_id,
-        )
-
-        user_email, token_teams = get_scoped_resource_access_context(request, user)
-
-        payload = await completion_service.handle_completion(
-            db,
-            params,
-            user_email=user_email,
-            token_teams=token_teams,
-        )
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content=payload)
-    except CompletionError as exc:
-        # New mapping, not an edit: this route previously had no
-        # CompletionError-specific handling and fell through to the generic
-        # 500 branch below (spec §8.5) — a completion failure is now
-        # reported via its own upstream-derived JSON-RPC code instead of
-        # being indistinguishable from a transport crash.
-        return ORJSONResponse(
-            status_code=200,
-            content={"jsonrpc": "2.0", "error": {"code": completion_error_code(exc), "message": str(exc)}, "id": req_id},
-        )
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
-    except Exception as exc:
-        logger.exception("Unexpected error in handle_internal_mcp_completion_complete")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/sampling/createMessage/")
-@utility_router.post("/_internal/mcp/sampling/createMessage")
-async def handle_internal_mcp_sampling_create_message(request: Request):
-    """Handle trusted sampling/createMessage requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP sampling/createMessage request.
-
-    Returns:
-        MCP sampling/createMessage response payload.
-    """
-    db = SessionLocal()
-    req_id = None
-    try:
-        _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "sampling/createMessage":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        if request.headers.get("x-contextforge-mcp-runtime") == "rust":
-            server_id = request.headers.get("x-contextforge-server-id")
-            if server_id:
-                _enforce_internal_mcp_server_scope(request, server_id)
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        payload = await sampling_handler.create_message(db, params)
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content=payload)
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
-    except Exception as exc:
-        logger.exception("Unexpected error in handle_internal_mcp_sampling_create_message")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/logging/setLevel/")
-@utility_router.post("/_internal/mcp/logging/setLevel")
-async def handle_internal_mcp_logging_set_level(request: Request):
-    """Handle trusted logging/setLevel requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP logging/setLevel request.
-
-    Returns:
-        Empty JSON response confirming the new log level.
-    """
-    db = SessionLocal()
-    req_id = None
-    try:
-        _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "logging/setLevel":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="admin.system_config",
-            method="logging/setLevel",
-            server_id=None,
-        )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        level = LogLevel(params.get("level"))
-        await logging_service.set_level(level)
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content={})
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
-    except Exception as exc:
-        logger.exception("Unexpected error in handle_internal_mcp_logging_set_level")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(status_code=500, content={"code": -32000, "message": "Internal error", "data": unexpected_error_detail(exc)})
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/prompts/list/")
-@utility_router.post("/_internal/mcp/prompts/list")
-async def handle_internal_mcp_prompts_list(request: Request):
-    """Handle trusted prompts/list requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP prompts/list request.
-
-    Returns:
-        MCP prompts/list response payload.
-
-    Raises:
-        Exception: Propagated after best-effort rollback when unexpected failures occur.
-    """
-    db = SessionLocal()
-    req_id = None
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "prompts/list":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="prompts.read",
-            method="prompts/list",
-            server_id=server_id,
-        )
-
-        payload = await _catalog_page_for_request(request, db, user, "prompts/list", server_id, params.get("cursor"), params.get("_meta"))
-
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content=payload)
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=_catalog_error_status(exc.code), content=exc.to_dict()["error"])
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/prompts/get/")
-@utility_router.post("/_internal/mcp/prompts/get")
-async def handle_internal_mcp_prompts_get(request: Request):
-    """Handle trusted prompts/get requests forwarded from the Rust runtime.
-
-    Args:
-        request: Trusted internal MCP prompts/get request.
-
-    Returns:
-        MCP prompts/get response payload.
-
-    Raises:
-        Exception: Propagated after best-effort rollback when unexpected failures occur.
-    """
-    db = SessionLocal()
-    req_id = None
-    name = None
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        req_id = body.get("id") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or body.get("method") != "prompts/get":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": req_id,
-                },
-            )
-
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-        else:
-            server_id = params.get("server_id")
-
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission="prompts.read",
-            method="prompts/get",
-            server_id=server_id,
-        )
-
-        name = params.get("name")
-        arguments = params.get("arguments", {})
-        meta_data = params.get("_meta")
-        if not name:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "code": -32602,
-                    "message": "Missing prompt name in parameters",
-                    "data": params,
-                },
-            )
-
-        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
-
-        plugin_context_table = getattr(request.state, "plugin_context_table", None)
-        plugin_global_context = getattr(request.state, "plugin_global_context", None)
-        result = await prompt_service.get_prompt(
-            db,
-            name,
-            arguments,
-            user=auth_user_email,
-            server_id=server_id,
-            token_teams=auth_token_teams,
-            plugin_context_table=plugin_context_table,
-            plugin_global_context=plugin_global_context,
-            _meta_data=meta_data,
-        )
-        payload = result.model_dump(by_alias=True, exclude_none=True) if hasattr(result, "model_dump") else result
-
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return ORJSONResponse(content=payload)
-    except PromptNotFoundError as exc:
-        return ORJSONResponse(
-            status_code=404,
-            content={
-                "code": -32002,
-                "message": str(exc),
-                "data": {"name": name} if name else None,
-            },
-        )
-    except PromptError as exc:
-        try:
-            if db.is_active and db.in_transaction() is not None:
-                db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        return ORJSONResponse(
-            status_code=422,
-            content={
-                "code": -32000,
-                "message": str(exc),
-                "data": {"name": name} if name else None,
-            },
-        )
-    except JSONRPCError as exc:
-        status_code = 403 if exc.code == -32003 else 400
-        return ORJSONResponse(status_code=status_code, content=exc.to_dict()["error"])
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/mcp/tools/list/authz/")
-@utility_router.post("/_internal/mcp/tools/list/authz")
-async def handle_internal_mcp_tools_list_authz(request: Request):
-    """Authorize trusted server-scoped tools/list requests for the Rust direct-DB path.
-
-    Args:
-        request: Trusted internal MCP authz request.
-
-    Returns:
-        Catalog visibility when the list request is authorized.
-    """
-    return await _authorize_internal_mcp_server_scoped_method(
-        request,
-        permission="tools.read",
-        method="tools/list",
-    )
-
-
-async def _authorize_internal_mcp_server_scoped_method(
-    request: Request,
-    *,
-    permission: str,
-    method: str,
-) -> Response:
-    """Authorize a trusted server-scoped MCP method for Rust direct-path execution.
-
-    Args:
-        request: Trusted internal MCP authz request.
-        permission: Permission required for the target method.
-        method: MCP method name being authorized.
-
-    Returns:
-        Empty success response when the method is authorized and remains eligible
-        for Rust direct execution, or a JSON success payload instructing Rust to
-        forward the request to Python when plugin hooks require Python
-        execution. Returns a JSON error response when authorization fails.
-
-    Raises:
-        HTTPException: If the trusted server scope header is missing.
-        Exception: Propagated after best-effort rollback when unexpected failures occur.
-    """
-    server_id = request.headers.get("x-contextforge-server-id")
-    if not server_id:
-        raise HTTPException(status_code=400, detail="Missing trusted MCP server scope")
-
-    db = SessionLocal()
-    try:
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission=permission,
-            method=method,
-            server_id=server_id,
-        )
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        plugin_manager = await get_plugin_manager()
-        fallback_reason = _server_scoped_direct_execution_fallback_reason(method, plugin_manager)
-        if fallback_reason:
-            return ORJSONResponse(
-                status_code=status.HTTP_200_OK,
-                content={
-                    "directExecutionEligible": False,
-                    "fallbackReason": fallback_reason,
-                },
-            )
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
-
-
-def _server_scoped_direct_execution_fallback_reason(method: str, plugin_manager) -> Optional[str]:
-    """Return a direct-execution fallback reason for server-scoped Rust MCP calls.
-
-    This fail-closed helper lets Python remain the source of truth for plugin
-    semantics. Rust can safely execute DB-direct reads only when no relevant
-    prompt/resource hooks are configured.
-
-    Args:
-        method: MCP method name being considered for Rust direct execution.
-        plugin_manager: Plugin manager instance to check for configured hooks.
-
-    Returns:
-        A stable fallback reason when Python must handle the request to preserve
-        plugin semantics, otherwise ``None``.
-    """
-    if not plugin_manager:
-        return None
-
-    if method == "resources/read":
-        if plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH) or plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH):
-            return "resource-hooks-configured"
-    if method == "prompts/get":
-        if plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH) or plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH):
-            return "prompt-hooks-configured"
-    return None
-
-
-@utility_router.post("/_internal/mcp/resources/list/authz/")
-@utility_router.post("/_internal/mcp/resources/list/authz")
-async def handle_internal_mcp_resources_list_authz(request: Request):
-    """Authorize trusted server-scoped resources/list requests for Rust direct-path execution.
-
-    Args:
-        request: Trusted internal MCP authz request.
-
-    Returns:
-        Catalog visibility when the list request is authorized.
-    """
-    return await _authorize_internal_mcp_server_scoped_method(
-        request,
-        permission="resources.read",
-        method="resources/list",
-    )
-
-
-@utility_router.post("/_internal/mcp/resources/read/authz/")
-@utility_router.post("/_internal/mcp/resources/read/authz")
-async def handle_internal_mcp_resources_read_authz(request: Request):
-    """Authorize trusted server-scoped resources/read requests for Rust direct-path execution.
-
-    Args:
-        request: Trusted internal MCP authz request.
-
-    Returns:
-        Empty success response when the request is authorized.
-    """
-    return await _authorize_internal_mcp_server_scoped_method(
-        request,
-        permission="resources.read",
-        method="resources/read",
-    )
-
-
-@utility_router.post("/_internal/mcp/resources/templates/list/authz/")
-@utility_router.post("/_internal/mcp/resources/templates/list/authz")
-async def handle_internal_mcp_resource_templates_list_authz(request: Request):
-    """Authorize trusted server-scoped resources/templates/list requests for Rust direct-path execution.
-
-    Args:
-        request: Trusted internal MCP authz request.
-
-    Returns:
-        Catalog visibility when the list request is authorized.
-    """
-    return await _authorize_internal_mcp_server_scoped_method(
-        request,
-        permission="resources.read",
-        method="resources/templates/list",
-    )
-
-
-@utility_router.post("/_internal/mcp/prompts/list/authz/")
-@utility_router.post("/_internal/mcp/prompts/list/authz")
-async def handle_internal_mcp_prompts_list_authz(request: Request):
-    """Authorize trusted server-scoped prompts/list requests for Rust direct-path execution.
-
-    Args:
-        request: Trusted internal MCP authz request.
-
-    Returns:
-        Catalog visibility when the list request is authorized.
-    """
-    return await _authorize_internal_mcp_server_scoped_method(
-        request,
-        permission="prompts.read",
-        method="prompts/list",
-    )
-
-
-@utility_router.post("/_internal/mcp/prompts/get/authz/")
-@utility_router.post("/_internal/mcp/prompts/get/authz")
-async def handle_internal_mcp_prompts_get_authz(request: Request):
-    """Authorize trusted server-scoped prompts/get requests for Rust direct-path execution.
-
-    Args:
-        request: Trusted internal MCP authz request.
-
-    Returns:
-        Empty success response when the request is authorized.
-    """
-    return await _authorize_internal_mcp_server_scoped_method(
-        request,
-        permission="prompts.read",
-        method="prompts/get",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Internal A2A authorization endpoints (Rust A2A runtime sidecar)
-# ---------------------------------------------------------------------------
-
-
-@utility_router.post("/_internal/a2a/authenticate/")
-@utility_router.post("/_internal/a2a/authenticate")
-async def handle_internal_a2a_authenticate(request: Request):
-    """Authenticate an inbound A2A request for Rust runtime execution.
-
-    Delegates to the shared MCP authenticate handler — the auth flow is
-    identical (validate credentials, return auth context).
-    """
-    return await handle_internal_mcp_authenticate(request)
-
-
-async def _authorize_internal_a2a_method(
-    request: Request,
-    *,
-    permission: str,
-    method: str,
-) -> Response:
-    """Authorize a trusted internal A2A method for Rust module execution.
-
-    Reuses the core authorization machinery from the MCP runtime path.
-    """
-    db = SessionLocal()
-    try:
-        await _authorize_internal_mcp_request(
-            request,
-            db,
-            permission=permission,
-            method=method,
-        )
-        if db.is_active and db.in_transaction() is not None:
-            db.commit()
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
-    except Exception:
-        logger.exception("Internal A2A authz error for method=%s permission=%s", method, permission)
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-def _get_internal_a2a_scope_context(request: Request) -> tuple[Optional[str], Optional[List[str]]]:
-    """Return scoped visibility context for trusted internal A2A requests."""
-    user = _build_internal_mcp_forwarded_user(request)
-    return get_scoped_resource_access_context(request, user)
-
-
-@utility_router.post("/_internal/a2a/invoke/authz/")
-@utility_router.post("/_internal/a2a/invoke/authz")
-async def handle_internal_a2a_invoke_authz(request: Request):
-    """Authorize trusted A2A invoke requests for Rust module execution."""
-    return await _authorize_internal_a2a_method(request, permission="a2a.invoke", method="a2a/invoke")
-
-
-@utility_router.post("/_internal/a2a/list/authz/")
-@utility_router.post("/_internal/a2a/list/authz")
-async def handle_internal_a2a_list_authz(request: Request):
-    """Authorize trusted A2A list requests for Rust module execution."""
-    return await _authorize_internal_a2a_method(request, permission="a2a.read", method="a2a/list")
-
-
-@utility_router.post("/_internal/a2a/get/authz/")
-@utility_router.post("/_internal/a2a/get/authz")
-async def handle_internal_a2a_get_authz(request: Request):
-    """Authorize trusted A2A get requests for Rust module execution."""
-    return await _authorize_internal_a2a_method(request, permission="a2a.read", method="a2a/get")
-
-
-# DbA2AAgent.id is `uuid.uuid4().hex` — 32 lower-case hex chars, no dashes.
-# Used to detect when a resolve identifier is a primary-key reference vs a
-# plain name; kept here (not in uaid module) because it's specific to the
-# internal resolve endpoint's lookup dispatch.
-_UUID_HEX_RE = re.compile(r"[0-9a-f]{32}")
-
-
-@utility_router.post("/_internal/a2a/agents/{agent_name}/resolve/")
-@utility_router.post("/_internal/a2a/agents/{agent_name}/resolve")
-async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
-    """Resolve an A2A agent record for Rust module execution.
-
-    Returns the agent's endpoint, auth configuration (encrypted), and
-    protocol version so the Rust sidecar can invoke it directly.
-    """
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-        # Reject leading/trailing whitespace outright rather than silently
-        # falling through to the name branch — a malicious caller could
-        # otherwise wrap a UAID or UUID in spaces to bypass the kind
-        # dispatch (e.g., ` <32-hex>` probes the name column instead of
-        # id). Names in the DB never carry flanking whitespace either, so
-        # this can't false-positive on legitimate input.
-        if agent_name != agent_name.strip():
-            logger.warning("A2A agent resolve rejected: identifier has surrounding whitespace (%r)", agent_name)
-            return ORJSONResponse(status_code=400, content={"error": "agent identifier must not contain leading or trailing whitespace"})
-
-        # Dispatch lookup on identifier kind so a collision across the
-        # name / id / uaid columns can't silently cross-select the wrong
-        # agent. UAID prefix and 32-hex UUIDs are distinctive; everything
-        # else falls through to name.
-        agent = None
-        if uaid_utils.is_uaid(agent_name):
-            agent = db.query(DbA2AAgent).filter(DbA2AAgent.uaid == agent_name, DbA2AAgent.enabled.is_(True)).first()
-        elif _UUID_HEX_RE.fullmatch(agent_name):
-            agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == agent_name, DbA2AAgent.enabled.is_(True)).first()
-        if agent is None:
-            agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
-        if not agent:
-            a2a_server_service = A2AServerService()
-            server_agent = a2a_server_service.resolve_server_agent(db, agent_name, user_email=user_email, token_teams=token_teams)
-            if server_agent:
-                return ORJSONResponse(status_code=200, content=server_agent)
-            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
-        if not await service._check_agent_access(db, agent, user_email, token_teams):  # pylint: disable=protected-access
-            # Surface visibility-denial as 403 to the trusted sidecar
-            # caller (inside _is_trusted_internal_mcp_runtime_request
-            # above) so it can avoid falling through to UAID
-            # cross-gateway dispatch for agents that exist locally but
-            # the requester cannot see. The sidecar is expected to
-            # translate this back to 404 when responding to the end
-            # user so existence of private agents is not leaked.
-            logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on resolve", agent_name, user_email, token_teams)
-            return ORJSONResponse(status_code=403, content={"error": f"access denied to agent '{agent_name}'"})
-
-        result = {
-            "agent_id": agent.id,
-            "name": agent.name,
-            "endpoint_url": agent.endpoint_url,
-            "agent_type": agent.agent_type,
-            "protocol_version": agent.protocol_version,
-            "auth_type": agent.auth_type,
-        }
-        # Return encrypted auth values — Rust decrypts them with the shared secret.
-        if agent.auth_value:
-            result["auth_value_encrypted"] = agent.auth_value
-        if agent.auth_query_params:
-            result["auth_query_params_encrypted"] = agent.auth_query_params
-
-        return ORJSONResponse(status_code=200, content=result)
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/agents/{agent_name}/card/")
-@utility_router.post("/_internal/a2a/agents/{agent_name}/card")
-async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
-    """Return the A2A AgentCard for an agent.
-
-    Called by the Rust sidecar to serve GetExtendedAgentCard /
-    agent/getExtendedCard / agent/getAuthenticatedExtendedCard requests.
-    The sidecar forwards the caller's ``A2A-Version`` header, and a pre-1.0
-    value keeps the legacy card shape.
-    """
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        caller_version = request.headers.get("A2A-Version")
-        service = A2AAgentService()
-
-        # Layer-1 visibility is enforced inside ``get_agent_card`` (PR #4341):
-        # admin bypass with no email cannot read another user's private agent.
-        # The denial path returns None so the response falls through to the
-        # not-found branch below without leaking existence. We still pre-check
-        # existence to distinguish "agent does not exist" from "visibility
-        # deny" in the structured warning log emitted by service callers.
-        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled.is_(True)).first()
-        card = None
-        if agent is not None:
-            card = await service.get_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams, caller_version=caller_version)
-            if card is None:
-                logger.warning("A2A agent %r visibility-denied for user=%s teams=%s on card", agent_name, user_email, token_teams)
-        if card is None:
-            a2a_server_service = A2AServerService()
-            card = a2a_server_service.get_server_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams, caller_version=caller_version)
-        if card is None:
-            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
-        return ORJSONResponse(status_code=200, content=card)
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/tasks/get/")
-@utility_router.post("/_internal/a2a/tasks/get")
-async def handle_internal_a2a_tasks_get(request: Request):
-    """Retrieve an A2A task for Rust module execution."""
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        body = await request.json()
-        task_id = body.get("task_id")
-        agent_id = body.get("agent_id")
-        if not task_id or not isinstance(task_id, str):
-            return ORJSONResponse(status_code=400, content={"error": "task_id is required and must be a string"})
-        if agent_id is not None and not isinstance(agent_id, str):
-            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
-
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-        task = await service.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
-        if task is None:
-            return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
-        return ORJSONResponse(status_code=200, content=task)
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/tasks/list/")
-@utility_router.post("/_internal/a2a/tasks/list")
-async def handle_internal_a2a_tasks_list(request: Request):
-    """List A2A tasks for Rust module execution."""
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        body = await request.json()
-        agent_id = body.get("agent_id")
-        state = body.get("state")
-        if agent_id is not None and not isinstance(agent_id, str):
-            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
-        if state is not None and not isinstance(state, str):
-            return ORJSONResponse(status_code=400, content={"error": "state must be a string"})
-        limit = min(int(body.get("limit", 100)), 1000)
-        offset = max(int(body.get("offset", 0)), 0)
-
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-        tasks = service.list_tasks(db, agent_id=agent_id, state=state, limit=limit, offset=offset, user_email=user_email, token_teams=token_teams)
-        return ORJSONResponse(status_code=200, content={"tasks": tasks})
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/tasks/cancel/")
-@utility_router.post("/_internal/a2a/tasks/cancel")
-async def handle_internal_a2a_tasks_cancel(request: Request):
-    """Cancel an A2A task for Rust module execution."""
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        body = await request.json()
-        task_id = body.get("task_id")
-        agent_id = body.get("agent_id")
-        if not task_id or not isinstance(task_id, str):
-            return ORJSONResponse(status_code=400, content={"error": "task_id is required and must be a string"})
-        if agent_id is not None and not isinstance(agent_id, str):
-            return ORJSONResponse(status_code=400, content={"error": "agent_id must be a string"})
-
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-        task = await service.cancel_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
-        if task is None:
-            return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
-        return ORJSONResponse(status_code=200, content=task)
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/push/create/")
-@utility_router.post("/_internal/a2a/push/create")
-async def handle_internal_a2a_push_create(request: Request):
-    """Create a push notification config for Rust A2A runtime."""
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        body = await request.json()
-        if not body.get("a2a_agent_id") or not body.get("task_id") or not body.get("webhook_url"):
-            return ORJSONResponse(status_code=400, content={"error": "a2a_agent_id, task_id, and webhook_url are required"})
-
-        # Validate webhook URL through the schema to enforce SSRF protection.
-        try:
-            validated = A2APushNotificationConfigCreate(**body)
-        except Exception as validation_err:
-            return ORJSONResponse(status_code=400, content={"error": f"invalid push config: {validation_err}"})
-
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-        if not await service._check_agent_access_by_id(db, body["a2a_agent_id"], user_email, token_teams):  # pylint: disable=protected-access
-            logger.warning("A2A agent_id=%s visibility-denied for user=%s teams=%s on push/create", body["a2a_agent_id"], user_email, token_teams)
-            return ORJSONResponse(status_code=404, content={"error": "agent not found"})
-        cfg = service.create_push_config(db, validated.model_dump())
-        return ORJSONResponse(status_code=200, content=cfg)
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/push/get/")
-@utility_router.post("/_internal/a2a/push/get")
-async def handle_internal_a2a_push_get(request: Request):
-    """Retrieve a push notification config for Rust A2A runtime."""
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        body = await request.json()
-        task_id = body.get("task_id")
-        agent_id = body.get("agent_id")
-        if not task_id:
-            return ORJSONResponse(status_code=400, content={"error": "task_id is required"})
-
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-        cfg = service.get_push_config(db, task_id, agent_id=agent_id)
-        if cfg is None:
-            return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
-        if not await service._check_agent_access_by_id(db, cfg["a2a_agent_id"], user_email, token_teams):  # pylint: disable=protected-access
-            logger.warning("A2A push-config task_id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on push/get", task_id, cfg["a2a_agent_id"], user_email, token_teams)
-            return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
-        return ORJSONResponse(status_code=200, content=cfg)
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/push/list/")
-@utility_router.post("/_internal/a2a/push/list")
-async def handle_internal_a2a_push_list(request: Request):
-    """List push notification configs for Rust A2A runtime."""
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        body = await request.json()
-        agent_id = body.get("agent_id")
-        task_id = body.get("task_id")
-
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-        # Use the dispatch-oriented listing so the Rust sidecar receives
-        # plaintext auth_token values decrypted from the encrypted DB column.
-        # Visibility is enforced in SQL via ``_visible_agent_ids`` — no
-        # Python-side post-filter needed.
-        configs = service.list_push_configs_for_dispatch(
-            db,
-            agent_id=agent_id,
-            task_id=task_id,
-            user_email=user_email,
-            token_teams=token_teams,
-        )
-        return ORJSONResponse(status_code=200, content={"configs": configs})
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/push/delete/")
-@utility_router.post("/_internal/a2a/push/delete")
-async def handle_internal_a2a_push_delete(request: Request):
-    """Delete a push notification config for Rust A2A runtime."""
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        body = await request.json()
-        config_id = body.get("config_id")
-        if not config_id:
-            return ORJSONResponse(status_code=400, content={"error": "config_id is required"})
-
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-        cfg = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id).first()
-        if cfg and not await service._check_agent_access_by_id(db, cfg.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
-            logger.warning("A2A push-config id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on push/delete", config_id, cfg.a2a_agent_id, user_email, token_teams)
-            return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
-        deleted = service.delete_push_config(db, config_id)
-        if not deleted:
-            return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
-        return ORJSONResponse(status_code=200, content={"deleted": True})
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/events/flush/")
-@utility_router.post("/_internal/a2a/events/flush")
-async def handle_internal_a2a_events_flush(request: Request):
-    """Batch-insert streaming events to PG for durability."""
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        body = await request.json()
-        events = body.get("events", [])
-        if not events:
-            return ORJSONResponse(status_code=200, content={"count": 0})
-
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-
-        # Verify the caller has access to the agents that own the referenced tasks.
-        # Unknown task_ids (no matching row) previously slipped past this
-        # check — a caller could flush events for a task_id that does not
-        # exist yet, bypassing visibility entirely.  Reject the batch when
-        # any referenced task_id has no owning agent row.
-        task_ids = {e["task_id"] for e in events if "task_id" in e}
-        if task_ids:
-            tasks = db.query(DbA2ATask).filter(DbA2ATask.task_id.in_(task_ids)).all()
-            known_task_ids = {t.task_id for t in tasks}
-            unknown_task_ids = task_ids - known_task_ids
-            if unknown_task_ids:
-                logger.warning(
-                    "A2A events/flush denied: user=%s teams=%s references unknown task_id(s) %s",
-                    user_email,
-                    token_teams,
-                    sorted(unknown_task_ids),
-                )
-                return ORJSONResponse(
-                    status_code=400,
-                    content={"error": "events reference unknown task_ids", "unknown_task_ids": sorted(unknown_task_ids)},
-                )
-            agent_ids = {t.a2a_agent_id for t in tasks}
-            for agent_id in agent_ids:
-                if not await service._check_agent_access_by_id(db, agent_id, user_email, token_teams):  # pylint: disable=protected-access
-                    logger.warning("A2A events/flush denied: user=%s teams=%s lacks access to agent_id=%s (referenced by a flushed event)", user_email, token_teams, agent_id)
-                    return ORJSONResponse(status_code=403, content={"error": "access denied for one or more referenced tasks"})
-
-        count = service.flush_events(db, events)
-        return ORJSONResponse(status_code=200, content={"count": count})
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
-
-
-@utility_router.post("/_internal/a2a/events/replay/")
-@utility_router.post("/_internal/a2a/events/replay")
-async def handle_internal_a2a_events_replay(request: Request):
-    """Replay events from PG for stream reconnection."""
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
-
-    db = SessionLocal()
-    try:
-        body = await request.json()
-        task_id = body.get("task_id")
-        after_sequence = int(body.get("after_sequence", 0))
-        limit = min(int(body.get("limit", 1000)), 10000)
-        if not task_id:
-            return ORJSONResponse(status_code=400, content={"error": "task_id required"})
-
-        user_email, token_teams = _get_internal_a2a_scope_context(request)
-        service = A2AAgentService()
-        task_row = db.query(DbA2ATask).filter(DbA2ATask.task_id == task_id).first()
-        if task_row is None:
-            return ORJSONResponse(status_code=404, content={"error": "task not found"})
-        if not await service._check_agent_access_by_id(db, task_row.a2a_agent_id, user_email, token_teams):  # pylint: disable=protected-access
-            logger.warning("A2A task_id=%s (agent_id=%s) visibility-denied for user=%s teams=%s on events/replay", task_id, task_row.a2a_agent_id, user_email, token_teams)
-            return ORJSONResponse(status_code=404, content={"error": "task not found"})
-        events = service.replay_events(db, task_id, after_sequence, limit=limit)
-        return ORJSONResponse(status_code=200, content={"events": events})
-    except Exception:
-        logger.exception("Internal A2A endpoint error")
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110
-        raise
-    finally:
-        db.close()
 
 
 async def _maybe_forward_affinitized_rpc_request(
@@ -11402,195 +9345,6 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
     return await _handle_app_bridge_tools_call(db, request, app_session, params, req_id, requester_email)
 
 
-@utility_router.post("/_internal/mcp/tools/call/")
-@utility_router.post("/_internal/mcp/tools/call")
-async def handle_internal_mcp_tools_call(request: Request):
-    """Handle trusted tools/call requests forwarded from the local Rust runtime.
-
-    Args:
-        request: Trusted internal MCP tools/call request.
-
-    Returns:
-        dict: JSON-RPC response containing result on success,
-              or JSON-RPC error on plugin failures.
-              All plugin errors returned as structured JSON-RPC (never re-raised)
-              since this is an internal Rust↔Python interface.
-
-    Raises:
-        Exception: Propagated after best-effort rollback when unexpected failures occur.
-    """
-    req_id = None
-    db = SessionLocal()
-    try:
-        user = _build_internal_mcp_forwarded_user(request)
-        try:
-            body = orjson.loads(await request.body())
-        except orjson.JSONDecodeError:
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Parse error"},
-                    "id": None,
-                },
-            )
-
-        if not isinstance(body, dict) or body.get("method") != "tools/call":
-            return ORJSONResponse(
-                status_code=400,
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid Request"},
-                    "id": body.get("id") if isinstance(body, dict) else None,
-                },
-            )
-
-        req_id = body.get("id")
-        if req_id is None:
-            req_id = str(uuid.uuid4())
-        params = body.get("params", {})
-        if not isinstance(params, dict):
-            params = {}
-
-        server_id = request.headers.get("x-contextforge-server-id") or params.get("server_id")
-        if server_id:
-            _enforce_internal_mcp_server_scope(request, server_id)
-
-        lowered_request_headers = {k.lower(): v for k, v in request.headers.items()}
-        forwarded_response = await _maybe_forward_affinitized_rpc_request(
-            request,
-            method="tools/call",
-            params=params,
-            req_id=req_id,
-            lowered_request_headers=lowered_request_headers,
-            user=user,
-        )
-        if forwarded_response is not None:
-            return forwarded_response
-
-        if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
-            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
-
-        # Trust the pre-invoke-ran marker only on this internal endpoint
-        # (authenticated via x-contextforge-mcp-runtime-auth shared secret).
-        # External clients cannot reach this path.
-        pre_invoke_ran = lowered_request_headers.get("x-contextforge-pre-invoke-ran") == "true"
-
-        try:
-            result = await _execute_rpc_tools_call(
-                request,
-                db,
-                user,
-                req_id=req_id,
-                params=params,
-                lowered_request_headers=lowered_request_headers,
-                server_id=server_id,
-                skip_pre_invoke=pre_invoke_ran,
-            )
-        finally:
-            if db.is_active and db.in_transaction() is not None:
-                db.commit()
-            db.close()
-
-        return {"jsonrpc": "2.0", "result": result, "id": req_id}
-    except PluginViolationError as exc:
-        # Use violation's codes if present, otherwise JSON-RPC defaults
-        error_code = -32602  # Invalid params (JSON-RPC standard)
-        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
-            error_code = exc.violation.mcp_error_code
-
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
-    except PluginError as exc:
-        error_code = -32603  # Internal error (JSON-RPC standard)
-        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
-            error_code = exc.error.mcp_error_code
-
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
-    except JSONRPCError as e:
-        error = e.to_dict()
-        return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass  # nosec B110 - Best effort cleanup on connection failure
-
-
-@utility_router.post("/_internal/mcp/tools/call/metric/")
-@utility_router.post("/_internal/mcp/tools/call/metric")
-async def handle_internal_mcp_tools_call_metric(request: Request):
-    """Record buffered tool/server metrics for a Rust-direct `tools/call`.
-
-    Args:
-        request: Trusted internal metrics writeback request.
-
-    Returns:
-        ORJSONResponse acknowledging the buffered metric writeback.
-    """
-    _build_internal_mcp_forwarded_user(request)
-    try:
-        body = orjson.loads(await request.body())
-    except orjson.JSONDecodeError:
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid JSON body"})
-
-    if not isinstance(body, dict):
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid metrics payload"})
-
-    tool_id = body.get("toolId")
-    duration_ms = body.get("durationMs")
-    success = body.get("success")
-    server_id = body.get("serverId")
-    error_message = body.get("errorMessage")
-
-    if not isinstance(tool_id, str) or not tool_id.strip():
-        return ORJSONResponse(status_code=400, content={"detail": "Missing toolId"})
-    if not isinstance(duration_ms, (int, float)) or duration_ms < 0:
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid durationMs"})
-    if not isinstance(success, bool):
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid success flag"})
-    if server_id is not None and (not isinstance(server_id, str) or not server_id.strip()):
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid serverId"})
-    if error_message is not None and not isinstance(error_message, str):
-        return ORJSONResponse(status_code=400, content={"detail": "Invalid errorMessage"})
-
-    request_server_id = request.headers.get("x-contextforge-server-id")
-    if request_server_id:
-        _enforce_internal_mcp_server_scope(request, request_server_id)
-        if server_id and server_id != request_server_id:
-            return ORJSONResponse(status_code=400, content={"detail": "serverId does not match forwarded server scope"})
-        server_id = request_server_id
-
-    # First-Party
-    from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
-
-    metrics_buffer = get_metrics_buffer_service()
-    response_time = float(duration_ms) / 1000.0
-    metrics_buffer.record_tool_metric_with_duration(
-        tool_id=tool_id,
-        response_time=response_time,
-        success=success,
-        error_message=error_message,
-    )
-    if server_id:
-        metrics_buffer.record_server_metric_with_duration(
-            server_id=server_id,
-            response_time=response_time,
-            success=success,
-            error_message=error_message,
-        )
-
-    return ORJSONResponse(content={"status": "ok"})
-
-
 async def _handle_tools_list_rpc(
     request: Request,
     db: Session,
@@ -11727,7 +9481,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
 
         _trusted_internal_mcp_dispatch = get_internal_mcp_auth_context(request) is not None
         _tools_call_permission_checked = False
-        _internal_runtime_server_id = request_headers.get("x-contextforge-server-id") if _trusted_internal_mcp_dispatch and request_headers.get("x-contextforge-mcp-runtime") == "rust" else None
 
         if not _trusted_internal_mcp_dispatch:
             try:
@@ -11737,8 +9490,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
 
         if req_id is None:
             req_id = str(uuid.uuid4())
-        if _internal_runtime_server_id:
-            params["server_id"] = _internal_runtime_server_id
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
         mcp_session_id = _extract_mcp_session_id(request)
@@ -12054,15 +9805,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 logger.warning("Invalid elicitation params: %s", e)
                 raise JSONRPCError(-32602, safe_error_detail(e, "Invalid elicitation params"), params)
 
-            # Get target session (from params or find elicitation-capable session)
-            target_session_id = params.get("session_id") or params.get("sessionId")
-            if not target_session_id:
-                # Find an elicitation-capable session
-                capable_sessions = await session_registry.get_elicitation_capable_sessions()
-                if not capable_sessions:
-                    raise JSONRPCError(-32000, "No elicitation-capable clients available", {"message": elicit_params.message})
-                target_session_id = capable_sessions[0]
-                logger.debug("Selected session %s for elicitation", target_session_id)
+            timeout = _bounded_elicitation_timeout(params)
+            target_session_id = await _resolve_elicitation_target(request, user, params)
 
             # Verify session has elicitation capability
             if not await session_registry.has_elicitation_capability(target_session_id):
@@ -12070,9 +9814,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
 
             # Get elicitation service and create request
             elicitation_service = get_elicitation_service()
-
-            # Extract timeout from params or use default
-            timeout = params.get("timeout", settings.mcpgateway_elicitation_timeout)
 
             try:
                 # Create elicitation request - this stores it and waits for response
@@ -12139,6 +9880,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method.startswith("logging/"):
             # Catch-all for other logging/* methods (currently unsupported)
             result = {}
+        elif method == "subscriptions/listen":
+            # Streaming method: only the /mcp transport can serve it.
+            raise JSONRPCError(-32601, f"Method not found: {method}", {})
         elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
             # Check if this is a known MCP Apps method.
             if not mcp_method_registry.is_known_method(method):
@@ -12644,10 +10388,10 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
     elif entity.lower() == "prompt":
         await prompt_service.reset_metrics(db)
     elif entity.lower() in ("a2a_agent", "a2a"):
-        if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
-            await a2a_service.reset_metrics(db, str(entity_id) if entity_id is not None else None)
-        else:
-            raise HTTPException(status_code=400, detail="A2A features are disabled")
+        raise_if_a2a_disabled()
+        if not settings.mcpgateway_a2a_metrics_enabled:
+            raise HTTPException(status_code=400, detail="A2A metrics are disabled")
+        await a2a_service.reset_metrics(db, str(entity_id) if entity_id is not None else None)
     else:
         raise HTTPException(status_code=400, detail="Invalid entity type for metrics reset")
     return {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
@@ -13314,86 +11058,110 @@ app.include_router(server_well_known_router, prefix="/v1/virtual-servers")
 # prefix="/v1/tools" is hardcoded in the router — not versioned via v1_router to avoid /v1/v1/tools
 app.include_router(openapi_schema_router)
 
-# OAuth 2.0 protocol (/oauth/*) — standard location, not versioned
-try:
-    # First-Party
-    from mcpgateway.routers.oauth_router import oauth_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(oauth_router)
-    logger.info("OAuth router included")
-except ImportError:
-    logger.debug("OAuth router not available")
-
-# Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
-if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
-    try:
-        # First-Party
-        from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel
-
-        app.include_router(vault_router)
-        logger.info(
-            "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
-            settings.vault_addr,
-        )
-    except ImportError as e:
-        logger.error("Vault OAuth router not available: %s", e)
-else:
-    logger.debug("Vault OAuth router skipped (oauth_token_backend=%s)", settings.oauth_token_backend)
-
-# A2A agent plugin bindings router
-try:
-    # First-Party
-    from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(a2a_agent_plugin_bindings_router)
-    logger.info("A2A agent plugin bindings router included")
-except ImportError as e:
-    logger.error(f"A2A agent plugin bindings router not available: {e}")
-
-# MCP servers REST API router (provides POST /v1/mcp-servers/test for React UI)
-try:
-    # First-Party
-    from mcpgateway.routers.mcp_servers_router import router as mcp_servers_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(mcp_servers_router)
-    logger.info("MCP servers router included")
-except ImportError as e:
-    logger.error(f"MCP servers router not available: {e}")
-
-# Include log search router if structured logging is enabled
-if getattr(settings, "structured_logging_enabled", True):
-    try:
-        # First-Party
-        from mcpgateway.routers.log_search import router as log_search_router  # pylint: disable=import-outside-toplevel
-
-        app.include_router(log_search_router)
-        logger.info("Log search router included - structured logging enabled")
-    except ImportError as e:
-        logger.warning(f"Failed to import log search router: {e}")
-else:
-    logger.info("Log search router not included - structured logging disabled")
-
-# Include SIEM admin router for destination management and health endpoints
-if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
-    try:
-        # First-Party
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
-        from mcpgateway.routers.siem import router as siem_router
-
-        app.include_router(siem_router, dependencies=[Depends(enforce_admin_csrf)])
-        logger.info("SIEM router included")
-    except ImportError as e:  # pragma: no cover - optional import guard
-        logger.warning(f"SIEM router not available: {e}")
-else:
-    logger.info("SIEM router not included - admin API or SIEM export disabled")
-
 # NOTE: observability_router and metrics_maintenance_router are mounted via
 # _assemble_routers() → build_v1_router / build_legacy_router above.
 # Direct app.include_router() calls were removed to prevent double-registration
 # and to ensure DeprecationHeadersMiddleware covers their legacy (unversioned) paths.
 
-# LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
-# cannot be nested inside the v1_router prefix
+
+def _include_optional_routers(app: FastAPI) -> None:  # pylint: disable=redefined-outer-name
+    """Mount unversioned optional routers on *app*.
+
+    Covers OAuth, Vault OAuth, A2A agent plugin bindings, MCP servers REST,
+    log search, SIEM admin, and the LLM proxy. Each mount is guarded by its
+    feature flag and/or import guard so missing optional dependencies degrade
+    to a log line. Extracted from module level so flag- and import-dependent
+    mounting can be tested against a bare FastAPI app without re-importing
+    this module.
+
+    Args:
+        app: The FastAPI application to mount routers on.
+    """
+    # OAuth 2.0 protocol (/oauth/*) — standard location, not versioned
+    try:
+        # First-Party
+        from mcpgateway.routers.oauth_router import oauth_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(oauth_router)
+        logger.info("OAuth router included")
+    except ImportError:
+        logger.debug("OAuth router not available")
+
+    # Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
+    if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
+        try:
+            # First-Party
+            from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel
+
+            app.include_router(vault_router)
+            logger.info(
+                "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
+                settings.vault_addr,
+            )
+        except ImportError as e:
+            logger.error("Vault OAuth router not available: %s", e)
+    else:
+        logger.debug("Vault OAuth router skipped (oauth_token_backend=%s)", settings.oauth_token_backend)
+
+    # A2A agent plugin bindings router
+    try:
+        # First-Party
+        from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(a2a_agent_plugin_bindings_router)
+        logger.info("A2A agent plugin bindings router included")
+    except ImportError as e:
+        logger.error(f"A2A agent plugin bindings router not available: {e}")
+
+    # MCP servers REST API router (provides POST /v1/mcp-servers/test for React UI)
+    try:
+        # First-Party
+        from mcpgateway.routers.mcp_servers_router import router as mcp_servers_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(mcp_servers_router)
+        logger.info("MCP servers router included")
+    except ImportError as e:
+        logger.error(f"MCP servers router not available: {e}")
+
+    # Include log search router if structured logging is enabled
+    if getattr(settings, "structured_logging_enabled", True):
+        try:
+            # First-Party
+            from mcpgateway.routers.log_search import router as log_search_router  # pylint: disable=import-outside-toplevel
+
+            app.include_router(log_search_router)
+            logger.info("Log search router included - structured logging enabled")
+        except ImportError as e:
+            logger.warning(f"Failed to import log search router: {e}")
+    else:
+        logger.info("Log search router not included - structured logging disabled")
+
+    # Include SIEM admin router for destination management and health endpoints
+    if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
+        try:
+            # First-Party
+            from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
+            from mcpgateway.routers.siem import router as siem_router  # pylint: disable=import-outside-toplevel
+
+            app.include_router(siem_router, dependencies=[Depends(enforce_admin_csrf)])
+            logger.info("SIEM router included")
+        except ImportError as e:  # pragma: no cover - optional import guard
+            logger.warning(f"SIEM router not available: {e}")
+    else:
+        logger.info("SIEM router not included - admin API or SIEM export disabled")
+
+    # LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
+    # cannot be nested inside the v1_router prefix
+    if settings.llmchat_enabled:
+        try:
+            # First-Party
+            from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
+
+            _warn_llm_prefix_collision(settings.llm_api_prefix)
+            app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
+            logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
+        except ImportError as e:
+            logger.debug(f"LLM proxy router not available: {e}")
 
 
 def _warn_llm_prefix_collision(llm_prefix: str, gateway_prefix: str = "/v1") -> None:
@@ -13406,16 +11174,7 @@ def _warn_llm_prefix_collision(llm_prefix: str, gateway_prefix: str = "/v1") -> 
         )
 
 
-if settings.llmchat_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
-
-        _warn_llm_prefix_collision(settings.llm_api_prefix)
-        app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
-    except ImportError as e:
-        logger.debug(f"LLM proxy router not available: {e}")
+_include_optional_routers(app)
 
 # Feature flags for admin UI (logged for visibility; admin router is inside v1_router)
 UI_ENABLED = settings.mcpgateway_ui_enabled
@@ -13507,76 +11266,93 @@ mcp_transport_app = _build_mcp_transport_app()
 # Streamable http Mount
 app.mount("/mcp", app=MCPOriginHostGate(mcp_transport_app.handle_streamable_http))
 
+
+def _register_ui_routes(app: FastAPI) -> None:  # pylint: disable=redefined-outer-name
+    """Register UI routes (static assets, root redirect, favicon) or the API-info root route.
+
+    When the Admin UI is enabled, static assets are mounted, "/" redirects to
+    "/admin/", and "/favicon.ico" redirects into the static mount. When the UI
+    is disabled, "/" serves basic API info instead. Extracted from module level
+    so the branch can be tested against a bare FastAPI app without re-importing
+    this module.
+
+    Args:
+        app: The FastAPI application to register routes on.
+    """
+    # Conditional static files mounting and root redirect
+    if settings.mcpgateway_ui_enabled:
+        # Mount static files for UI
+        logger.info("Mounting static files - UI enabled")
+        try:
+            # Create a sub-application for static files that will respect root_path
+            static_app = StaticFiles(directory=str(settings.static_dir))
+            static_path = "/static"
+
+            app.mount(
+                static_path,
+                static_app,
+                name="static",
+            )
+            logger.info("Static assets served from %s at %s", settings.static_dir, static_path)
+        except RuntimeError as exc:
+            logger.warning(
+                "Static dir %s not found - Admin UI disabled (%s)",
+                settings.static_dir,
+                exc,
+            )
+
+        # Redirect root path to admin UI
+        @app.get("/")
+        async def root_redirect():  # pragma: no cover
+            """
+            Redirects the root path ("/") to "/admin/".
+
+            Logs a debug message before redirecting.
+
+            Returns:
+                RedirectResponse: Redirects to /admin/.
+
+            Raises:
+                HTTPException: If there is an error during redirection.
+            """
+            logger.debug("Redirecting root path to /admin/")
+            root_path = settings.app_root_path
+            return RedirectResponse(f"{root_path}/admin/", status_code=303)
+            # return RedirectResponse(request.url_for("admin_home"))
+
+        # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon_redirect() -> RedirectResponse:
+            """Redirect /favicon.ico to /static/favicon.ico for browser compatibility.
+
+            Returns:
+                RedirectResponse: 301 redirect to /static/favicon.ico.
+            """
+            root_path = settings.app_root_path
+            return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
+
+    else:
+        # If UI is disabled, provide API info at root
+        logger.warning("Static files not mounted - UI disabled via MCPGATEWAY_UI_ENABLED=False")
+
+        @app.get("/")
+        async def root_info():
+            """
+            Returns basic API information at the root path.
+
+            Logs an info message indicating UI is disabled and provides details
+            about the app, including its name, version, and whether the UI and
+            admin API are enabled.
+
+            Returns:
+                dict: API info with app name, version, and UI/admin API status.
+            """
+            logger.info("UI disabled, serving API info at root path")
+            return {"name": settings.app_name, "description": f"{settings.app_name} API"}
+
+
 # Conditional static files mounting and root redirect
-if UI_ENABLED:
-    # Mount static files for UI
-    logger.info("Mounting static files - UI enabled")
-    try:
-        # Create a sub-application for static files that will respect root_path
-        static_app = StaticFiles(directory=str(settings.static_dir))
-        STATIC_PATH = "/static"
-
-        app.mount(
-            STATIC_PATH,
-            static_app,
-            name="static",
-        )
-        logger.info("Static assets served from %s at %s", settings.static_dir, STATIC_PATH)
-    except RuntimeError as exc:
-        logger.warning(
-            "Static dir %s not found - Admin UI disabled (%s)",
-            settings.static_dir,
-            exc,
-        )
-
-    # Redirect root path to admin UI
-    @app.get("/")
-    async def root_redirect():  # pragma: no cover
-        """
-        Redirects the root path ("/") to "/admin/".
-
-        Logs a debug message before redirecting.
-
-        Returns:
-            RedirectResponse: Redirects to /admin/.
-
-        Raises:
-            HTTPException: If there is an error during redirection.
-        """
-        logger.debug("Redirecting root path to /admin/")
-        root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/admin/", status_code=303)
-        # return RedirectResponse(request.url_for("admin_home"))
-
-    # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
-    @app.get("/favicon.ico", include_in_schema=False)
-    async def favicon_redirect() -> RedirectResponse:
-        """Redirect /favicon.ico to /static/favicon.ico for browser compatibility.
-
-        Returns:
-            RedirectResponse: 301 redirect to /static/favicon.ico.
-        """
-        root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
-
-else:
-    # If UI is disabled, provide API info at root
-    logger.warning("Static files not mounted - UI disabled via MCPGATEWAY_UI_ENABLED=False")
-
-    @app.get("/")
-    async def root_info():
-        """
-        Returns basic API information at the root path.
-
-        Logs an info message indicating UI is disabled and provides details
-        about the app, including its name, version, and whether the UI and
-        admin API are enabled.
-
-        Returns:
-            dict: API info with app name, version, and UI/admin API status.
-        """
-        logger.info("UI disabled, serving API info at root path")
-        return {"name": settings.app_name, "description": f"{settings.app_name} API"}
+_register_ui_routes(app)
 
 
 # Expose some endpoints at the root level as well

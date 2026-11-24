@@ -534,6 +534,7 @@ class TestSessionRefreshAndValidate:
         mocks["audit"].return_value.log_action.assert_called_once()
         audit_kwargs = mocks["audit"].return_value.log_action.call_args.kwargs
         assert audit_kwargs["action"] == "session_refresh"
+        assert audit_kwargs.get("team_id") is None
         assert "db" not in audit_kwargs
         # session_start carried into the new token
         assert "session_start" in mocks["create_token"].call_args.kwargs["extra_claims"]

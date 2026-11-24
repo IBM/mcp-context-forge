@@ -156,6 +156,7 @@ class AuthCache:
             self._teams_list_enabled = getattr(settings, "auth_cache_teams_enabled", True)
             self._enabled = enabled if enabled is not None else getattr(settings, "auth_cache_enabled", True)
             self._cache_prefix = getattr(settings, "cache_prefix", "mcpgw:")
+            self._key_version = getattr(settings, "auth_cache_key_version", "v1")
         except ImportError:
             self._user_ttl = user_ttl or 60
             self._revocation_ttl = revocation_ttl or 30
@@ -165,6 +166,7 @@ class AuthCache:
             self._teams_list_enabled = True
             self._enabled = enabled if enabled is not None else True
             self._cache_prefix = "mcpgw:"
+            self._key_version = "v1"
 
         # In-memory cache (fallback when Redis unavailable)
         self._user_cache: Dict[str, CacheEntry] = {}
@@ -199,21 +201,25 @@ class AuthCache:
         )
 
     def _get_redis_key(self, key_type: str, identifier: str) -> str:
-        """Generate Redis key with proper prefix.
+        """Generate Redis key with prefix and namespace version.
+
+        The version segment isolates keys across auth modes: bumping
+        ``auth_cache_key_version`` makes every key written under the old
+        version unreachable (cold start) without flushing Redis.
 
         Args:
             key_type: Type of cache entry (user, team, revoke, ctx)
-            identifier: Unique identifier (email, jti, etc.)
+            identifier: Unique identifier (canonical user_id, jti, etc.)
 
         Returns:
-            Full Redis key with prefix
+            Full Redis key with prefix and version
 
         Examples:
             >>> cache = AuthCache()
             >>> cache._get_redis_key("user", "test@example.com")
-            'mcpgw:auth:user:test@example.com'
+            'mcpgw:auth:v1:user:test@example.com'
         """
-        return f"{self._cache_prefix}auth:{key_type}:{identifier}"
+        return f"{self._cache_prefix}auth:{self._key_version}:{key_type}:{identifier}"
 
     async def _get_redis_client(self):
         """Get Redis client if available.
@@ -249,7 +255,8 @@ class AuthCache:
         Returns None on cache miss.
 
         Args:
-            email: User email address
+            email: Canonical user_id of the user (phase-1 value = e-mail).
+                The Redis key carries the ``_key_version`` namespace prefix.
             jti: JWT ID for revocation check (optional)
 
         Returns:
@@ -341,7 +348,8 @@ class AuthCache:
         Stores in both Redis (if available) and in-memory cache.
 
         Args:
-            email: User email address
+            email: Canonical user_id of the user (phase-1 value = e-mail).
+                The Redis key carries the ``_key_version`` namespace prefix.
             jti: JWT ID (optional)
             context: Authentication context to cache
 
@@ -387,10 +395,11 @@ class AuthCache:
             )
 
     async def get_user(self, email: str) -> Optional[Dict[str, Any]]:
-        """Get cached user dict for a given email (L1 → L2 lookup).
+        """Get cached user dict for a given identity (L1 → L2 lookup).
 
         Args:
-            email: Normalised user email address.
+            email: Canonical user_id of the user (phase-1 value = e-mail).
+                The Redis key carries the ``_key_version`` namespace prefix.
 
         Returns:
             Cached user dict or None on cache miss.
@@ -440,7 +449,8 @@ class AuthCache:
         """Store user dict in cache (L2 then L1).
 
         Args:
-            email: Normalised user email address.
+            email: Canonical user_id of the user (phase-1 value = e-mail).
+                The Redis key carries the ``_key_version`` namespace prefix.
             user_dict: Serialisable user data dict.
 
         Examples:
@@ -827,8 +837,12 @@ class AuthCache:
     async def set_user_teams(self, cache_key: str, team_ids: List[str]) -> None:
         """Store team IDs for a user in cache.
 
+        The identifier inside the cache key is the canonical user_id
+        (phase-1 value = e-mail); the Redis key also carries the
+        ``_key_version`` namespace prefix.
+
         Args:
-            cache_key: Cache key in format "email:include_personal"
+            cache_key: Cache key in format "user_id:include_personal"
             team_ids: List of team IDs the user belongs to
 
         Examples:

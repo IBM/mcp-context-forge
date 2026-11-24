@@ -10,18 +10,49 @@ must implement, plus a plain dataclass for token records (no SQLAlchemy).
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 
 # Re-export canonical normalize_resource from utils.oauth_resource
 # (avoids duplication - refresh_helpers imports from here for backward compat)
 from mcpgateway.utils.oauth_resource import normalize_resource as normalize_resource_url
+from mcpgateway.services.oauth_manager import OAuthError
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 __all__ = ["TokenRecord", "AbstractTokenBackend", "normalize_resource_url"]
+
+
+@dataclass(frozen=True, slots=True)
+class AccessTokenDetails:
+    """Carry an access token and its metadata without a refresh token."""
+
+    access_token: str
+    expires_at: datetime | None
+    scopes: list[str]
+    token_type: str = "Bearer"  # nosec B105 - OAuth token_type default, not a credential
+
+
+class TokenReauthorizationRequired(OAuthError):
+    """The stored grant cannot supply a usable access token."""
+
+    def __init__(self, message: str = "OAuth reauthorization is required") -> None:
+        """Initialize the authorization failure.
+
+        Args:
+            message: Description of the unusable stored grant.
+        """
+        super().__init__(message)
+
+
+@dataclass
+class ValidationToken:
+    """A stored-token snapshot that never refreshes or exposes tokens through its representation."""
+
+    status: Literal["valid", "expired", "invalid", "unbound"]
+    access_token: str | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -122,6 +153,24 @@ class AbstractTokenBackend(ABC):
         """
 
     @abstractmethod
+    async def get_user_token_details(self, gateway_id: str, team_id: str | None, app_user_email: str, threshold_seconds: int = 300) -> AccessTokenDetails | None:
+        """Return token metadata together, preserving retrieval failure reasons.
+
+        Args:
+            gateway_id: Gateway identifier.
+            team_id: Token storage team scope.
+            app_user_email: Authenticated caller's email.
+            threshold_seconds: Refresh window in seconds.
+
+        Returns:
+            Access token details, or None when no token exists.
+
+        Raises:
+            TokenReauthorizationRequired: The user must authorize again.
+            OAuthError: The provider cannot refresh an expired token.
+        """
+
+    @abstractmethod
     async def get_user_token(
         self,
         gateway_id: str,
@@ -141,6 +190,22 @@ class AbstractTokenBackend(ABC):
         - If refresh succeeds, store new token and return it
         - If refresh fails, return None (user must re-authorize)
         """
+
+    async def read_validation_token(self, gateway_id: str, team_id: str | None, app_user_email: str) -> ValidationToken | None:
+        """Read a gateway-bound token without refresh, persistence, or cache updates.
+
+        Args:
+            gateway_id: Exact gateway identifier.
+            team_id: Token storage path context.
+            app_user_email: Authenticated caller identity.
+
+        Returns:
+            Token status and valid access token, or None when authorization is absent.
+
+        Raises:
+            NotImplementedError: If the backend cannot guarantee a read-only lookup.
+        """
+        raise NotImplementedError("Read-only token validation is unavailable")
 
     @abstractmethod
     async def get_token_info(

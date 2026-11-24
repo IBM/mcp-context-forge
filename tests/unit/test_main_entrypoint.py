@@ -52,3 +52,17 @@ class TestMainEntrypoint:
         assert len(uvicorn_calls) == 1
         args, kwargs = uvicorn_calls[0]
         assert args[0] == "mcpgateway.main:app"
+
+    def test_main_passes_forwarded_allow_ips_to_uvicorn(self, monkeypatch):
+        """uvicorn.run must receive settings.forwarded_allow_ips."""
+        uvicorn_calls: list[dict] = []
+        monkeypatch.setattr("uvicorn.run", lambda *a, **kw: uvicorn_calls.append(kw))
+
+        monkeypatch.setattr("mcpgateway.config.settings.forwarded_allow_ips", "10.1.2.0/24")
+
+        import mcpgateway.__main__ as entrypoint
+
+        importlib.reload(entrypoint)
+        entrypoint.main()
+
+        assert uvicorn_calls[0]["forwarded_allow_ips"] == "10.1.2.0/24"

@@ -65,16 +65,8 @@ class MetadataCapture:
             >>> context["via"]
             'ui'
         """
-        # Extract IP address (handle various proxy scenarios)
-        client_ip = None
-        if request.client:
-            client_ip = request.client.host
-
-        # Check for forwarded headers (reverse proxy support)
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            # Take the first IP in the chain (original client)
-            client_ip = forwarded_for.split(",")[0].strip()
+        # ProxyHeadersMiddleware resolves request.client for peers in FORWARDED_ALLOW_IPS.
+        client_ip = request.client.host if request.client else None
 
         # Extract user agent
         user_agent = request.headers.get("user-agent")

@@ -12,6 +12,7 @@ import concurrent.futures
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 import re
+import time
 
 # Third-Party
 import pytest
@@ -30,6 +31,28 @@ def _worker(pattern: str, text: str) -> bool:
         True when the pattern matches the subject.
     """
     return re.compile(pattern).search(text) is not None
+
+
+def _wait_until_dead(process, timeout: float) -> bool:
+    """Wait until a process reports dead.
+
+    The pool manager thread also reaps the process. When it reaps first, a single
+    ``join()`` can return while ``is_alive()`` is still True, because the other
+    thread has not yet recorded the exit code. Polling closes that window.
+
+    Args:
+        process: Process to watch.
+        timeout: Seconds to wait.
+
+    Returns:
+        True when the process is dead before the timeout.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        process.join(timeout=0.1)
+        if not process.is_alive():
+            return True
+    return not process.is_alive()
 
 
 @pytest.mark.parametrize("method", METHODS)
@@ -66,7 +89,6 @@ def test_start_method_worker_is_killable(method):
         for process in processes:
             process.kill()
         for process in processes:
-            process.join(timeout=30)
-            assert not process.is_alive()
+            assert _wait_until_dead(process, timeout=30)
     finally:
         pool.shutdown(wait=False, cancel_futures=True)

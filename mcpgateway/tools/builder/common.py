@@ -40,6 +40,7 @@ from rich.console import Console
 import yaml
 
 # First-Party
+from mcpgateway.config_sections import BuilderSettings
 from mcpgateway.tools.builder.schema import MCPStackConfig
 
 console = Console()
@@ -75,7 +76,7 @@ def get_deploy_dir() -> Path:
         ... else:
         ...     _ = os.environ.pop("MCP_DEPLOY_DIR", None)
     """
-    deploy_dir = os.environ.get("MCP_DEPLOY_DIR", "./deploy")
+    deploy_dir = BuilderSettings().mcp_deploy_dir
     return Path(deploy_dir)
 
 
