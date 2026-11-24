@@ -83,12 +83,12 @@ def anchored(project, monkeypatch):
 def test_build_py_configuration() -> None:
     """Resolve the configured hook and verify its container build copy."""
     project_root = Path(__file__).resolve().parents[3]
-    config = tomllib.loads((project_root / "pyproject.toml").read_text())
+    config = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
     module_name, class_name = config["tool"]["setuptools"]["cmdclass"]["build_py"].rsplit(".", 1)
     assert getattr(importlib.import_module(module_name), class_name) is BuildPyWithUI
 
     hook_path = f"{module_name.replace('.', '/')}.py"
-    assert f"COPY {hook_path} /app/{hook_path}" in (project_root / "Containerfile").read_text().splitlines()
+    assert f"COPY {hook_path} /app/{hook_path}" in (project_root / "Containerfile").read_text(encoding="utf-8").splitlines()
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +394,7 @@ def wheel_names(tmp_path_factory) -> list:
     static = project_dir / "mcpgateway" / "static"
     static.mkdir(parents=True)
     (project_dir / "mcpgateway" / "__init__.py").write_text("")
-    (project_dir / "mcpgateway" / "build_hooks.py").write_text(Path(bh_module.__file__).read_text())
+    (project_dir / "mcpgateway" / "build_hooks.py").write_bytes(Path(bh_module.__file__).read_bytes())
     (static / _WHEEL_BUNDLE_NAME).write_text("// vite bundle")
     (static / "tailwind.min.css").write_text("/* tailwind */")
     (static / "secret.txt").write_text("should not ship")
