@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 # Third-Party
-from playwright.sync_api import Browser, BrowserContext, expect
+from playwright.sync_api import Browser, BrowserContext, expect, Page
 import pytest
 
 # Local
@@ -36,6 +36,15 @@ def browser_context(browser: Browser, environment: BindingEnvironment, authentic
     return context
 
 
+def wait_for_headers(page: Page, captured: list[dict[str, str]], count: int) -> dict[str, str]:
+    """Wait until the asynchronous raw-header handler has recorded the requested entry."""
+    for _ in range(100):
+        if len(captured) >= count:
+            return captured[count - 1]
+        page.wait_for_timeout(50)
+    raise AssertionError(f"Expected {count} captured header sets, found {len(captured)}")
+
+
 def test_top_level_get_and_popup(browser: Browser, environment: BindingEnvironment) -> None:
     """Deliver host-only binding cookies across sites in redirects and popups."""
     context = browser_context(browser, environment)
@@ -46,7 +55,7 @@ def test_top_level_get_and_popup(browser: Browser, environment: BindingEnvironme
     initiations = []
     context.on("response", lambda response: initiations.append(response.all_headers()) if "/oauth/authorize/" in urlparse(response.url).path else None)
     try:
-        for popup in (False, True):
+        for attempt, popup in enumerate((False, True), start=1):
             page = context.new_page()
             if popup:
                 page.goto(environment.base_url + "/health")
@@ -67,7 +76,7 @@ def test_top_level_get_and_popup(browser: Browser, environment: BindingEnvironme
                 authorization_page.goto(environment.base_url + f"/oauth/authorize/{environment.gateway_id}")
             cookies = [cookie for cookie in context.cookies() if cookie["name"].startswith("oauth_bind_")]
             assert len(cookies) == 1
-            assert "Domain=" not in initiations[-1]["set-cookie"]
+            assert "Domain=" not in wait_for_headers(page, initiations, attempt)["set-cookie"]
             cookie = cookies[0]
             assert cookie["httpOnly"] and cookie["secure"] and cookie["sameSite"] == "Lax"
             assert cookie["domain"] == "127.0.0.1"
@@ -75,9 +84,9 @@ def test_top_level_get_and_popup(browser: Browser, environment: BindingEnvironme
             with authorization_page.expect_response(lambda response: urlparse(response.url).path.endswith("/oauth/callback")) as callback:
                 authorization_page.locator("#consent").click()
             assert callback.value.status == 200
-            assert cookie["name"] in callbacks[-1].get("cookie", "")
+            assert cookie["name"] in wait_for_headers(page, callbacks, attempt).get("cookie", "")
             assert not any(item["name"].startswith("oauth_bind_") for item in context.cookies())
-            assert "Domain=" not in responses[-1]["set-cookie"]
+            assert "Domain=" not in wait_for_headers(page, responses, attempt)["set-cookie"]
             if popup:
                 expect(page.locator("body")).to_have_attribute("data-oauth-status", "success")
                 assert page.evaluate("window.oauthMessages") == [{"type": "oauth_callback", "status": "success", "gatewayId": environment.gateway_id, "gatewayName": "binding-provider"}]
