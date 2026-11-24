@@ -283,7 +283,7 @@ Exports follow a standardized JSON schema:
   "entities": {
     "tools": [
       {
-        "id": "cbaa0f50d29e46bb85964aae97e35223",
+        "id": "<dummy-alpha-numeric-value>",
         "visibility": "team",
         "name": "weather_api",
         "url": "https://api.weather.com/v1/current",
@@ -295,7 +295,7 @@ Exports follow a standardized JSON schema:
     ],
     "gateways": [
       {
-        "id": "0f90f915a4f24039adb6c2d486b1c627",
+        "id": "<dummy-alpha-numeric-value>",
         "visibility": "team",
         "name": "production-east",
         "url": "https://prod-east.gateway.com:4444",
@@ -305,13 +305,13 @@ Exports follow a standardized JSON schema:
     ],
     "servers": [
       {
-        "id": "42e8b1f34e074b5e9924559bc6576062",
+        "id": "<dummy-alpha-numeric-value>",
         "visibility": "team",
         "name": "ai-tools-server",
         "description": "AI tools virtual server",
         "instructions": null,
-        "tool_ids": ["cbaa0f50d29e46bb85964aae97e35223"],
-        "tool_refs": [{"id": "cbaa0f50d29e46bb85964aae97e35223", "original_name": "weather_api"}],
+        "tool_ids": ["<dummy-alpha-numeric-value>"],
+        "tool_refs": [{"id": "<dummy-alpha-numeric-value>", "original_name": "weather_api"}],
         "tool_refs_complete": true
       }
     ]
@@ -320,7 +320,7 @@ Exports follow a standardized JSON schema:
     "entity_counts": {"tools": 1, "gateways": 1, "servers": 1},
     "dependencies": {
       "servers_to_tools": {
-        "ai-tools-server": ["cbaa0f50d29e46bb85964aae97e35223"]
+        "ai-tools-server": ["<dummy-alpha-numeric-value>"]
       }
     }
   }
