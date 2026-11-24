@@ -13,7 +13,7 @@ import uuid
 
 # First-Party
 from mcpgateway.schemas import ServerCreate, ServerUpdate
-from mcpgateway.services.server_service import _associate_server_entities, _attach_agent_tools, _update_server_associations
+from mcpgateway.services.server_service import _associate_server_entities, _sync_agent_tools, _update_server_associations
 from mcpgateway.db import A2AAgent as DbA2AAgent
 
 
@@ -43,14 +43,14 @@ def _db_returning(*objs):
     return db
 
 
-class TestAttachAgentTools:
+class TestSyncAgentTools:
     """The derived tool follows its agent."""
 
     def test_adds_the_tool_of_each_agent(self):
         tool = _tool(T1)
         server = _server(agents=[_agent(A1, tool)])
 
-        _attach_agent_tools(server)
+        _sync_agent_tools(server)
 
         assert server.tools == [tool]
 
@@ -58,14 +58,14 @@ class TestAttachAgentTools:
         tool = _tool(T1)
         server = _server(tools=[tool], agents=[_agent(A1, tool)])
 
-        _attach_agent_tools(server)
+        _sync_agent_tools(server)
 
         assert server.tools == [tool]
 
     def test_agent_without_a_tool_adds_nothing(self):
         server = _server(agents=[_agent(A1)])
 
-        _attach_agent_tools(server)
+        _sync_agent_tools(server)
 
         assert server.tools == []
 
@@ -74,15 +74,15 @@ class TestAttachAgentTools:
         dropped = _agent(A1, tool)
         server = _server(tools=[tool, other])
 
-        _attach_agent_tools(server, dropped_agents=[dropped])
+        _sync_agent_tools(server, dropped_agents=[dropped])
 
         assert server.tools == [other]
 
-    def test_dropped_agent_keeps_a_tool_the_caller_listed(self):
+    def test_dropped_agent_keeps_a_tool_that_another_agent_uses(self):
         tool = _tool(T1)
-        server = _server(tools=[tool])
+        server = _server(tools=[tool], agents=[_agent(A2, tool)])
 
-        _attach_agent_tools(server, dropped_agents=[_agent(A1, tool)], keep_tool_ids={T1})
+        _sync_agent_tools(server, dropped_agents=[_agent(A1, tool)])
 
         assert server.tools == [tool]
 
@@ -91,7 +91,7 @@ class TestAttachAgentTools:
         agent = _agent(A1, tool)
         server = _server(tools=[tool], agents=[agent])
 
-        _attach_agent_tools(server, dropped_agents=[agent])
+        _sync_agent_tools(server, dropped_agents=[agent])
 
         assert server.tools == [tool]
 
@@ -153,13 +153,22 @@ class TestUpdateKeepsTools:
 
         assert server.tools == [] and server.a2a_agents == []
 
-    def test_removing_an_agent_keeps_a_tool_the_payload_lists(self):
+    def test_removing_an_agent_removes_its_tool_even_when_the_payload_lists_it(self):
+        """A client that sends back a read removes the agent and keeps the old tool list."""
         tool = _tool(T1)
         server = _server(tools=[tool], agents=[_agent(A1, tool)])
 
         _update_server_associations(_db_returning(tool), server, ServerUpdate(associated_a2a_agents=[], associated_tools=[T1]))
 
-        assert server.tools == [tool]
+        assert server.a2a_agents == [] and server.tools == []
+
+    def test_rename_does_not_reattach_a_tool_the_operator_detached(self):
+        tool = _tool(T1)
+        server = _server(tools=[], agents=[_agent(A1, tool)])
+
+        _update_server_associations(_db_returning(), server, ServerUpdate(description="x"))
+
+        assert server.tools == []
 
     def test_update_without_association_fields_changes_nothing(self):
         tool = _tool(T1)

@@ -92,3 +92,15 @@ def test_put_without_the_derived_tool_does_not_detach_it(gateway):  # noqa: F811
 
     assert replaced.status_code == 200, replaced.text
     assert f"a2a_{agent['slug']}" in _tool_names(gateway, server_id)
+
+
+def test_read_back_put_that_removes_the_agent_removes_its_tool(gateway):  # noqa: F811
+    """A client that sends back the read tool list and removes the agent detaches the tool."""
+    agent = _agent(gateway)
+    server_id = _server(gateway, associated_a2a_agents=[agent["id"]])
+    read = _request(gateway, "GET", f"/servers/{server_id}").json()
+
+    removed = _request(gateway, "PUT", f"/servers/{server_id}", json={"associated_a2a_agents": [], "associated_tools": read["associatedToolIds"]})
+
+    assert removed.status_code == 200, removed.text
+    assert _tool_names(gateway, server_id) == []

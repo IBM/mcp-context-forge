@@ -14,7 +14,7 @@ It also publishes event notifications for server changes.
 import asyncio
 import binascii
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Sequence, Set, Union
+from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Sequence, Union
 from uuid import uuid4
 
 # Third-Party
@@ -103,7 +103,10 @@ SERVER_ASSOCIATION_TYPES: list[_AssociationType] = [
     for m in SERVER_ASSOCIABLE_ENTITY_MODELS
 ]
 
-SERVER_ASSOCIATION_SELECTINLOADS: list[Any] = [selectinload(getattr(DbServer, at.rel_attr)) for at in SERVER_ASSOCIATION_TYPES]
+SERVER_ASSOCIATION_SELECTINLOADS: list[Any] = [
+    *(selectinload(getattr(DbServer, at.rel_attr)) for at in SERVER_ASSOCIATION_TYPES),
+    selectinload(DbServer.a2a_agents).selectinload(DbA2AAgent.tool),
+]
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -240,31 +243,34 @@ class ServerNameConflictError(ServerError):
         super().__init__(message)
 
 
-def _attach_agent_tools(server: DbServer, dropped_agents: Optional[List[DbA2AAgent]] = None, keep_tool_ids: Optional[Set[str]] = None) -> None:
-    """Keep the derived tool of each associated A2A agent on the server.
+def _sync_agent_tools(server: DbServer, dropped_agents: Optional[List[DbA2AAgent]] = None) -> None:
+    """Sync the derived tools of the A2A agents on a server.
 
     MCP clients list a server's tools from ``server_tool_association``. They never read
     ``server_a2a_association``. An agent is callable through a server only when its
-    derived tool is in ``server.tools``.
+    derived tool is in ``server.tools``. The tool of each associated agent is attached,
+    and the tool of each dropped agent is detached.
 
     Args:
         server: Server ORM instance to modify.
-        dropped_agents: Agents the caller detached in this change. Their derived tools leave the server.
-        keep_tool_ids: Tool IDs the caller listed explicitly. Those tools stay even when their agent is dropped.
+        dropped_agents: Agents the caller detached in this change. Their derived tools leave the server,
+            unless an agent that stays on the server uses the same tool.
     """
-    keep = keep_tool_ids or set()
     current = {tool.id for tool in server.tools}
     for agent in server.a2a_agents:
-        tool = getattr(agent, "tool", None)
+        tool = agent.tool
         if tool is not None and tool.id not in current:
             server.tools.append(tool)
             current.add(tool.id)
+            logger.info("A2A agent %s tool %s attached to server %s", agent.name, tool.id, server.name)
+    still_used = {agent.tool.id for agent in server.a2a_agents if agent.tool is not None}
     still_attached = {agent.id for agent in server.a2a_agents}
     for agent in dropped_agents or []:
-        tool = getattr(agent, "tool", None)
-        if agent.id not in still_attached and tool is not None and tool.id not in keep and tool.id in current:
+        tool = agent.tool
+        if agent.id not in still_attached and tool is not None and tool.id not in still_used and tool.id in current:
             server.tools.remove(tool)
             current.discard(tool.id)
+            logger.info("A2A agent %s tool %s detached from server %s", agent.name, tool.id, server.name)
 
 
 def _associate_server_entities(db: Session, db_server: DbServer, server_in: ServerCreate) -> None:
@@ -299,7 +305,7 @@ def _associate_server_entities(db: Session, db_server: DbServer, server_in: Serv
             rel.append(obj)
             if at.model is DbA2AAgent:
                 logger.info("A2A agent %s associated with server %s", obj.name, db_server.name)
-    _attach_agent_tools(db_server)
+    _sync_agent_tools(db_server)
 
 
 def _apply_server_interfaces(server: DbServer, interfaces: Optional[List[ServerInterfaceInput]]) -> None:
@@ -337,7 +343,8 @@ def _update_server_associations(db: Session, server: DbServer, server_update: Se
     ``None``), clears the existing relationship and re-populates it from the
     supplied IDs.
     """
-    previous_agents = list(server.a2a_agents)
+    changes_agent_tools = any(getattr(server_update, field, None) is not None for field in ("associated_tools", "associated_a2a_agents"))
+    previous_agents: List[DbA2AAgent] = list(server.a2a_agents) if changes_agent_tools else []
     for at in SERVER_ASSOCIATION_TYPES:
         new_ids = getattr(server_update, at.input_field, None)
         if new_ids is None:
@@ -347,8 +354,8 @@ def _update_server_associations(db: Session, server: DbServer, server_update: Se
         if ids:
             objs = db.execute(select(at.model).where(at.model.id.in_(ids))).scalars().all()
             setattr(server, at.rel_attr, list(objs))
-    explicit_tool_ids = {id_ for id_ in (server_update.associated_tools or []) if id_}
-    _attach_agent_tools(server, dropped_agents=previous_agents, keep_tool_ids=explicit_tool_ids)
+    if changes_agent_tools:
+        _sync_agent_tools(server, dropped_agents=previous_agents)
 
 
 class ServerService(BaseService):
