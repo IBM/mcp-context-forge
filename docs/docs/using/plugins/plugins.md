@@ -105,6 +105,7 @@ Plugins for network operations and external system integration.
 | [Header Injector](https://github.com/IBM/mcp-context-forge/tree/main/plugins/header_injector) | Native | Injects custom HTTP headers for resource fetch requests via payload metadata |
 | [Webhook Notification](https://github.com/IBM/mcp-context-forge/tree/main/plugins/webhook_notification) | Native | Sends HTTP webhook notifications on events, violations, and state changes with customizable templates |
 | [Vault](https://github.com/IBM/mcp-context-forge/tree/main/plugins/vault) | Native | Generates bearer tokens based on vault-saved tokens for secure authentication |
+| [Web Bot Auth](https://github.com/IBM/mcp-context-forge/tree/main/plugins/web_bot_auth) | Native | Signs outbound tool and A2A calls with Web Bot Auth (RFC 9421 HTTP Message Signatures, Ed25519) so upstream servers can verify the gateway |
 
 
 ## Policy Enforcement

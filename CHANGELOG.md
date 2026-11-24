@@ -9,6 +9,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Web Bot Auth signing plugin** ([#7675](https://github.com/IBM/mcp-context-forge/issues/7675)): The new `WebBotAuthPlugin` signs outbound tool calls and A2A agent calls with Web Bot Auth (draft-ietf-webbotauth-httpsig-protocol, RFC 9421 HTTP Message Signatures, Ed25519). An upstream server or its CDN can then verify that a request comes from the gateway.
+    - The plugin signs only https destinations that match the `hosts` list. It removes `Signature`, `Signature-Input`, and `Signature-Agent` headers that come from the client.
+    - The key comes from `WEB_BOT_AUTH_PRIVATE_KEY` or `private_key_file`. An enabled plugin without a key fails at startup. The plugin ships disabled in `plugins/config.yaml`. See [the plugin README](plugins/web_bot_auth/README.md).
+
 ## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
 
 ### Overview
