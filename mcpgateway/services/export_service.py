@@ -530,7 +530,7 @@ class ExportService:
         query_auth = {}
         if gateway_ids:
             stmt = select(DbGateway.id, DbGateway.auth_query_params).where(DbGateway.id.in_(gateway_ids))
-            query_auth = dict(db.execute(stmt).tuples())
+            query_auth = {gateway_id: params for gateway_id, params in db.execute(stmt)}  # pylint: disable=R1721
         return [entry for gateway in gateways if (entry := self._gateway_export_entry(gateway, query_auth.get(str(gateway.id)))) is not None]
 
     @staticmethod
