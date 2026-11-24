@@ -1,0 +1,15 @@
+description: "Signs outbound tool and A2A calls with Web Bot Auth (RFC 9421 HTTP Message Signatures, Ed25519) so upstream servers can verify the gateway."
+author: "Tejaswi Suresh"
+version: "0.1.0"
+tags: ["security", "identity", "signing", "web-bot-auth", "rfc9421"]
+available_hooks:
+  - "tool_pre_invoke"
+  - "agent_pre_invoke"
+default_config:
+  signature_agent: "https://example.com/.well-known/http-message-signatures-directory"
+  private_key_env: "WEB_BOT_AUTH_PRIVATE_KEY"
+  private_key_file: null
+  hosts: []
+  expires_in: 60
+  legacy_signature_agent: false
+  allow_insecure_loopback: false

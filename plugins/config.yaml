@@ -1307,6 +1307,23 @@ plugins:
         timeout_ms: 1000
         parallel_evaluation: true
 
+  # Web Bot Auth — signs outbound tool and A2A calls (RFC 9421, Ed25519) so upstream servers can verify the gateway
+  - name: "WebBotAuthPlugin"
+    kind: "plugins.web_bot_auth.web_bot_auth.WebBotAuthPlugin"
+    description: "Signs outbound tool and A2A calls with Web Bot Auth HTTP Message Signatures"
+    version: "0.1.0"
+    author: "Tejaswi Suresh"
+    hooks: ["tool_pre_invoke", "agent_pre_invoke"]
+    tags: ["security", "identity", "signing", "web-bot-auth", "rfc9421"]
+    mode: "disabled"  # set to "sequential" to activate; needs WEB_BOT_AUTH_PRIVATE_KEY
+    priority: 900  # Run late, after plugins that change outbound headers
+    conditions: []
+    config:
+      signature_agent: "https://example.com/.well-known/http-message-signatures-directory"
+      private_key_env: "WEB_BOT_AUTH_PRIVATE_KEY"  # pragma: allowlist secret
+      hosts: []
+      expires_in: 60
+
   # JWT Claims Extraction — extracts claims for downstream Cedar/OPA authorization
   - name: "JwtClaimsExtractionPlugin"
     kind: "plugins.jwt_claims_extraction.jwt_claims_extraction.JwtClaimsExtractionPlugin"
