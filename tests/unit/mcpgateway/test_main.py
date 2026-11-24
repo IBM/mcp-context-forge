@@ -4923,6 +4923,33 @@ class TestA2AAgentEndpoints:
         assert response.status_code == 201
         mock_service.register_agent.assert_called_once()
 
+    @pytest.mark.parametrize("missing", ["client_id", "client_secret"])
+    @patch("mcpgateway.main.a2a_service")
+    def test_create_a2a_agent_oauth_without_credentials_is_422(self, mock_service, missing, test_client, auth_headers):
+        """An OAuth agent without client_id or client_secret is rejected at registration, not at first invocation."""
+        mock_service.register_agent = AsyncMock(return_value=_make_a2a_agent_read())
+        config = {"grant_type": "client_credentials", "token_url": "https://idp.example.com/token", "client_id": "cid", "client_secret": "s3cret"}  # pragma: allowlist secret
+        del config[missing]
+        payload = _a2a_create_payload()
+        payload["agent"].update(auth_type="oauth", oauth_config=config)
+        response = test_client.post("/a2a", json=payload, headers=auth_headers)
+        assert response.status_code == 422
+        assert missing in response.text
+        mock_service.register_agent.assert_not_called()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_create_a2a_agent_oauth_with_credentials_is_201(self, mock_service, test_client, auth_headers):
+        """An OAuth agent that carries client credentials still registers."""
+        mock_service.register_agent = AsyncMock(return_value=_make_a2a_agent_read())
+        payload = _a2a_create_payload()
+        payload["agent"].update(
+            auth_type="oauth",
+            oauth_config={"grant_type": "client_credentials", "token_url": "https://idp.example.com/token", "client_id": "cid", "client_secret": "s3cret"},  # pragma: allowlist secret
+        )
+        response = test_client.post("/a2a", json=payload, headers=auth_headers)
+        assert response.status_code == 201
+        mock_service.register_agent.assert_called_once()
+
     @pytest.mark.parametrize(
         "exc,status_code",
         [
