@@ -104,8 +104,8 @@ class TestTeamMemberRoles:
         team_id = team_with_member["team"]["id"]
         member = team_with_member["member_email"]
 
-        # Leave as the member
-        member_jwt = _make_jwt(member, is_admin=False)
+        # Leave as the member. Team routes require the target team in the teams claim.
+        member_jwt = _make_jwt(member, is_admin=False, teams=[team_id])
         member_ctx = playwright.request.new_context(
             base_url=BASE_URL,
             extra_http_headers={"Authorization": f"Bearer {member_jwt}", "Accept": "application/json"},
