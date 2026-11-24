@@ -50,7 +50,7 @@ restores upstream names for federated resources and discards manual base overrid
 ## 🔐 Security Features
 
 - **Credential handling**: Exports omit recognized credentials. Imports ignore those values in older files. Unrecognized header names and query keys keep their values.
-- **Cross-Environment Support**: Key rotation capabilities for moving configs between environments
+- **Cross-Environment Support**: Move configuration and set credentials on the destination
 - **Validation**: Complete JSON schema validation for import data integrity
 - **Conflict Resolution**: Multiple strategies for handling naming conflicts during import
 
@@ -153,6 +153,10 @@ mcpgateway import backup.json --conflict-strategy fail    # Fail on conflicts
 
 Without `--team-name`, new entities go into your personal team. With `--team-name`, the import targets that team. Imported entities keep explicit visibility from the file where the operation permits it. When you supply a selection, the import processes only the entity types in that selection. A selected gateway can still discover its own upstream tools, resources, and prompts.
 
+A file containing roots requires an unrestricted platform administrator, even when the selection omits roots.
+
+This release removes `--rekey-secret` and `rekey_secret`. The CLI rejects the flag. After authorization, the API and Admin import endpoints return HTTP 400 if the field is present, including when its value is `null`. Use `python -m mcpgateway.scripts.migrate_enc_secret` for [encryption secret rotation](../operations/auth-encryption-secret-rotation.md).
+
 Live import uses one transaction so a fatal error can roll back all registry changes. On PostgreSQL, row locks from successful items can remain held during upstream gateway discovery until the import commits.
 
 An export can omit server tool bindings that are outside its visibility or activity filters. Import reports those omissions and preserves the destination server's existing bindings. Import also preserves existing bindings if any reference in the file cannot resolve.
@@ -217,9 +221,9 @@ mcpgateway import backup.json --conflict-strategy update
 ```bash
 mcpgateway import backup.json --conflict-strategy rename
 ```
-- **Behavior**: Rename conflicting entities with timestamp suffix
+- **Behavior**: Rename conflicting entities with the first available numbered suffix
 - **Use Case**: Preserving both old and new configurations
-- **Result**: Creates `entity_name_imported_1640995200`
+- **Result**: Creates a name such as `entity_name_imported_1`
 
 ### Fail Strategy
 ```bash
@@ -227,15 +231,15 @@ mcpgateway import backup.json --conflict-strategy fail
 ```
 - **Behavior**: Fail import on any naming conflict
 - **Use Case**: Strict imports where conflicts indicate errors
-- **Result**: Import stops on first conflict
+- **Result**: Import stops on the first conflict, rolls back all changes, and returns HTTP 409
 
 ---
 
 ## 🌍 Cross-Environment Migration
 
-### Key Rotation
+### Move Configuration
 
-When moving configurations between environments with different encryption keys:
+Export configuration from the source and import it into the destination. Configure credentials on the destination after import.
 
 ```bash
 # Export from source environment
@@ -279,30 +283,36 @@ Exports follow a standardized JSON schema:
   "entities": {
     "tools": [
       {
+        "id": "cbaa0f50d29e46bb85964aae97e35223",
+        "visibility": "team",
         "name": "weather_api",
         "url": "https://api.weather.com/v1/current",
         "integration_type": "REST",
         "request_type": "GET",
-        "auth_type": "bearer",
-        "auth_value": "encrypted_token_here",
+        "credentials_required": true,
         "tags": ["weather", "api"]
       }
     ],
     "gateways": [
       {
+        "id": "0f90f915a4f24039adb6c2d486b1c627",
+        "visibility": "team",
         "name": "production-east",
         "url": "https://prod-east.gateway.com:4444",
-        "auth_type": "basic",
+        "credentials_required": true,
         "transport": "SSE"
       }
     ],
     "servers": [
       {
+        "id": "42e8b1f34e074b5e9924559bc6576062",
+        "visibility": "team",
         "name": "ai-tools-server",
         "description": "AI tools virtual server",
         "instructions": null,
-        "tool_ids": ["weather_api", "translate_text"],
-        "capabilities": {"tools": {"list_changed": true}}
+        "tool_ids": ["cbaa0f50d29e46bb85964aae97e35223"],
+        "tool_refs": [{"id": "cbaa0f50d29e46bb85964aae97e35223", "original_name": "weather_api"}],
+        "tool_refs_complete": true
       }
     ]
   },
@@ -310,7 +320,7 @@ Exports follow a standardized JSON schema:
     "entity_counts": {"tools": 1, "gateways": 1, "servers": 1},
     "dependencies": {
       "servers_to_tools": {
-        "ai-tools-server": ["weather_api", "translate_text"]
+        "ai-tools-server": ["cbaa0f50d29e46bb85964aae97e35223"]
       }
     }
   }
@@ -360,7 +370,7 @@ Import data is validated for:
 
 ## 📊 Import Progress Tracking
 
-Import status is local to the worker that processed the request. The import response includes the outcome counts, unresolved reference warnings, and any entities listed in `credentials_required`.
+Import status is local to the worker that processed the request. API responses include outcome counts, unresolved reference warnings, and a `credentials_required` list. Status lookup, listing, and cleanup use the caller's current scope. A lookup outside that scope returns HTTP 404.
 
 ### Real-time Status
 
@@ -391,8 +401,9 @@ curl -H "Authorization: Bearer $TOKEN" \
     "skipped": 5,
     "failed": 0
   },
+  "credentials_required": [{"type": "gateways", "identifier": "production-east"}],
   "errors": [],
-  "warnings": ["Renamed tool 'duplicate_name' to 'duplicate_name_imported_1640995200'"]
+  "warnings": []
 }
 ```
 
@@ -502,9 +513,9 @@ mcpgateway export --include-inactive --types tools
 
 #### Import reports credentials required
 
-Configure credentials on the destination for the entities listed in `credentials_required`. A gateway that needs credentials remains pending and unreachable until you configure them. Imports keep destination credentials for same-origin updates. A change to a different URL origin clears the old credentials.
+Configure credentials on the destination for the entities listed in the API response's `credentials_required` field. A gateway that needs credentials remains pending and unreachable until you configure them. Imports keep destination credentials for same-origin updates. A change to a different URL origin clears the old credentials.
 
-Use `scripts/migrate_enc_secret.py` to rotate the encryption secret.
+Use `python -m mcpgateway.scripts.migrate_enc_secret` to [rotate the encryption secret](../operations/auth-encryption-secret-rotation.md).
 
 #### Import Conflicts Not Resolving
 ```bash
@@ -532,7 +543,9 @@ mcpgateway import backup.json --types servers
 |-----------|---------|------------|
 | 400 | Bad Request - Invalid data | Check export file format and required fields |
 | 401 | Unauthorized | Verify `MCPGATEWAY_BEARER_TOKEN` or basic auth credentials |
-| 409 | Conflict | Naming conflicts detected - choose resolution strategy |
+| 403 | Forbidden | Check import permissions, destination team scope, and root authority |
+| 404 | Import status unavailable | Check the ID and current import status scope |
+| 409 | Conflict; import rolled back | Choose a different conflict strategy |
 | 422 | Validation Error | Export data doesn't match expected schema |
 | 500 | Internal Error | Check server logs for detailed error information |
 
@@ -553,8 +566,8 @@ mcpgateway import backup.json --types servers
 |--------|----------|-------------|
 | `POST` | `/import` | Import configuration with conflict resolution |
 | `GET` | `/import/status/{id}` | Get import operation status |
-| `GET` | `/import/status` | List all import operations |
-| `POST` | `/import/cleanup` | Clean up completed import statuses |
+| `GET` | `/import/status` | List import operations within the caller's scope |
+| `POST` | `/import/cleanup` | Clean up eligible terminal statuses within the caller's scope |
 
 ### Query Parameters
 

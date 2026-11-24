@@ -34,6 +34,9 @@ mcpgateway import backup.json
 # Dry-run validation
 mcpgateway import backup.json --dry-run
 
+# Import into a named team
+mcpgateway import backup.json --team-name "Operations"
+
 # Skip conflicts
 mcpgateway import backup.json --conflict-strategy skip
 
@@ -119,8 +122,8 @@ MCPGATEWAY_BULK_IMPORT_RATE_LIMIT=10
 |----------|----------|----------|
 | `skip` | Skip existing entities | Additive imports |
 | `update` | Overwrite existing entities | Environment promotion |
-| `rename` | Add timestamp suffix | Preserve both versions |
-| `fail` | Stop on conflicts | Strict validation |
+| `rename` | Add a numbered suffix such as `_imported_1` | Preserve both versions |
+| `fail` | Roll back the import on conflict and return HTTP 409 | Strict validation |
 
 ---
 
@@ -202,13 +205,9 @@ jq empty export.json
 jq 'has("version") and has("entities")' export.json
 ```
 
-### "Encryption/Decryption Failed"
-```bash
-# Ensure consistent encryption key
+### Import reports credentials required
 
-# Preview the import in the destination environment
-mcpgateway import backup.json --dry-run
-```
+Configure credentials on the destination for each entity listed in the API response's `credentials_required` field. To rotate an instance's encryption secret, follow the [rotation guide](../operations/auth-encryption-secret-rotation.md).
 
 ---
 

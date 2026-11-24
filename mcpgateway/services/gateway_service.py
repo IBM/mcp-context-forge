@@ -880,7 +880,7 @@ def classify_connection_failure(exc: BaseException) -> str:
 _IMPORT_CREDENTIALS_REQUIRED = "Import requires gateway credentials"
 
 
-def gateway_requires_credentials(gateway: DbGateway) -> bool:
+def gateway_requires_credentials(gateway: DbGateway | GatewayRead) -> bool:
     """Return whether an imported gateway is blocked on credentials."""
     return getattr(gateway, "status", None) == "pending" and getattr(gateway, "status_message", None) == _IMPORT_CREDENTIALS_REQUIRED
 

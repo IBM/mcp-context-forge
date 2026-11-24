@@ -80,7 +80,7 @@ graph TB
 
 - Entity collection from all service layers
 - Data transformation to export schema format
-- Authentication data encryption using existing utilities
+- Removal of recognized credentials from export data
 - Dependency resolution between entities
 - Export data validation and schema compliance
 
@@ -105,7 +105,7 @@ graph TB
 
 - `import_configuration()` - Main import orchestration
 - `validate_import_data()` - Schema validation
-- `_process_entities()` - Entity processing pipeline
+- `_run_import()` and `_apply_import_entry()` - Import and item processing
 - `get_import_status()` - Progress tracking
 
 ### CLI Interface (`mcpgateway.cli_export_import`)
@@ -132,9 +132,9 @@ graph TB
 
 Full and selective exports omit recognized credentials. Imports discard recognized credential fields and keys from older files before validating or applying entity changes. Unrecognized header names and query keys keep their values. Logs identify ignored fields by key only.
 
-An update can keep destination credentials when the URL origin stays the same. An origin change clears the old credentials before any request to the new origin. A gateway that requires credentials stays pending and unreachable until an authorized user configures them. The import result lists those entities in `credentials_required`.
+An update can keep destination credentials when the URL origin stays the same. An origin change clears the old credentials before any request to the new origin. A gateway that requires credentials stays pending and unreachable until an authorized user configures them. The import API response lists those entities in `credentials_required`.
 
-Use `scripts/migrate_enc_secret.py` to rotate the encryption secret for an instance.
+Use `python -m mcpgateway.scripts.migrate_enc_secret` to [rotate the encryption secret](../operations/auth-encryption-secret-rotation.md).
 
 ---
 
@@ -155,8 +155,8 @@ graph LR
 
     subgraph "Processing"
         Filter --> Transform[Data Transformation]
-        Transform --> Preserve[Auth Preservation - encrypted at rest]
-        Preserve --> Deps[Dependency Resolution]
+        Transform --> Strip[Credential Removal]
+        Strip --> Deps[Dependency Resolution]
         Deps --> Validate[Validation]
     end
 
@@ -352,7 +352,7 @@ class CustomImportValidator:
 ### Integration Test Coverage
 
 - **End-to-End Workflows**: Complete export → import cycles
-- **Cross-Environment**: Key rotation and migration scenarios
+- **Cross-Environment**: Configuration migration and destination credentials
 - **Error Handling**: Network failures, invalid data, auth errors
 - **Performance**: Large configuration handling
 

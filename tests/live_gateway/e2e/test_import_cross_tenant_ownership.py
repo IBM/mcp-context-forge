@@ -197,7 +197,7 @@ def test_repeat_import_prefers_owned_server_to_teammates_server(isolated_gateway
     _api(admin, "POST", f"/teams/{team_id}/members", json={"email": teammate, "role": "member"})
     team_name = _api(admin, "GET", f"/teams/{team_id}")["name"]
     payload = _import_payload(_VICTIM_URL)
-    payload["import_data"]["entities"] = {"servers": [{"name": "shared-server", "description": "original"}]}
+    payload["import_data"]["entities"] = {"servers": [{"name": "shared-server", "description": "original", "visibility": None}]}
     for actor in (teammate, owner):
         _grant(admin, actor, ["admin.import"], scope="global")
         with _client_for(base_url, signing_key, actor, team_id) as client:
@@ -213,6 +213,7 @@ def test_repeat_import_prefers_owned_server_to_teammates_server(isolated_gateway
     servers = _api(admin, "GET", "/v1/servers", params={"limit": 0})
     descriptions = {server["ownerEmail"]: server["description"] for server in servers if server["name"] == "shared-server"}
     assert descriptions == {owner: "owner update", teammate: "original"}
+    assert {server["visibility"] for server in servers if server["name"] == "shared-server"} == {"team"}
 
 
 @pytest.mark.parametrize("isolated_gateway", [{"ROOT_ALLOWED_SCHEMES": '["https"]'}], indirect=True)
@@ -228,8 +229,11 @@ def test_import_checks_raw_roots_before_applying_selection(isolated_gateway: _Ga
         _api(anonymous, "POST", "/v1/import", expected=(401,), json=payload)
     with _client_for(tenants.base_url, tenants.key, tenants.victim, tenants.victim_team) as victim:
         _api(victim, "POST", "/v1/import", expected=(403,), json=payload)
+        _api(victim, "POST", "/v1/import", expected=(403,), json={**payload, "rekey_secret": None})
     assert tenants.stored()[0] == _VICTIM_URL
 
+    rejected = _api(tenants.admin, "POST", "/v1/import", expected=(400,), json={**payload, "rekey_secret": None})
+    assert "python -m mcpgateway.scripts.migrate_enc_secret" in rejected["detail"]
     result = _api(tenants.admin, "POST", "/v1/import", json=payload)
     assert result["progress"] == {"total": 1, "processed": 1, "created": 0, "updated": 1, "skipped": 0, "failed": 0}
     assert tenants.stored() == (_ATTACKER_URL, tenants.victim, tenants.victim_team)

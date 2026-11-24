@@ -205,15 +205,17 @@ async def test_import_status_tracking(import_service):
     """Test import status tracking functionality."""
     import_id = "test_import_123"
     status = ImportStatus(import_id)
+    status.imported_by = "operator@example.com"
+    scope = {"imported_by": status.imported_by, "token_teams": None}
     import_service.active_imports[import_id] = status
 
     # Test status retrieval
-    retrieved_status = import_service.get_import_status(import_id)
+    retrieved_status = import_service.get_import_status(import_id, **scope)
     assert retrieved_status == status
     assert retrieved_status.import_id == import_id
 
     # Test status listing
-    all_statuses = import_service.list_import_statuses()
+    all_statuses = import_service.list_import_statuses(**scope)
     assert status in all_statuses
 
     # Test status cleanup
@@ -225,9 +227,46 @@ async def test_import_status_tracking(import_service):
         # Set current time to 25 hours after completion
         mock_datetime.now.return_value = status.completed_at + timedelta(hours=25)
 
-        removed_count = import_service.cleanup_completed_imports(max_age_hours=24)
+        removed_count = import_service.cleanup_completed_imports(max_age_hours=24, **scope)
         assert removed_count == 1
         assert import_id not in import_service.active_imports
+
+
+def test_status_operations_require_actor_and_token_scope(import_service):
+    """Reject calls that omit the identity or its scope."""
+    with pytest.raises(TypeError, match="imported_by"):
+        import_service.get_import_status("known", token_teams=[])
+    with pytest.raises(TypeError, match="token_teams"):
+        import_service.list_import_statuses(imported_by="operator@example.com")
+    with pytest.raises(TypeError, match="imported_by"):
+        import_service.cleanup_completed_imports(token_teams=[])
+
+
+@pytest.mark.parametrize(
+    ("actor", "teams", "admin", "visible"),
+    [
+        (None, None, True, set()),
+        ("other@example.com", ["one", "two"], False, set()),
+        ("operator@example.com", ["one"], False, {"owned"}),
+        ("operator@example.com", None, False, {"owned", "other-team", "unscoped"}),
+        ("operator@example.com", None, True, {"owned", "other-team", "unscoped", "platform"}),
+    ],
+)
+def test_status_lookup_list_and_cleanup_apply_same_scope(import_service, actor, teams, admin, visible):
+    """Keep status lookup, listing, and cleanup within the caller's scope."""
+    for key, request_teams in (("owned", {"one"}), ("other-team", {"two"}), ("unscoped", None), ("platform", None)):
+        status = ImportStatus(key)
+        status.imported_by = "operator@example.com"
+        status.request_team_ids = frozenset(request_teams) if request_teams else None
+        status.platform_scope = key == "platform"
+        status.status = "completed"
+        status.completed_at = datetime.now(timezone.utc) - timedelta(hours=25)
+        import_service.active_imports[key] = status
+    scope = {"imported_by": actor, "token_teams": teams, "unrestricted_admin": admin}
+    assert {key for key in import_service.active_imports if import_service.get_import_status(key, **scope) is not None} == visible
+    assert {status.import_id for status in import_service.list_import_statuses(**scope)} == visible
+    assert import_service.cleanup_completed_imports(**scope) == len(visible)
+    assert set(import_service.active_imports) == {"owned", "other-team", "unscoped", "platform"} - visible
 
 
 @pytest.mark.asyncio
@@ -281,6 +320,8 @@ async def test_import_status_tracking_complete_workflow(import_service):
     """Test complete import status tracking workflow."""
     import_id = "test_import_456"
     status = ImportStatus(import_id)
+    status.imported_by = "operator@example.com"
+    scope = {"imported_by": status.imported_by, "token_teams": None}
 
     # Test initial state
     assert status.status == "pending"
@@ -308,11 +349,11 @@ async def test_import_status_tracking_complete_workflow(import_service):
     import_service.active_imports[import_id] = status
 
     # Test retrieval
-    retrieved = import_service.get_import_status(import_id)
+    retrieved = import_service.get_import_status(import_id, **scope)
     assert retrieved == status
 
     # Test listing
-    all_statuses = import_service.list_import_statuses()
+    all_statuses = import_service.list_import_statuses(**scope)
     assert status in all_statuses
 
 

@@ -200,17 +200,18 @@ async def test_admin_import_configuration_error():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("handler", "field"), [(admin.admin_import_configuration, "import_data"), (admin.admin_import_preview, "data")])
-async def test_admin_import_rejects_rekey_option(handler, field, monkeypatch):
+@pytest.mark.parametrize("value", [None, "obsolete"])
+async def test_admin_import_rejects_rekey_option(handler, field, value, monkeypatch):
     """Reject the retired option even when its value is null."""
     service = MagicMock(import_configuration=AsyncMock(), preview_import=AsyncMock())
     monkeypatch.setattr(admin, "import_service", service)
-    request = _make_json_request({field: {"entities": {"tools": []}}, "rekey_secret": None})
+    request = _make_json_request({field: {"entities": {"tools": []}}, "rekey_secret": value})
 
     with pytest.raises(HTTPException) as exc:
         await handler(request, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert exc.value.status_code == 400
-    assert "migrate_enc_secret.py" in exc.value.detail
+    assert "python -m mcpgateway.scripts.migrate_enc_secret" in exc.value.detail
     service.import_configuration.assert_not_awaited()
     service.preview_import.assert_not_awaited()
 

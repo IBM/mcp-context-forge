@@ -197,7 +197,7 @@ from mcpgateway.services.gateway_service import (
 )
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import import_service, ImportValidationError
+from mcpgateway.services.import_service import import_service, ImportValidationError, REKEY_SECRET_REMOVED
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import ensure_timezone_aware
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
@@ -16684,7 +16684,7 @@ def _admin_import_options(body: Dict[str, Any]) -> tuple[ConflictStrategy, Optio
         HTTPException: If an import option is invalid.
     """
     if "rekey_secret" in body:
-        raise HTTPException(status_code=400, detail="Import does not support rekey_secret. Use scripts/migrate_enc_secret.py to rotate the encryption secret.")
+        raise HTTPException(status_code=400, detail=REKEY_SECRET_REMOVED)
     try:
         strategy = ConflictStrategy(body.get("conflict_strategy", "update").lower())
     except (AttributeError, ValueError):

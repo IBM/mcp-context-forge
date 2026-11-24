@@ -22,6 +22,7 @@ from mcpgateway.schemas import GatewayUpdate, PromptCreate, ResourceCreate, Tool
 from mcpgateway.services.export_service import ExportService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportService, ImportValidationError
 from mcpgateway.services.root_service import RootService
+from mcpgateway.services.tool_service import _protect_tool_headers_for_storage
 
 from mcpgateway.utils.services_auth import encode_auth
 
@@ -118,6 +119,74 @@ async def test_foreign_public_tool_remains_a_create_conflict(registry, importer)
 
 
 @pytest.mark.asyncio
+async def test_null_visibility_uses_team_default_and_preserves_updates(registry, importer):
+    """Apply the same visibility default in preview and writes."""
+    config = envelope(
+        servers=[{"name": "server", "visibility": None}],
+        gateways=[{"name": "gateway", "url": "https://example.com/mcp", "credentials_required": True, "visibility": None}],
+    )
+    scope = {"imported_by": ACTOR, "token_teams": ["personal"]}
+    preview = await importer.preview_import(registry, config, **scope)
+    live = await importer.import_configuration(registry, config, **scope)
+    assert preview["outcomes"]["progress"] == live.to_dict()["progress"]
+    assert live.created_entities == 2
+    for model in (Gateway, Server):
+        row = registry.scalars(select(model)).one()
+        assert (row.visibility, row.team_id) == ("team", "personal")
+        row.visibility = "private"
+    registry.commit()
+    updated = await importer.import_configuration(registry, config, **scope)
+    assert updated.updated_entities == 2
+    assert registry.scalar(select(Gateway.visibility)) == registry.scalar(select(Server.visibility)) == "private"
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_unavailable_destination_teams(registry, importer):
+    """Reject team names outside membership or scope and ambiguous admin targets."""
+    registry.add_all([EmailTeam(id="outsider", name="Outsider", slug="outsider", created_by=ACTOR), EmailTeam(id="duplicate", name="Target", slug="duplicate-target", created_by=ACTOR)])
+    registry.commit()
+    config = envelope(servers=[{"name": "denied"}])
+    for name, teams in (("Outsider", ["outsider"]), ("Target", ["personal"])):
+        with pytest.raises(PermissionError):
+            await importer.import_configuration(registry, config, imported_by=ACTOR, team_name=name, token_teams=teams)
+    for name in ("Missing", "Target"):
+        with pytest.raises(ImportValidationError, match="unavailable or ambiguous"):
+            await importer.import_configuration(registry, config, imported_by=ACTOR, team_name=name, unrestricted_admin=True)
+    assert registry.scalar(select(Server.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_non_admin_import_cannot_update_foreign_rows_or_token_exchange_gateway(registry, importer):
+    """Keep foreign rows and token exchange gateways unchanged across imports."""
+    config = envelope(
+        gateways=[{"name": "gateway", "url": "https://example.com/mcp", "credentials_required": True}],
+        prompts=[{"name": "prompt", "template": "Original prompt"}],
+        resources=[{"name": "resource", "uri": "test://resource", "content": "original"}],
+        servers=[{"name": "server"}],
+    )
+    assert (await importer.import_configuration(registry, config, imported_by=ACTOR, team_name="Target", token_teams=["target"])).created_entities == 4
+    teammate = "teammate@example.com"
+    registry.add(EmailUser(email=teammate, password_hash="unused", full_name="Teammate"))
+    registry.flush()
+    registry.add(EmailTeamMember(team_id="target", user_email=teammate, role="member"))
+    gateway = registry.scalars(select(Gateway)).one()
+    gateway.auth_type = "oauth"
+    gateway.oauth_config = {"grant_type": "token-exchange"}
+    registry.commit()
+    for entries in config["entities"].values():
+        entries[0]["description"] = "denied change"
+    denied = await importer.import_configuration(registry, config, imported_by=teammate, token_teams=["target"])
+    assert (denied.created_entities, denied.updated_entities, denied.failed_entities) == (0, 0, 4)
+    gateway_only = {"gateways": []}
+    denied = await importer.import_configuration(registry, config, imported_by=ACTOR, token_teams=["target"], selected_entities=gateway_only)
+    assert denied.failed_entities == 1
+    for model in (Gateway, Prompt, Resource, Server):
+        row = registry.scalars(select(model)).one()
+        assert row.owner_email == ACTOR
+        assert row.description != "denied change"
+
+
+@pytest.mark.asyncio
 async def test_fatal_conflict_restores_rows_and_roots(registry, importer, monkeypatch):
     """Undo writes even after nested service commits and keep staged roots private."""
     monkeypatch.setattr(settings, "root_allowed_schemes", ["https"])
@@ -126,17 +195,28 @@ async def test_fatal_conflict_restores_rows_and_roots(registry, importer, monkey
     with pytest.raises(ImportConflictError):
         await importer.import_configuration(
             registry,
-            envelope(roots=[{"name": "root", "uri": "https://example.com/root"}], tools=[tool("rolled-back")], servers=[{"name": "existing"}]),
+            envelope(
+                roots=[{"name": "root", "uri": "https://example.com/root"}],
+                gateways=[{"name": "pending", "url": "https://example.com/mcp", "credentials_required": True}],
+                tools=[tool("rolled-back")],
+                servers=[{"name": "existing"}],
+            ),
             imported_by=ACTOR,
             conflict_strategy=ConflictStrategy.FAIL,
         )
     assert registry.scalar(select(Tool.id)) is None
+    assert registry.scalar(select(Gateway.id)) is None
+    failed = next(status for status in importer.list_import_statuses(imported_by=ACTOR, token_teams=None) if status.status == "failed")
+    assert failed.processed_entities == 4
+    assert failed.created_entities == 0
+    assert failed.credentials_required == []
+    assert failed.items["gateways"][0]["outcome"] == "rolled_back"
     assert await importer.root_service.list_roots() == []
     assert registry.scalars(select(Server.name)).all() == ["existing"]
 
 
 @pytest.mark.asyncio
-async def test_dry_run_and_item_failure(registry, importer):
+async def test_dry_run_and_item_failure(registry, importer, caplog):
     """Report local outcomes without writes and retain successful items on completion."""
     config = envelope(tools=[tool("good"), tool("invalid", request_type="INVALID")])
     dry = await importer.import_configuration(registry, config, imported_by=ACTOR, dry_run=True)
@@ -145,6 +225,9 @@ async def test_dry_run_and_item_failure(registry, importer):
     real = await importer.import_configuration(registry, config, imported_by=ACTOR)
     assert (real.created_entities, real.failed_entities, real.processed_entities) == (1, 1, 2)
     assert registry.scalars(select(Tool.original_name)).all() == ["good"]
+    messages = [record.getMessage() for record in caplog.records if record.name == "mcpgateway.services.import_service" and record.levelname == "WARNING"]
+    assert f"Import {real.import_id} item 2 (tools): ValidationError" in messages
+    assert all("INVALID" not in message for message in messages)
 
 
 @pytest.mark.asyncio
@@ -209,6 +292,7 @@ async def test_preview_visibility_change_for_tool_created_earlier_in_file(regist
 @pytest.mark.asyncio
 async def test_public_federated_visibility_change_checks_invocation_name(registry, importer, monkeypatch):
     """Match gateway-prefixed tool names when previewing a visibility change."""
+
     async def initialize(url, *args, **kwargs):
         return {}, [ToolCreate(name="shared", url=url, integration_type="REST", request_type="GET")], [], [], [], None
 
@@ -318,6 +402,43 @@ async def test_gateway_401_import_and_recovery(registry, importer, monkeypatch, 
         await gateway_service._process_gateway_lifecycle_once(registry, row_id)
         registry.refresh(row)
     assert row.status == "active" and row.reachable and row.auth_value
+
+
+@pytest.mark.asyncio
+async def test_full_and_selective_exports_apply_same_credential_policy(registry, importer):
+    """Remove all configured query credentials and retain portable tool headers."""
+    config = envelope(
+        gateways=[{"name": name, "url": f"https://{name}.example.com/mcp", "credentials_required": True} for name in ("query-auth", "client-certificate", "client-key")],
+        tools=[tool("operational"), tool("authenticated")],
+    )
+    assert (await importer.import_configuration(registry, config, imported_by=ACTOR)).created_entities == 5
+    gateways = {row.name: row for row in registry.scalars(select(Gateway))}
+    query_gateway = gateways["query-auth"]
+    query_gateway.url += "?first_configured=placeholder-one&second_configured=placeholder-two&region=eu"
+    query_gateway.auth_query_params = {"first_configured": "placeholder-one", "second_configured": "placeholder-two"}
+    gateways["client-certificate"].client_cert = "placeholder-certificate"
+    gateways["client-key"].client_key = "placeholder-key"
+    for gateway in gateways.values():
+        gateway.status = "active"
+        gateway.status_message = None
+    tools = {row.name: row for row in registry.scalars(select(Tool))}
+    tools["operational"].headers = _protect_tool_headers_for_storage({"Content-Type": "application/json", "Upgrade": "websocket", "X-Region": "eu"})
+    tools["authenticated"].headers = _protect_tool_headers_for_storage({"Authorization": "Bearer placeholder-header", "X-Region": "eu"})
+    registry.commit()
+
+    exporter = ExportService()
+    with Session(registry.get_bind(), expire_on_commit=False) as reader:
+        full = await exporter.export_configuration(reader, include_types=["gateways", "tools"])
+        selective = await exporter.export_selective(reader, {"gateways": [row.id for row in gateways.values()], "tools": [row.id for row in tools.values()]})
+    expected_headers = {"operational": {"Content-Type": "application/json", "X-Region": "eu"}, "authenticated": {"X-Region": "eu"}}
+    for data in (full, selective):
+        entities = data["entities"]
+        assert {row["name"] for row in entities["gateways"] if row["credentials_required"]} == set(gateways)
+        [query_entry] = [row for row in entities["gateways"] if row["name"] == "query-auth"]
+        assert query_entry["url"] == "https://query-auth.example.com/mcp?region=eu"
+        assert {row["name"]: row["headers"] for row in entities["tools"]} == expected_headers
+        assert [row["name"] for row in entities["tools"] if row.get("credentials_required")] == ["authenticated"]
+        assert "placeholder-" not in str(entities)
 
 
 @pytest.mark.asyncio

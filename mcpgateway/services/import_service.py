@@ -17,18 +17,19 @@ It handles:
 
 # Standard
 from collections import defaultdict
+from collections.abc import Callable
 from contextlib import AsyncExitStack
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from inspect import isawaitable
 import logging
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, cast, Dict, List, Optional
 from urllib.parse import urlsplit
 import uuid
 
 # Third-Party
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, false, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -52,6 +53,17 @@ from mcpgateway.utils.portable_credentials import without_file_credentials
 from mcpgateway.utils.services_auth import decode_auth
 
 logger = logging.getLogger(__name__)
+
+REKEY_SECRET_REMOVED = "Import does not support rekey_secret. Use python -m mcpgateway.scripts.migrate_enc_secret to rotate the encryption secret."
+
+
+EntityData = dict[str, Any]
+SelectedEntities = dict[str, list[EntityData]]
+DestinationIndexes = dict[str, defaultdict[str | None, list[Any]]]
+ImportMappings = dict[str, dict[str, Any]]
+CatalogSchema = ToolCreate | ToolUpdate | GatewayCreate | GatewayUpdate | ResourceCreate | ResourceUpdate | PromptCreate | PromptUpdate
+RegistryModel = type[Tool] | type[Gateway] | type[Server] | type[Prompt] | type[Resource]
+REGISTRY_MODELS: dict[str, RegistryModel] = {"tools": Tool, "gateways": Gateway, "servers": Server, "prompts": Prompt, "resources": Resource}
 
 
 class ConflictStrategy(str, Enum):
@@ -188,7 +200,7 @@ class ImportService:
     - Progress tracking and status reporting
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the import service with required dependencies.
 
         Creates instances of all entity services and initializes the active imports tracker.
@@ -351,7 +363,7 @@ class ImportService:
             import_data: Configuration file envelope.
             conflict_strategy: Action for matched entities.
             dry_run: Calculate local outcomes without changing configuration.
-            rekey_secret: Deprecated field, which import rejects.
+            rekey_secret: Removed option. Import rejects it.
             imported_by: Verified actor identity.
             selected_entities: File entity identifiers grouped by type.
             team_name: Optional destination team name.
@@ -362,14 +374,26 @@ class ImportService:
             Import status and outcomes.
         """
         if rekey_secret is not None:
-            raise ImportValidationError("rekey_secret is no longer supported; use scripts/migrate_enc_secret.py")
+            raise ImportValidationError(REKEY_SECRET_REMOVED)
         status = ImportStatus(str(uuid.uuid4()))
         await self._run_import(db, import_data, conflict_strategy, dry_run, imported_by, selected_entities, team_name, token_teams, unrestricted_admin, status)
         if dry_run:
             self.active_imports[status.import_id] = status
         return status
 
-    async def _run_import(self, db, import_data, strategy, dry_run, actor, selection, team_name, token_teams, admin, status):
+    async def _run_import(
+        self,
+        db: Session,
+        import_data: EntityData,
+        strategy: ConflictStrategy,
+        dry_run: bool,
+        actor: str,
+        selection: dict[str, list[str]] | None,
+        team_name: str | None,
+        token_teams: list[str] | None,
+        admin: bool,
+        status: ImportStatus,
+    ) -> None:
         """Process the selected entries and publish registry effects after commit."""
         self.validate_import_data(import_data)
         status.imported_by = actor
@@ -386,8 +410,8 @@ class ImportService:
         status.status = "running"
         if not dry_run:
             self.active_imports[status.import_id] = status
-        root_events = []
-        pending_effects = []
+        root_events: list[EntityData] = []
+        pending_effects: list[Callable[[], Any]] = []
         effect_token = pending_import_effects.set(pending_effects)
         try:
             async with AsyncExitStack() as stack:
@@ -395,12 +419,16 @@ class ImportService:
                     await stack.enter_async_context(self.root_service.mutation_lock)
                 root_state = {str(root.uri): root for root in await self.root_service.list_roots()} if selected.get("roots") else {}
                 indexes = self._destination_index(db, selected, token_teams, actor)
-                mappings: Dict[str, Dict[str, Any]] = {"tools": {}, "gateways": {}, "source_tools": {}, "source_gateways": {}, "gateway_names": {}}
+                mappings: ImportMappings = {"tools": {}, "gateways": {}, "source_tools": {}, "source_gateways": {}, "gateway_names": {}}
                 if not dry_run and status.total_entities:
                     connection = db.connection()
                     # SQLite legacy mode does not put the first SAVEPOINT inside an outer transaction.
-                    if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
-                        connection.exec_driver_sql("BEGIN")
+                    if connection.dialect.name == "sqlite":
+                        driver = connection.connection.driver_connection
+                        if driver is None:
+                            raise RuntimeError("SQLite connection has no driver connection")
+                        if not driver.in_transaction:
+                            connection.exec_driver_sql("BEGIN")
                 for kind, rows in selected.items():
                     for row in rows:
                         effect_count = len(pending_effects)
@@ -420,6 +448,11 @@ class ImportService:
             status.errors.append(f"Import stopped: {type(exc).__name__}")
             if not dry_run:
                 status.created_entities = status.updated_entities = 0
+                status.credentials_required.clear()
+                for items in status.items.values():
+                    for item in items:
+                        if item.get("outcome") in {"created", "updated"}:
+                            item["outcome"] = "rolled_back"
                 db.rollback()
             raise
         finally:
@@ -441,7 +474,7 @@ class ImportService:
                     status.warnings.append("Root change notification failed after commit")
                     logger.exception("Root notification failed after import commit")
 
-    def _destination_team(self, db, actor, team_name, token_teams, admin):
+    def _destination_team(self, db: Session, actor: str, team_name: str | None, token_teams: list[str] | None, admin: bool) -> str | None:
         """Resolve the requested or personal team within the caller's scope."""
         if team_name is None:
             user = db.scalar(select(EmailUser).where(EmailUser.email == actor))
@@ -460,48 +493,49 @@ class ImportService:
         return matches[0].id
 
     @staticmethod
-    def _visible(row, actor, token_teams):
+    def _visible(row: Any, actor: str, token_teams: list[str] | None) -> bool:
         """Check whether the request scope permits reading the destination row."""
         if row.visibility == "public":
             return True
         if token_teams is None:
-            return row.visibility == "team" or row.owner_email == actor
+            return bool(row.visibility == "team" or row.owner_email == actor)
         if not token_teams:
             return False
-        return (row.visibility == "private" and row.owner_email == actor) or (row.visibility == "team" and row.team_id in token_teams)
+        return bool((row.visibility == "private" and row.owner_email == actor) or (row.visibility == "team" and row.team_id in token_teams))
 
-    def _destination_index(self, db, selected, token_teams, actor):
+    def _destination_index(self, db: Session, selected: SelectedEntities, token_teams: list[str] | None, actor: str) -> DestinationIndexes:
         """Index visible destination records by entity type and match key."""
-        models = {"tools": Tool, "gateways": Gateway, "servers": Server, "prompts": Prompt, "resources": Resource}
         kinds = set(selected)
         if selected.get("servers"):
             kinds.update(("tools", "gateways"))
-        if any(row.get("gateway_id") or row.get("gateway_name") for kind in ("tools", "resources", "prompts") for row in selected.get(kind, ())):
+        if any(row.get("gateway_id") or row.get("gateway_name") for kind in ("tools", "resources", "prompts") for row in selected.get(kind, [])):
             kinds.add("gateways")
-        indexes = {kind: defaultdict(list) for kind in models}
-        for kind in kinds & models.keys():
-            model = models[kind]
+        indexes: DestinationIndexes = {kind: defaultdict(list) for kind in REGISTRY_MODELS}
+        for kind in kinds & REGISTRY_MODELS.keys():
+            model = REGISTRY_MODELS[kind]
             if token_teams is None:
                 visible = or_(model.visibility != "private", and_(model.visibility == "private", model.owner_email == actor))
             else:
                 visible = or_(
                     model.visibility == "public",
                     and_(model.visibility == "team", model.team_id.in_(token_teams)),
-                    and_(model.visibility == "private", model.owner_email == actor, bool(token_teams)),
+                    and_(model.visibility == "private", model.owner_email == actor) if token_teams else false(),
                 )
             for row in db.scalars(select(model).where(visible)).unique():
                 indexes[kind][self._destination_key(kind, row)].append(row)
         return indexes
 
-    def _add_discovered_rows(self, db, selected, indexes, mappings, actor, token_teams):
+    def _add_discovered_rows(self, db: Session, selected: SelectedEntities, indexes: DestinationIndexes, mappings: ImportMappings, actor: str, token_teams: list[str] | None) -> None:
         """Index visible catalog items discovered by gateways in this import."""
         gateway_ids = {gateway.id for bucket in (mappings["gateways"], mappings["gateway_names"]) for gateway in bucket.values() if gateway is not None}
         if not gateway_ids:
             return
-        for kind, model in (("tools", Tool), ("resources", Resource), ("prompts", Prompt)):
+        catalog_models: tuple[tuple[str, type[Tool] | type[Resource] | type[Prompt]], ...] = (("tools", Tool), ("resources", Resource), ("prompts", Prompt))
+        for kind, model in catalog_models:
             if kind not in selected and not (kind == "tools" and selected.get("servers")):
                 continue
-            for row in db.scalars(select(model).where(model.gateway_id.in_(gateway_ids)).execution_options(populate_existing=True)).unique():
+            for record in db.scalars(select(model).where(model.gateway_id.in_(gateway_ids)).execution_options(populate_existing=True)).unique():
+                row = cast(Tool | Resource | Prompt, record)
                 if not self._visible(row, actor, token_teams):
                     continue
                 bucket = indexes[kind][self._destination_key(kind, row)]
@@ -509,7 +543,7 @@ class ImportService:
                     bucket.append(row)
 
     @staticmethod
-    def _mapped_gateway(data, indexes, mappings):
+    def _mapped_gateway(data: EntityData, indexes: DestinationIndexes, mappings: ImportMappings) -> Gateway | SimpleNamespace | None:
         """Resolve a file reference to an unambiguous destination gateway."""
         source_gateway_id = str(data.get("gateway_id") or "")
         gateway_name = data.get("gateway_name")
@@ -518,52 +552,68 @@ class ImportService:
             source = mappings["source_gateways"][source_gateway_id]
             if (gateway_name is not None and source["name"] != gateway_name) or (gateway_url is not None and source["url"] != gateway_url):
                 return None
-            return mappings["gateways"][source_gateway_id]
+            return cast(Gateway | SimpleNamespace | None, mappings["gateways"][source_gateway_id])
         if not gateway_name:
             return None
         if gateway_name in mappings["gateway_names"]:
             mapped = mappings["gateway_names"][gateway_name]
             if mapped is None or gateway_url is not None and mapped.url != gateway_url:
                 return None
-            return mapped
+            return cast(Gateway | SimpleNamespace, mapped)
         if not gateway_url:
             return None
         candidates = [gateway for gateway in indexes["gateways"].get(slugify(gateway_name), ()) if getattr(gateway, "url", None) == gateway_url]
-        return candidates[0] if len(candidates) == 1 else None
+        return cast(Gateway | SimpleNamespace, candidates[0]) if len(candidates) == 1 else None
 
     @staticmethod
-    def _destination_key(kind, row):
+    def _destination_key(kind: str, row: Any) -> str | None:
         """Return the match key for an existing destination record."""
         if kind == "gateways":
-            return row.slug
+            return cast(str, row.slug)
         if kind == "resources":
-            return row.uri
+            return cast(str, row.uri)
         if kind == "tools":
-            return row.original_name
-        return getattr(row, "original_name", None) if kind == "prompts" and getattr(row, "gateway_id", None) is not None else row.name
+            return cast(str, row.original_name)
+        return cast(str | None, row.original_name if kind == "prompts" and getattr(row, "gateway_id", None) is not None else row.name)
 
     @staticmethod
-    def _federated_prompt_key(row):
+    def _federated_prompt_key(row: EntityData) -> str:
         """Return the upstream prompt name used for a federated match."""
-        return row.get("original_name") or row["name"]
+        return cast(str, row.get("original_name") or row["name"])
 
     @staticmethod
-    def _file_key(kind, row):
+    def _file_key(kind: str, row: EntityData) -> str:
         """Return the match key for a configuration file entry."""
         if kind in {"roots", "resources"}:
-            return row["uri"]
+            return cast(str, row["uri"])
         if kind == "gateways":
             return slugify(row["name"])
         if kind == "prompts":
             return slugify(row.get("custom_name") or row.get("original_name") or row["name"])
-        return row["name"]
+        return cast(str, row["name"])
 
-    async def _apply_import_entry(self, db, kind, row, indexes, mappings, root_state, root_events, strategy, dry_run, actor, team_name, token_teams, admin, status):
+    async def _apply_import_entry(
+        self,
+        db: Session,
+        kind: str,
+        row: EntityData,
+        indexes: DestinationIndexes,
+        mappings: ImportMappings,
+        root_state: dict[str, Root],
+        root_events: list[EntityData],
+        strategy: ConflictStrategy,
+        dry_run: bool,
+        actor: str,
+        team_name: str | None,
+        token_teams: list[str] | None,
+        admin: bool,
+        status: ImportStatus,
+    ) -> None:
         """Process one entry and record its outcome in the import status."""
         status.processed_entities += 1
         identifier = self._get_entity_identifier(kind, row)
         is_gateway_item = bool(row.get("gateway_name") or row.get("gateway_id"))
-        item = {
+        item: EntityData = {
             "id": str(row.get("id") or identifier),
             "identifier": identifier,
             "name": row.get("name") or identifier,
@@ -576,9 +626,11 @@ class ImportService:
         if kind == "servers":
             item["dependencies"] = self._preview_server_dependencies(row)
         status.items[kind].append(item)
-        local_warnings = []
+        local_warnings: list[str] = []
         try:
             clean, ignored = without_file_credentials(row) if kind in {"tools", "gateways"} else (dict(row), ())
+            if clean.get("visibility") is None:
+                clean.pop("visibility", None)
             if ignored:
                 logger.info("Ignored portable configuration credential fields: %s", ", ".join(ignored))
             source_identity = dict(clean)
@@ -587,6 +639,7 @@ class ImportService:
                 raise ImportValidationError("Duplicate file entity identifier")
             key = self._file_key(kind, clean)
             mapped_gateway = None
+            candidates: list[Any]
             if kind == "roots":
                 uri, name = self.root_service.validate_root_input(key, clean.get("name"))
                 candidates = [root_state[uri]] if uri in root_state else []
@@ -666,20 +719,20 @@ class ImportService:
                     schema, needs_credentials = self._prepare_import_schema(
                         db, kind, clean, existing, indexes, mappings, local_warnings, actor, token_teams, dry_run, status.team_id if team_name is not None else None
                     )
-                    if kind in {"tools", "gateways"}:
+                    if isinstance(schema, (ToolCreate, ToolUpdate, GatewayCreate, GatewayUpdate)):
                         await self._preview_validation_policy(db, kind, schema, existing, actor, status.team_id)
                     if existing is None:
                         self._check_preview_create_conflict(kind, key, schema, indexes, clean.get("visibility", "team"), status.team_id)
-                    if kind == "tools" and existing is not None:
+                    if isinstance(schema, ToolUpdate) and existing is not None:
                         duplicate = self._preview_tool_name_conflict(schema, existing, mapped_gateway, indexes[kind], clean.get("visibility"))
                         if duplicate is not None:
                             item["conflicts_with"] = True
                             raise ToolNameConflictError(duplicate.name, enabled=getattr(duplicate, "enabled", True), tool_id=duplicate.id, visibility=duplicate.visibility)
-                    if kind == "gateways":
-                        duplicate = self._preview_gateway_duplicate(schema, existing, indexes, clean, actor, status.team_id, needs_credentials)
-                        if duplicate is not None:
+                    if isinstance(schema, (GatewayCreate, GatewayUpdate)):
+                        duplicate_gateway = self._preview_gateway_duplicate(schema, existing, indexes, clean, actor, status.team_id, needs_credentials)
+                        if duplicate_gateway is not None:
                             item["conflicts_with"] = True
-                            raise GatewayDuplicateConflictError(duplicate)
+                            raise GatewayDuplicateConflictError(duplicate_gateway)
                     result = existing or self._planned_entry(kind, key, clean, status)
                 else:
                     connection = db.connection()
@@ -713,11 +766,13 @@ class ImportService:
                                 item_db, kind, clean, existing, indexes, mappings, local_warnings, actor, token_teams, dry_run, status.team_id if team_name is not None else None
                             )
                             result = await self._write_import_entity(item_db, kind, schema, existing, clean, actor, status.team_id, needs_credentials, admin, token_teams)
-                            model = {"tools": Tool, "gateways": Gateway, "servers": Server, "prompts": Prompt, "resources": Resource}[kind]
+                            model = REGISTRY_MODELS[kind]
                             result = item_db.get(model, result.id)
-                            if kind == "tools" and existing is None and isinstance(clean.get("original_description"), str):
+                            if result is None:
+                                raise RuntimeError("Registry service did not persist the import item")
+                            if isinstance(result, Tool) and existing is None and isinstance(clean.get("original_description"), str):
                                 result.original_description = clean["original_description"]
-                            needs_credentials |= kind == "gateways" and gateway_requires_credentials(result)
+                            needs_credentials |= isinstance(result, Gateway) and gateway_requires_credentials(result)
                             item_db.commit()
                 if existing is None:
                     indexes[kind][key].append(result)
@@ -747,6 +802,7 @@ class ImportService:
             item["conflicts_with"] = True
             status.failed_entities += 1
             status.errors.append(f"{kind} item {item['identifier']}: configuration conflict")
+            logger.warning("Import %s item %d (%s): %s", status.import_id, status.processed_entities, kind, type(exc).__name__)
         except (ValueError, TypeError, PermissionError, ImportValidationError, GatewayError, ServerError, ToolError, ResourceError, PromptError, IntegrityError) as exc:
             cause = exc.__cause__ or exc.__context__
             if isinstance(cause, SQLAlchemyError) and not isinstance(cause, IntegrityError):
@@ -754,16 +810,17 @@ class ImportService:
             item["outcome"] = "failed"
             status.failed_entities += 1
             status.errors.append(f"{kind} item {item['identifier']}: {type(exc).__name__}")
+            logger.warning("Import %s item %d (%s): %s", status.import_id, status.processed_entities, kind, type(exc).__name__)
         finally:
             status.warnings.extend(local_warnings)
 
     @staticmethod
-    def _can_update_import_candidate(candidate, actor, token_teams):
+    def _can_update_import_candidate(candidate: Any, actor: str, token_teams: list[str] | None) -> bool:
         """Check whether the caller owns a candidate within their token scope."""
-        return candidate.owner_email == actor and (token_teams is None or candidate.team_id in token_teams)
+        return bool(candidate.owner_email == actor) and (token_teams is None or candidate.team_id in token_teams)
 
     @staticmethod
-    def _planned_entry(kind, key, data, status):
+    def _planned_entry(kind: str, key: str, data: EntityData, status: ImportStatus) -> SimpleNamespace:
         """Represent a proposed create for subsequent matches during dry run."""
         return SimpleNamespace(
             id=f"planned:{kind}:{key}",
@@ -783,7 +840,7 @@ class ImportService:
         )
 
     @staticmethod
-    def _record_mapping(mappings, kind, data, result):
+    def _record_mapping(mappings: ImportMappings, kind: str, data: EntityData, result: Any) -> None:
         """Record how file identifiers and names resolve to destination records."""
         if kind in mappings and data.get("id"):
             source_id = str(data["id"])
@@ -797,9 +854,9 @@ class ImportService:
             else:
                 mappings["gateway_names"][name] = result
 
-    def _catalog_import_schema(self, kind, data, *, create):
+    def _catalog_import_schema(self, kind: str, data: EntityData, *, create: bool) -> CatalogSchema:
         """Build a catalog write schema from local file data."""
-        to_schema = {
+        to_schema: dict[str, tuple[Callable[[EntityData], CatalogSchema], Callable[[EntityData], CatalogSchema]]] = {
             "tools": (self._convert_to_tool_create, self._convert_to_tool_update),
             "gateways": (self._convert_to_gateway_create, self._convert_to_gateway_update),
             "prompts": (self._convert_to_prompt_create, self._convert_to_prompt_update),
@@ -813,13 +870,26 @@ class ImportService:
             schema.visibility = visibility
         return schema
 
-    def _prepare_import_schema(self, db, kind, data, existing, indexes, mappings, warnings, actor, token_teams, dry_run, explicit_team_id):
+    def _prepare_import_schema(
+        self,
+        db: Session,
+        kind: str,
+        data: EntityData,
+        existing: Any,
+        indexes: DestinationIndexes,
+        mappings: ImportMappings,
+        warnings: list[str],
+        actor: str,
+        token_teams: list[str] | None,
+        dry_run: bool,
+        explicit_team_id: str | None,
+    ) -> tuple[CatalogSchema | ServerCreate | ServerUpdate, bool]:
         """Build a write schema and report whether the entity needs credentials."""
         create = existing is None
         if kind == "servers":
             names = ("tool_refs", "tool_ids", "associated_tools")
             references = next((data[key] for key in names if key in data), None)
-            payload = {key: data[key] for key in ("name", "description", "instructions", "tags", "visibility") if key in data}
+            payload: EntityData = {key: data[key] for key in ("name", "description", "instructions", "tags", "visibility") if key in data}
             complete = data.get("tool_refs_complete", True)
             if not isinstance(complete, bool):
                 raise ImportValidationError("tool_refs_complete must be a boolean")
@@ -834,19 +904,19 @@ class ImportService:
             return (ServerCreate if create else ServerUpdate)(**payload), False
         needs_credentials = bool(data.get("credentials_required")) and create
         schema = self._catalog_import_schema(kind, data, create=create)
-        if kind == "gateways" and schema.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
+        if isinstance(schema, (GatewayCreate, GatewayUpdate)) and schema.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
             raise ImportValidationError("Direct-proxy gateways are disabled")
-        if kind not in {"gateways", "tools"} or create:
+        if not isinstance(schema, (GatewayUpdate, ToolUpdate)):
             return schema, needs_credentials
         credential_headers = {key: value for key, value in (getattr(existing, "headers", None) or {}).items() if is_tool_credential_header_name(key)}
         credential_material = self._has_destination_credentials(existing, credential_headers)
         origin_changed = schema.url is not None and self._origin(str(schema.url)) != self._origin(existing.url)
-        if kind == "tools" and schema.headers is not None and not origin_changed:
+        if isinstance(schema, ToolUpdate) and schema.headers is not None and not origin_changed:
             schema.headers = {**schema.headers, **credential_headers}
         return schema, bool(origin_changed and credential_material or data.get("credentials_required") and not credential_material or kind == "gateways" and gateway_requires_credentials(existing))
 
     @staticmethod
-    def _has_destination_credentials(entity, header_credentials):
+    def _has_destination_credentials(entity: Any, header_credentials: dict[str, Any]) -> bool:
         """Check whether the destination entity has credential material."""
         return bool(
             getattr(entity, "auth_value", None)
@@ -861,12 +931,14 @@ class ImportService:
         )
 
     @staticmethod
-    def _origin(url):
+    def _origin(url: str) -> tuple[str, str | None, int | None]:
         """Return the scheme, host, and effective port of a URL."""
         parsed = urlsplit(url)
         return parsed.scheme, parsed.hostname, parsed.port or {"http": 80, "https": 443, "ws": 80, "wss": 443}.get(parsed.scheme)
 
-    def _resolve_import_bindings(self, db, references, indexes, mappings, actor, token_teams, dry_run, explicit_team_id):
+    def _resolve_import_bindings(
+        self, db: Session, references: Any, indexes: DestinationIndexes, mappings: ImportMappings, actor: str, token_teams: list[str] | None, dry_run: bool, explicit_team_id: str | None
+    ) -> tuple[list[str], list[str]]:
         """Resolve tool references and return labels for unresolved entries."""
         by_id = {str(tool.id): tool for group in indexes["tools"].values() for tool in group}
         gateways_by_id = {str(gateway.id): gateway for group in indexes["gateways"].values() for gateway in group}
@@ -922,7 +994,7 @@ class ImportService:
             expected = {tool_id: reference for tool_id, reference in expected.items() if tool_id in actual}
         return list(expected), unresolved
 
-    def _lock_import_bindings(self, db, expected, actor, token_teams, explicit_team_id):
+    def _lock_import_bindings(self, db: Session, expected: dict[str, tuple[Any, Any]], actor: str, token_teams: list[str] | None, explicit_team_id: str | None) -> set[str]:
         """Lock candidate bindings and recheck visibility and identity."""
         gateway_ids = {gateway.id for _, gateway in expected.values() if gateway is not None}
         gateways = {}
@@ -946,7 +1018,9 @@ class ImportService:
             actual.add(str(row.id))
         return actual
 
-    def _preview_gateway_duplicate(self, schema, existing, indexes, data, actor, team_id, needs_credentials):
+    def _preview_gateway_duplicate(
+        self, schema: GatewayCreate | GatewayUpdate, existing: Any, indexes: DestinationIndexes, data: EntityData, actor: str, team_id: str | None, needs_credentials: bool
+    ) -> Gateway | None:
         """Check for a gateway URL and authentication conflict during dry run."""
         url = self.gateway_service.normalize_url(str(schema.url or getattr(existing, "url", "")))
         visibility = data.get("visibility") or getattr(existing, "visibility", None) or "team"
@@ -967,10 +1041,10 @@ class ImportService:
             and gateway.visibility == visibility
             and (visibility == "public" or visibility == "private" and gateway.owner_email == owner or visibility == "team" and target_team and gateway.team_id == target_team)
         ]
-        return self.gateway_service.find_duplicate_gateway(eligible, auth_value, oauth_config, sigv4_config)
+        return cast(Gateway | None, self.gateway_service.find_duplicate_gateway(eligible, auth_value, oauth_config, sigv4_config))
 
     @staticmethod
-    def _check_preview_create_conflict(kind, key, schema, indexes, visibility, team_id):
+    def _check_preview_create_conflict(kind: str, key: str, schema: CatalogSchema | ServerCreate | ServerUpdate, indexes: DestinationIndexes, visibility: str, team_id: str | None) -> None:
         """Check visibility conflicts with rows outside the update candidates."""
         errors = {"tools": ToolNameConflictError, "gateways": GatewayNameConflictError, "resources": ResourceURIConflictError, "prompts": PromptNameConflictError}
         if kind not in errors or visibility not in {"public", "team"}:
@@ -988,7 +1062,7 @@ class ImportService:
                 raise errors[kind](key)
 
     @staticmethod
-    def _preview_tool_name_conflict(schema, existing, gateway, tools, visibility):
+    def _preview_tool_name_conflict(schema: ToolUpdate, existing: Any, gateway: Gateway | SimpleNamespace | None, tools: dict[str | None, list[Any]], visibility: str | None) -> Any:
         """Check for a conflicting public tool name during a planned update."""
         target_visibility = visibility or existing.visibility
         if target_visibility != "public":
@@ -999,28 +1073,40 @@ class ImportService:
         if gateway is not None and target_visibility != existing.visibility:
             name = build_gateway_tool_invocation_name(gateway.name, existing.custom_name)
             return next((row for group in tools.values() for row in group if row.id != existing.id and row.name == name and row.visibility == "public"), None)
-        name = schema.name if name_changed and existing.name == existing.custom_name else existing.custom_name
-        return next((row for group in tools.values() for row in group if row.id != existing.id and row.custom_name == name and row.visibility == "public"), None)
+        custom_name = schema.name if name_changed and existing.name == existing.custom_name else existing.custom_name
+        return next((row for group in tools.values() for row in group if row.id != existing.id and row.custom_name == custom_name and row.visibility == "public"), None)
 
     @staticmethod
-    async def _preview_validation_policy(db, kind, schema, existing, actor, team_id):
+    async def _preview_validation_policy(db: Session, kind: str, schema: GatewayCreate | GatewayUpdate | ToolCreate | ToolUpdate, existing: Any, actor: str, team_id: str | None) -> None:
         """Apply local validation policy and permission checks during dry run."""
         policy = schema.tool_validation_policy
         if existing is None:
             if policy_text(policy):
                 await check_policy_permission(db, actor, resource_type=kind, team_id=team_id)
-            if kind == "tools" and admit_tool(description=schema.description, tool_name=schema.name, tool_policy=policy, gateway_policy=None, context="register_tool"):
+            if isinstance(schema, ToolCreate) and admit_tool(description=schema.description, tool_name=schema.name, tool_policy=policy, gateway_policy=None, context="register_tool"):
                 raise ToolValidationError("Tool does not meet its validation policy")
         elif "tool_validation_policy" in schema.model_fields_set and policy_changed(getattr(existing, "tool_validation_policy", None), policy):
             await check_policy_permission(db, actor, resource_type=kind, team_id=existing.team_id)
 
     @staticmethod
-    def _is_token_exchange(gateway):
+    def _is_token_exchange(gateway: Any) -> bool:
         """Check whether the gateway uses the OAuth token exchange grant."""
         oauth_config = getattr(gateway, "oauth_config", None)
         return isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "token-exchange"
 
-    async def _write_import_entity(self, db, kind, schema, existing, data, actor, team_id, needs_credentials, admin, token_teams):
+    async def _write_import_entity(
+        self,
+        db: Session,
+        kind: str,
+        schema: CatalogSchema | ServerCreate | ServerUpdate,
+        existing: Any,
+        data: EntityData,
+        actor: str,
+        team_id: str | None,
+        needs_credentials: bool,
+        admin: bool,
+        token_teams: list[str] | None,
+    ) -> Any:
         """Create or update an entity through its registry service."""
         services = {
             "tools": (self.tool_service, "tool"),
@@ -1031,14 +1117,14 @@ class ImportService:
         }
         service, name = services[kind]
         if existing is None:
-            kwargs = {"created_by": actor, "created_via": "import", "team_id": team_id, "owner_email": actor, "visibility": data.get("visibility", "team")}
+            kwargs: dict[str, Any] = {"created_by": actor, "created_via": "import", "team_id": team_id, "owner_email": actor, "visibility": data.get("visibility", "team")}
             if kind == "gateways":
                 kwargs["import_requires_credentials"] = needs_credentials
             elif kind == "tools":
                 kwargs["token_teams"] = token_teams
             return await getattr(service, f"register_{name}")(db, schema, **kwargs)
         kwargs = {"modified_by": actor, "modified_via": "import", "user_email": actor, "import_platform_admin": admin}
-        if kind in {"tools", "gateways"} and schema.url is not None and self._origin(str(schema.url)) != self._origin(existing.url) and needs_credentials:
+        if isinstance(schema, (ToolUpdate, GatewayUpdate)) and schema.url is not None and self._origin(str(schema.url)) != self._origin(existing.url) and needs_credentials:
             kwargs["import_clear_credentials"] = True
         if kind == "gateways":
             kwargs["import_requires_credentials"] = needs_credentials
@@ -1075,11 +1161,11 @@ class ImportService:
             ''
         """
         if entity_type in ["tools", "gateways", "servers", "prompts"]:
-            return entity.get("name", "")
+            return cast(str, entity.get("name", ""))
         if entity_type == "resources":
-            return entity.get("uri", "")
+            return cast(str, entity.get("uri", ""))
         if entity_type == "roots":
-            return entity.get("uri", "")
+            return cast(str, entity.get("uri", ""))
         return ""
 
     def _calculate_total_entities(self, entities: Dict[str, List[Dict[str, Any]]], selected_entities: Optional[Dict[str, List[str]]]) -> int:
@@ -1319,13 +1405,15 @@ class ImportService:
         )
 
     @staticmethod
-    def _can_access_status(status, imported_by, token_teams, unrestricted_admin):
+    def _can_access_status(status: ImportStatus, imported_by: str | None, token_teams: list[str] | None, unrestricted_admin: bool) -> bool:
         """Check whether the caller may access the import status."""
-        if imported_by is None or unrestricted_admin:
+        if not imported_by:
+            return False
+        if unrestricted_admin:
             return True
         return not status.platform_scope and status.imported_by == imported_by and (token_teams is None or status.request_team_ids is not None and status.request_team_ids.issubset(token_teams))
 
-    def get_import_status(self, import_id: str, *, imported_by: Optional[str] = None, token_teams: Optional[List[str]] = None, unrestricted_admin: bool = False) -> Optional[ImportStatus]:
+    def get_import_status(self, import_id: str, *, imported_by: str | None, token_teams: list[str] | None, unrestricted_admin: bool = False) -> Optional[ImportStatus]:
         """Get one import status within the verified request scope.
 
         Args:
@@ -1342,7 +1430,7 @@ class ImportService:
             return status
         return None
 
-    def list_import_statuses(self, *, imported_by: Optional[str] = None, token_teams: Optional[List[str]] = None, unrestricted_admin: bool = False) -> List[ImportStatus]:
+    def list_import_statuses(self, *, imported_by: str | None, token_teams: list[str] | None, unrestricted_admin: bool = False) -> List[ImportStatus]:
         """List import statuses within the verified request scope.
 
         Args:
@@ -1355,7 +1443,7 @@ class ImportService:
         """
         return [status for status in self.active_imports.values() if self._can_access_status(status, imported_by, token_teams, unrestricted_admin)]
 
-    def cleanup_completed_imports(self, max_age_hours: int = 24, *, imported_by: Optional[str] = None, token_teams: Optional[List[str]] = None, unrestricted_admin: bool = False) -> int:
+    def cleanup_completed_imports(self, max_age_hours: int = 24, *, imported_by: str | None, token_teams: list[str] | None, unrestricted_admin: bool = False) -> int:
         """Remove terminal statuses within the verified request scope.
 
         Args:
@@ -1425,7 +1513,7 @@ class ImportService:
         Returns:
             Gateway bundle information for UI
         """
-        bundles = {}
+        bundles: dict[str, Any] = {}
 
         if "gateways" not in entities:
             return bundles
@@ -1433,7 +1521,7 @@ class ImportService:
         for gateway in entities["gateways"]:
             gateway_name = gateway["name"]
             gateway_id = str(gateway.get("id") or gateway_name)
-            bundle_items = {"tools": [], "resources": [], "prompts": []}
+            bundle_items: dict[str, list[EntityData]] = {"tools": [], "resources": [], "prompts": []}
             for entity_type, items in bundle_items.items():
                 for item in entities.get(entity_type, []):
                     item_gateway = str(item.get("gateway_id") or item.get("gateway_name") or "")
@@ -1451,9 +1539,9 @@ class ImportService:
         return bundles
 
     @staticmethod
-    def _preview_server_dependencies(server: Dict[str, Any]) -> Dict[str, list]:
+    def _preview_server_dependencies(server: Dict[str, Any]) -> Dict[str, list[Any]]:
         """Collate the file's visible server dependencies for preview."""
-        refs = next((server[key] for key in ("tool_refs", "tool_ids", "associated_tools") if key in server), [])
+        refs: Any = next((server[key] for key in ("tool_refs", "tool_ids", "associated_tools") if key in server), [])
         tool_ids = [ref.get("id") if isinstance(ref, dict) else ref for ref in refs] if isinstance(refs, list) else []
         resources = server.get("associated_resources")
         prompts = server.get("associated_prompts")
@@ -1472,7 +1560,7 @@ class ImportService:
         Returns:
             Server dependency information for UI
         """
-        dependencies = {}
+        dependencies: dict[str, Any] = {}
 
         if "servers" not in entities:
             return dependencies

@@ -7633,7 +7633,7 @@ class TestExportImportEndpoints:
             await main_mod.import_configuration.__wrapped__(request=request, import_data=import_data, db=MagicMock(), user={"email": "admin@example.com"})
 
         assert excinfo.value.status_code == 400
-        assert "migrate_enc_secret.py" in excinfo.value.detail
+        assert "python -m mcpgateway.scripts.migrate_enc_secret" in excinfo.value.detail
         service.import_configuration.assert_not_awaited()
 
     @pytest.mark.parametrize("dry_run", [True, False])
@@ -9444,7 +9444,6 @@ class TestRemainingCoverageGaps:
             import_data={"tools": []},
             conflict_strategy="update",
             dry_run=False,
-            rekey_secret=None,
             selected_entities=None,
             db=MagicMock(),
             user=user,

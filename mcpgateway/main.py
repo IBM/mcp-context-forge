@@ -218,7 +218,7 @@ from mcpgateway.services.gateway_service import (
 )
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import import_service, ImportValidationError
+from mcpgateway.services.import_service import import_service, ImportValidationError, REKEY_SECRET_REMOVED
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
@@ -10852,7 +10852,6 @@ async def import_configuration(
     import_data: Dict[str, Any] = Body(...),
     conflict_strategy: Annotated[str, Body()] = "update",
     dry_run: Annotated[bool, Body()] = False,
-    rekey_secret: Annotated[Any, Body(deprecated=True)] = None,
     selected_entities: Annotated[Optional[Dict[str, List[str]]], Body()] = None,
     team_name: Annotated[Optional[str], Body()] = None,
     db: Session = Depends(get_db),
@@ -10866,7 +10865,6 @@ async def import_configuration(
         import_data: The configuration data to import
         conflict_strategy: How to handle conflicts: skip, update, rename, fail
         dry_run: If true, validate but don't make changes
-        rekey_secret: Deprecated option. Import rejects it.
         selected_entities: Dict of entity types to specific entity names/ids to import
         team_name: Destination team name. Defaults to the requester's personal team.
         db: Database session
@@ -10887,8 +10885,8 @@ async def import_configuration(
         if import_envelope_includes_roots(import_data):
             await _require_unrestricted_root_admin(request, user, db)
 
-        if rekey_secret is not None or (request is not None and "rekey_secret" in await request.json()):
-            raise HTTPException(status_code=400, detail="Import does not support rekey_secret. Use scripts/migrate_enc_secret.py to rotate the encryption secret.")
+        if request is not None and "rekey_secret" in await request.json():
+            raise HTTPException(status_code=400, detail=REKEY_SECRET_REMOVED)
 
         # Validate conflict strategy
         try:

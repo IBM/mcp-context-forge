@@ -946,7 +946,7 @@ async def require_server_oauth_admin(request: Request, user: Any, db: Session, f
     return True
 
 
-async def get_import_request_scope(request: Request, user: Any, db: Session) -> tuple[str, Optional[List[str]], bool]:
+async def get_import_request_scope(request: Request | None, user: Any, db: Session) -> tuple[str, Optional[List[str]], bool]:
     """Resolve the authenticated actor and authorization scope for import.
 
     Args:

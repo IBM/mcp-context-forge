@@ -22,8 +22,9 @@ import logging
 from typing import Any, cast, Dict, Iterable, List, Optional, Sequence, TypedDict
 
 # Third-Party
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, false, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 # First-Party
 from mcpgateway import __version__
@@ -35,11 +36,12 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import server_tool_association
-from mcpgateway.schemas import ResourceRead
+from mcpgateway.schemas import GatewayRead, ResourceRead
 from mcpgateway.services.gateway_service import gateway_requires_credentials
 from mcpgateway.services.tool_service import _decrypt_tool_header_value
 from mcpgateway.utils.portable_credentials import without_file_credentials
 from mcpgateway.utils.error_formatter import unexpected_error_detail
+from mcpgateway.utils.header_filtering import is_sensitive_tool_header_name, is_tool_credential_header_name
 
 # Service singletons are imported lazily in __init__ to avoid circular imports
 
@@ -47,8 +49,16 @@ logger = logging.getLogger(__name__)
 
 
 def _portable_tool_headers(headers: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Recover the operational Content-Type header from registry storage."""
-    return {key: _decrypt_tool_header_value(value) if key.strip().lower() == "content-type" else value for key, value in (headers or {}).items()}
+    """Prepare operational headers for export and leave credentials for removal."""
+    portable: Dict[str, Any] = {}
+    for name, stored in (headers or {}).items():
+        if is_tool_credential_header_name(name):
+            portable[name] = stored
+        elif not is_sensitive_tool_header_name(name) or name.strip().lower() == "content-type":
+            value = _decrypt_tool_header_value(stored)
+            if isinstance(value, str):
+                portable[name] = value
+    return portable
 
 
 def _exportable_resource_base(resource: DbResource | ResourceRead) -> str:
@@ -167,7 +177,7 @@ class ExportService:
         False
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the export service with required dependencies."""
         # Use globally-exported singletons from service modules so they
         # share initialized EventService/Redis clients created at app startup.
@@ -376,6 +386,7 @@ class ExportService:
                 """Top-level full export payload shape."""
 
                 version: str
+                contextforge_version: str
                 exported_at: str
                 exported_by: str
                 source_gateway: str
@@ -515,56 +526,63 @@ class ExportService:
         # Fetch all gateways across all pages (with team-scoped visibility)
         gateways = await self._fetch_all_gateways(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
 
-        exported_gateways = []
-        for gateway in gateways:
-            if gateway.auth_type == "sigv4":
-                logger.warning("Gateway %s uses SigV4 authentication and is not exported", gateway.id)
-                continue
-            gateway_data = {
-                "id": str(gateway.id),
-                "visibility": getattr(gateway, "visibility", None) or "public",
-                "name": gateway.name,
-                "auth_type": gateway.auth_type,
-                "gateway_mode": getattr(gateway, "gateway_mode", None),
-                "url": str(gateway.url),
-                "description": gateway.description,
-                "transport": gateway.transport,
-                "capabilities": gateway.capabilities or {},
-                "is_active": gateway.enabled,
-                "tags": gateway.tags or [],
-                "passthrough_headers": gateway.passthrough_headers or [],
-                "tool_validation_policy": gateway.tool_validation_policy,
-            }
+        gateway_ids = [str(gateway.id) for gateway in gateways]
+        query_auth = {}
+        if gateway_ids:
+            stmt = select(DbGateway.id, DbGateway.auth_query_params).where(DbGateway.id.in_(gateway_ids))
+            query_auth = {gateway_id: params for gateway_id, params in db.execute(stmt)}
+        return [entry for gateway in gateways if (entry := self._gateway_export_entry(gateway, query_auth.get(str(gateway.id)))) is not None]
 
-            if getattr(gateway, "auth_query_param_key", None):
-                gateway_data["auth_query_param_key"] = gateway.auth_query_param_key
-            if getattr(gateway, "client_cert", None) or gateway_requires_credentials(gateway):
-                gateway_data["credentials_required"] = True
-            gateway_data, _ = without_file_credentials(gateway_data)
-            gateway_data["health_check"] = {"url": f"{gateway_data['url']}/health", "interval": 30, "timeout": 10, "retries": 3}
-            exported_gateways.append(gateway_data)
-
-        return exported_gateways
+    @staticmethod
+    def _gateway_export_entry(gateway: DbGateway | GatewayRead, query_auth: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Serialize a gateway without credentials for either export form."""
+        if gateway.auth_type == "sigv4":
+            logger.warning("Gateway %s uses SigV4 authentication and is not exported", gateway.id)
+            return None
+        gateway_data: dict[str, Any] = {
+            "id": str(gateway.id),
+            "visibility": getattr(gateway, "visibility", None) or "public",
+            "name": gateway.name,
+            "auth_type": gateway.auth_type,
+            "gateway_mode": getattr(gateway, "gateway_mode", None),
+            "url": str(gateway.url),
+            "description": gateway.description,
+            "transport": gateway.transport,
+            "capabilities": gateway.capabilities or {},
+            "is_active": gateway.enabled,
+            "tags": gateway.tags or [],
+            "passthrough_headers": gateway.passthrough_headers or [],
+            "tool_validation_policy": gateway.tool_validation_policy,
+        }
+        if isinstance(query_auth, dict) and query_auth:
+            gateway_data["auth_query_params"] = dict.fromkeys(query_auth)
+        elif getattr(gateway, "auth_query_param_key", None):
+            gateway_data["auth_query_param_key"] = getattr(gateway, "auth_query_param_key")
+        if getattr(gateway, "client_cert", None) or getattr(gateway, "client_key", None) or gateway_requires_credentials(gateway):
+            gateway_data["credentials_required"] = True
+        gateway_data, _ = without_file_credentials(gateway_data)
+        gateway_data["health_check"] = {"url": f"{gateway_data['url']}/health", "interval": 30, "timeout": 10, "retries": 3}
+        return gateway_data
 
     @staticmethod
     def _export_tool_refs(
         db: Session, server_ids: List[str], user_email: Optional[str], token_teams: Optional[List[str]], *, include_inactive: bool = True
     ) -> tuple[Dict[str, List[Dict[str, Any]]], set[str]]:
         """Return visible tool references and server IDs with omitted bindings."""
-        refs = defaultdict(list)
-        incomplete = set()
+        refs: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+        incomplete: set[str] = set()
         if not server_ids:
             return refs, incomplete
         assoc = server_tool_association
 
-        def visible(model):
+        def visible(model: type[DbTool] | type[DbGateway]) -> ColumnElement[bool]:
             """Build the visibility predicate for the tool or gateway join."""
             if token_teams is None:
-                return or_(model.visibility != "private", and_(model.visibility == "private", model.owner_email == user_email, bool(user_email)))
+                return or_(model.visibility != "private", and_(model.visibility == "private", model.owner_email == user_email) if user_email else false())
             return or_(
                 model.visibility == "public",
                 and_(model.visibility == "team", model.team_id.in_(token_teams)),
-                and_(model.visibility == "private", model.owner_email == user_email, bool(token_teams) and bool(user_email)),
+                and_(model.visibility == "private", model.owner_email == user_email) if token_teams and user_email else false(),
             )
 
         tool_filter = and_(DbTool.id == assoc.c.tool_id, visible(DbTool))
@@ -582,7 +600,7 @@ class ExportService:
             if tool_id is None or (gateway_id is not None and gateway_name is None):
                 incomplete.add(str(server_id))
                 continue
-            ref = {"id": str(tool_id), "original_name": name}
+            ref: dict[str, Any] = {"id": str(tool_id), "original_name": name}
             if gateway_id is not None:
                 safe_gateway, _ = without_file_credentials({"url": gateway_url, "auth_query_params": gateway_query})
                 ref.update(gateway_id=str(gateway_id), gateway_name=gateway_name, gateway_url=safe_gateway["url"])
@@ -748,7 +766,7 @@ class ExportService:
         Returns:
             Dictionary containing dependency mappings
         """
-        dependencies = {"servers_to_tools": {}, "servers_to_resources": {}, "servers_to_prompts": {}}
+        dependencies: dict[str, dict[str, Any]] = {"servers_to_tools": {}, "servers_to_resources": {}, "servers_to_prompts": {}}
 
         # Extract server-to-tool dependencies
         if "servers" in entities and "tools" in entities:
@@ -1002,36 +1020,7 @@ class ExportService:
         if visible_gateway_ids is not None:
             db_gateways = [db_gateway for db_gateway in db_gateways if str(db_gateway.id) in visible_gateway_ids]
 
-        exported_gateways = []
-        for db_gateway in db_gateways:
-            if db_gateway.auth_type == "sigv4":
-                logger.warning("Gateway %s uses SigV4 authentication and is not exported", db_gateway.id)
-                continue
-            gateway_data = {
-                "id": str(db_gateway.id),
-                "visibility": getattr(db_gateway, "visibility", None) or "public",
-                "auth_type": db_gateway.auth_type,
-                "gateway_mode": getattr(db_gateway, "gateway_mode", None),
-                "name": db_gateway.name,
-                "url": str(db_gateway.url) if db_gateway.url else None,
-                "description": db_gateway.description,
-                "transport": db_gateway.transport,
-                "capabilities": db_gateway.capabilities or {},
-                "is_active": db_gateway.enabled,
-                "tags": db_gateway.tags or [],
-                "passthrough_headers": db_gateway.passthrough_headers or [],
-                "tool_validation_policy": db_gateway.tool_validation_policy,
-            }
-
-            if getattr(db_gateway, "auth_query_params", None):
-                gateway_data["auth_query_params"] = db_gateway.auth_query_params
-            if getattr(db_gateway, "client_key", None) or gateway_requires_credentials(db_gateway):
-                gateway_data["credentials_required"] = True
-            gateway_data, _ = without_file_credentials(gateway_data)
-            gateway_data["health_check"] = {"url": f"{gateway_data['url']}/health", "interval": 30, "timeout": 10, "retries": 3}
-            exported_gateways.append(gateway_data)
-
-        return exported_gateways
+        return [entry for gateway in db_gateways if (entry := self._gateway_export_entry(gateway, getattr(gateway, "auth_query_params", None))) is not None]
 
     async def _export_selected_servers(
         self, db: Session, server_ids: List[str], root_path: str = "", user_email: Optional[str] = None, token_teams: Optional[List[str]] = None
