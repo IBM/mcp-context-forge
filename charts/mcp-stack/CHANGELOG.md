@@ -10,10 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Breaking Changes
 
+- **Forwarded headers are trusted only from `FORWARDED_ALLOW_IPS`** - The gateway now honors `X-Forwarded-For` and `X-Forwarded-Proto` only from listed proxy addresses. The chart default `mcpContextForge.config.FORWARDED_ALLOW_IPS` is now `127.0.0.1,::1`. Behind an in-cluster ingress or the bundled nginx, set it to the CIDR of that proxy. Otherwise all clients show the proxy address and share one per-IP rate-limit bucket.
+
 - **Root URI policy now defaults to deny** (GHSA-x39c-q2jx-f325) - Before `helm upgrade`, add matching root policy to `mcpContextForge.config`: set `ROOT_ALLOWED_SCHEMES` for network `DEFAULT_ROOTS`, or set both `ROOT_ALLOW_FILE_SCHEME: "true"` and `ROOT_ALLOWED_FILE_PREFIXES` for `file://` roots. Invalid `DEFAULT_ROOTS` abort gateway startup.
 - **Scoped backup exports must exclude roots** - Unfiltered exports include roots and require unrestricted platform-admin credentials. Configure scoped backup jobs with an explicit roots exclusion, or use unrestricted platform-admin credentials.
 
 ### Changed
+
+- Route nginx A2A requests directly to the Python gateway. Remove the retired Rust sidecar upstream on port 8788.
 
 #### **🔐 Production-Hardened Default Values** ([#3550](https://github.com/IBM/mcp-context-forge/pull/3550))
 
@@ -172,8 +176,8 @@ Aligned `values.yaml` with `config.py` secure defaults and tightened for product
   - Account lockout: `MAX_FAILED_LOGIN_ATTEMPTS`, `ACCOUNT_LOCKOUT_DURATION_MINUTES`
   - Argon2id hashing: `ARGON2ID_TIME_COST/MEMORY_COST/PARALLELISM`
 * **SSO Integration** - Single Sign-On support for multiple providers:
-  - GitHub OAuth: `SSO_GITHUB_*` configuration options
-  - Google OAuth: `SSO_GOOGLE_*` configuration options
+  - GitHub OAuth: `SSO_GITHUB_*` configuration options <!-- pragma: allowlist secret -->
+  - Google OAuth: `SSO_GOOGLE_*` configuration options <!-- pragma: allowlist secret -->
   - IBM Security Verify: `SSO_IBM_VERIFY_*` configuration options
   - Okta OIDC: `SSO_OKTA_*` configuration options
   - SSO policies: `SSO_AUTO_CREATE_USERS`, `SSO_TRUSTED_DOMAINS`, `SSO_REQUIRE_ADMIN_APPROVAL`
@@ -195,7 +199,7 @@ Aligned `values.yaml` with `config.py` secure defaults and tightened for product
 * **Plugin Framework Configuration** - Plugin system support:
   - `PLUGINS_ENABLED/CONFIG_FILE/CLI_COMPLETION/CLI_MARKUP_MODE`
 * **Enhanced Security Features** - Additional security configurations:
-  - MCP client auth: `MCP_CLIENT_AUTH_ENABLED/TRUST_PROXY_AUTH/PROXY_USER_HEADER`
+  - MCP client auth: `MCP_CLIENT_AUTH_ENABLED/TRUST_PROXY_AUTH/PROXY_USER_HEADER` <!-- pragma: allowlist secret -->
   - OAuth settings: `OAUTH_REQUEST_TIMEOUT/MAX_RETRIES`
   - Header passthrough: `ENABLE_HEADER_PASSTHROUGH/DEFAULT_PASSTHROUGH_HEADERS`
   - JWT enhancements: `JWT_AUDIENCE/ISSUER`, `REQUIRE_TOKEN_EXPIRATION`

@@ -18,21 +18,18 @@ import os
 import ssl
 import tempfile
 
+# First-Party
+from mcpgateway.config_sections import SSLCacheSettings
+
 logger = logging.getLogger(__name__)
 
 # Cache for SSL contexts keyed by SSL parameter hash
 _ssl_context_cache: dict[str, ssl.SSLContext] = {}
 _ssl_context_cache_timestamps: dict[str, datetime] = {}
 
-_SSL_CONTEXT_CACHE_MAX_SIZE = int(os.getenv("SSL_CONTEXT_CACHE_MAX_SIZE", "100"))
-_SSL_CONTEXT_CACHE_TTL = os.getenv("SSL_CONTEXT_CACHE_TTL")
-if _SSL_CONTEXT_CACHE_TTL is not None and _SSL_CONTEXT_CACHE_TTL.strip() != "":
-    try:
-        _SSL_CONTEXT_CACHE_TTL = int(_SSL_CONTEXT_CACHE_TTL)
-    except ValueError:
-        raise ValueError("SSL_CONTEXT_CACHE_TTL must be an integer number of seconds")
-else:
-    _SSL_CONTEXT_CACHE_TTL = None
+cache_settings = SSLCacheSettings()
+_SSL_CONTEXT_CACHE_MAX_SIZE = cache_settings.ssl_context_cache_max_size
+_SSL_CONTEXT_CACHE_TTL = cache_settings.ssl_context_cache_ttl
 
 
 def _is_expired(cache_key: str) -> bool:

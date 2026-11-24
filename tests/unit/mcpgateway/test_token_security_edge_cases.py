@@ -81,14 +81,6 @@ class TestTokenBlocklistServiceEdgeCases:
             result = service.get_revocation_stats()
             assert result == {"total_revoked": 0, "by_reason": {}}
 
-    def test_revoke_user_tokens_not_implemented(self):
-        """Test revoke_user_tokens returns 0 (not yet implemented)."""
-        service = TokenBlocklistService()
-
-        # This method is a placeholder
-        result = service.revoke_user_tokens(user_email="test@example.com", revoked_by="admin@example.com", reason="security")
-        assert result == 0
-
 
 class TestAuthRouterEdgeCases:
     """Test edge cases in auth router."""

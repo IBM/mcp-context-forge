@@ -26,7 +26,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth_context import get_user_id
+from mcpgateway.auth_context import get_scoped_resource_access_context, get_user_email, get_user_id
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -51,6 +52,60 @@ _ACCESS_DENIED_MSG = "Access denied"
 # Wildcard token scope granting every permission (mirrors Permissions.ALL_PERMISSIONS in db.py,
 # duplicated here to keep this module import-light for TokenScopingMiddleware).
 _ALL_PERMISSIONS_SCOPE = "*"
+
+
+async def get_team_management_scope(request: Request, user: dict, db: Session) -> Optional[List[str]]:
+    """Resolve canonical scope for team management and collection filtering.
+
+    Args:
+        request: Incoming request context.
+        user: Principal selected by the authentication dependency.
+        db: Database session for trusted proxy membership resolution.
+
+    Returns:
+        Allowed team IDs, or ``None`` for canonical administrator bypass.
+
+    Raises:
+        HTTPException: If the authenticated identity is unknown.
+    """
+    # First-Party
+    from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+    email = get_user_email(user)
+    if email == "unknown":
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+
+    scope_request = request
+    if user.get("auth_method") == "proxy" and is_proxy_auth_trust_active() and request.headers.get(settings.proxy_user_header) == email:
+        # The selected proxy principal takes precedence over conflicting JWT credentials.
+        teams = None if user.get("is_admin") else [team.id for team in await TeamManagementService(db).get_user_teams(email)]
+        scope_request = Request({**request.scope, "state": {"token_teams": teams}})
+        user["token_teams"] = teams
+
+    _, token_teams = get_scoped_resource_access_context(scope_request, user)
+    return token_teams
+
+
+async def require_team_scope(request: Request, user: dict, team_id: str, db: Session) -> None:
+    """Enforce the authenticated scope before team management operations.
+
+    Args:
+        request: Incoming request context.
+        user: Principal selected by the authentication dependency.
+        team_id: Authoritative target team ID.
+        db: Database session for trusted proxy membership resolution.
+
+    Raises:
+        HTTPException: If the resolved scope excludes the target team.
+    """
+    token_teams = await get_team_management_scope(request, user, db)
+    if token_teams is not None and team_id not in token_teams:
+        logger.warning(
+            "Team scope denied: user_id=%s team_id=%s",
+            SecurityValidator.sanitize_log_message(get_user_id(user)),
+            SecurityValidator.sanitize_log_message(team_id),
+        )
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
 
 
 def token_scope_grants(token_scopes: Optional[List[str]], permission: str) -> bool:
@@ -779,6 +834,7 @@ async def check_permission_inline(
     """
     if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
         return False
+    identity = get_user_id(user_context)
 
     # SECURITY: Check API token scopes BEFORE plugin hooks and RBAC (Layer 1).
     # A scoped API token must carry the required permission; this is independent of
@@ -822,7 +878,7 @@ async def check_permission_inline(
         result, _ = await plugin_manager.invoke_hook(
             HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
             payload=HttpAuthCheckPermissionPayload(
-                user_email=user_context["email"],
+                user_email=identity,
                 permission=permission,
                 resource_type=resource_type,
                 team_id=team_id,
@@ -891,7 +947,7 @@ async def check_permission_inline(
     if db:
         permission_service = PermissionService(db)
         granted = await permission_service.check_permission(
-            user_email=user_context["email"],
+            user_email=identity,
             permission=permission,
             resource_type=resource_type,
             team_id=team_id,
@@ -906,7 +962,7 @@ async def check_permission_inline(
         with fresh_db_session() as fresh_db:
             permission_service = PermissionService(fresh_db)
             granted = await permission_service.check_permission(
-                user_email=user_context["email"],
+                user_email=identity,
                 permission=permission,
                 resource_type=resource_type,
                 team_id=team_id,
@@ -1078,6 +1134,7 @@ def require_admin_permission():
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+            identity = get_user_id(user_context)
 
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
             db_session = kwargs.get("db") or user_context.get("db")
@@ -1085,12 +1142,12 @@ def require_admin_permission():
             if db_session:
                 # Use existing session from endpoint or user_context
                 permission_service = PermissionService(db_session)
-                has_admin_permission = await permission_service.check_admin_permission(user_context["email"], token_teams=token_teams)
+                has_admin_permission = await permission_service.check_admin_permission(identity, token_teams=token_teams)
             else:
                 # Create fresh db session for permission check
                 with fresh_db_session() as db:
                     permission_service = PermissionService(db)
-                    has_admin_permission = await permission_service.check_admin_permission(user_context["email"], token_teams=token_teams)
+                    has_admin_permission = await permission_service.check_admin_permission(identity, token_teams=token_teams)
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
@@ -1165,6 +1222,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+            identity = get_user_id(user_context)
 
             # SECURITY: Check API token scopes BEFORE RBAC (Layer 1)
             # A scoped API token must carry at least ONE of the required permissions; this is
@@ -1187,7 +1245,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                 granted = False
                 for permission in permissions:
                     if await permission_service.check_permission(
-                        user_email=user_context["email"],
+                        user_email=identity,
                         permission=permission,
                         resource_type=resource_type,
                         team_id=team_id,
@@ -1207,7 +1265,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                     granted = False
                     for permission in permissions:
                         if await permission_service.check_permission(
-                            user_email=user_context["email"],
+                            user_email=identity,
                             permission=permission,
                             resource_type=resource_type,
                             team_id=team_id,
@@ -1252,6 +1310,7 @@ class PermissionChecker:
         """
         self.user_context = user_context
         self.db_session = user_context.get("db")
+        self.identity = get_user_id(user_context)
 
     async def has_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None, check_any_team: bool = False) -> bool:
         """Check if user has specific permission.
@@ -1270,7 +1329,7 @@ class PermissionChecker:
             # Use existing session
             permission_service = PermissionService(self.db_session)
             return await permission_service.check_permission(
-                user_email=self.user_context["email"],
+                user_email=self.identity,
                 permission=permission,
                 resource_type=resource_type,
                 resource_id=resource_id,
@@ -1284,7 +1343,7 @@ class PermissionChecker:
         with fresh_db_session() as db:
             permission_service = PermissionService(db)
             return await permission_service.check_permission(
-                user_email=self.user_context["email"],
+                user_email=self.identity,
                 permission=permission,
                 resource_type=resource_type,
                 resource_id=resource_id,
@@ -1305,11 +1364,11 @@ class PermissionChecker:
         if self.db_session:
             # Use existing session
             permission_service = PermissionService(self.db_session)
-            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
+            return await permission_service.check_admin_permission(self.identity, token_teams=token_teams)
         # Create fresh db session
         with fresh_db_session() as db:
             permission_service = PermissionService(db)
-            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
+            return await permission_service.check_admin_permission(self.identity, token_teams=token_teams)
 
     async def has_any_permission(self, permissions: List[str], resource_type: Optional[str] = None, team_id: Optional[str] = None) -> bool:
         """Check if user has any of the specified permissions.
@@ -1327,7 +1386,7 @@ class PermissionChecker:
             permission_service = PermissionService(self.db_session)
             for permission in permissions:
                 if await permission_service.check_permission(
-                    user_email=self.user_context["email"],
+                    user_email=self.identity,
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
@@ -1342,7 +1401,7 @@ class PermissionChecker:
             permission_service = PermissionService(db)
             for permission in permissions:
                 if await permission_service.check_permission(
-                    user_email=self.user_context["email"],
+                    user_email=self.identity,
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,

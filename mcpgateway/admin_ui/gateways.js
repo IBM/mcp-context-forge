@@ -527,6 +527,12 @@ export const editGateway = async function (gatewayId) {
     const authTypeField = safeGetElement("auth-type-gw-edit");
 
     if (authTypeField) {
+      // The form cannot edit SigV4 credentials. Offer the option only for SigV4
+      // gateways, so saving keeps them instead of posting an empty auth type.
+      const sigv4Option = authTypeField.querySelector('option[value="sigv4"]');
+      if (sigv4Option) {
+        sigv4Option.hidden = gateway.authType !== "sigv4";
+      }
       authTypeField.value = gateway.authType || ""; // falls back to None
     }
 
@@ -571,6 +577,7 @@ export const editGateway = async function (gatewayId) {
       "oauth-redirect-after-success-gw-edit"
     );
     const oauthIssuerField = safeGetElement("oauth-issuer-gw-edit");
+    const oauthTokenIssuerField = safeGetElement("oauth-token-issuer-gw-edit");
     const oauthRegistrationMethodField = safeGetElement(
       "oauth-registration-method-gw-edit",
       true,
@@ -678,6 +685,9 @@ export const editGateway = async function (gatewayId) {
           const config = gateway.oauthConfig;
           if (oauthIssuerField) {
             oauthIssuerField.value = config.issuer || "";
+          }
+          if (oauthTokenIssuerField) {
+            oauthTokenIssuerField.value = [].concat(config.token_issuer || []).join(", ");
           }
           if (oauthRegistrationMethodField) {
             oauthRegistrationMethodField.value =

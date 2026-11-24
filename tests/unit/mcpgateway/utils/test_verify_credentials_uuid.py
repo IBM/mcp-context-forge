@@ -945,7 +945,7 @@ async def test_verify_oauth_access_token_success(monkeypatch):
     mock_jwks_client.get_signing_key_from_jwt = MagicMock(return_value=mock_signing_key)
 
     monkeypatch.setattr(vc, "_discover_oidc_metadata", AsyncMock(return_value=mock_metadata))
-    monkeypatch.setattr("jwt.PyJWKClient", lambda uri: mock_jwks_client)
+    monkeypatch.setattr("jwt.PyJWKClient", lambda uri, **_: mock_jwks_client)
 
     # Mock jwt.decode to return verified payload
     def mock_jwt_decode(token, **kwargs):
@@ -1036,7 +1036,7 @@ async def test_verify_oauth_access_token_discovered_local_http_jwks_policy(monke
     mock_signing_key = MagicMock(key="secret")
     mock_jwks_client = MagicMock()
     mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
-    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", lambda _uri: mock_jwks_client)
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", lambda _uri, **_: mock_jwks_client)
     monkeypatch.setattr(
         "asyncio.to_thread",
         AsyncMock(side_effect=lambda fn, *args, **kwargs: token_payload if fn == jwt.decode else mock_signing_key),
@@ -1060,7 +1060,7 @@ async def test_verify_oauth_access_token_jwks_uri_override_skips_discovery(monke
     override = "http://keycloak:8080/realms/m/protocol/openid-connect/certs"
 
     class FakeJWKSClient:
-        def __init__(self, uri):
+        def __init__(self, uri, **_):
             self.uri = uri
 
         def get_signing_key_from_jwt(self, _token):
@@ -1092,7 +1092,7 @@ async def test_verify_oauth_access_token_jwks_uri_override_bad_signature_returns
     token = jwt.encode({"sub": "user@example.com", "iss": "https://auth.example.com", "aud": "my-api", "exp": 9999999999}, signing_key, algorithm="RS256")
 
     class FakeJWKSClient:
-        def __init__(self, uri):
+        def __init__(self, uri, **_):
             self.uri = uri
 
         def get_signing_key_from_jwt(self, _token):
@@ -1183,7 +1183,7 @@ async def test_verify_oauth_access_token_jwt_error(monkeypatch):
     mock_jwks_client.get_signing_key_from_jwt = MagicMock(side_effect=jwt.PyJWTError("Invalid signature"))
 
     monkeypatch.setattr(vc, "_discover_oidc_metadata", AsyncMock(return_value=mock_metadata))
-    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", lambda uri: mock_jwks_client)
+    monkeypatch.setattr(vc, "_NoRedirectPyJWKClient", lambda uri, **_: mock_jwks_client)
     vc._oauth_jwks_client_cache.clear()
 
     result = await vc.verify_oauth_access_token(token, ["https://auth.example.com"])

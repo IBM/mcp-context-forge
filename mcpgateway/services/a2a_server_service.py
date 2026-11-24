@@ -6,9 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 Service for exposing virtual servers as A2A agents (virtual server federation).
 
 A virtual server with an enabled ServerInterface whose protocol contains "a2a"
-can be resolved and invoked as if it were a standalone A2A agent.  The Rust
-sidecar calls /_internal/a2a/agents/{name}/resolve; this service provides the
-fallback lookup when no matching DbA2AAgent row exists.
+can be resolved and invoked as if it were a standalone A2A agent. This
+service resolves virtual server interfaces and enforces their visibility.
 """
 
 # Future
@@ -484,7 +483,7 @@ class A2AServerService:
 
         Matches any protocol whose lower-cased value starts with ``a2a``
         (e.g. ``a2a``, ``a2a/v1``, ``a2a-jsonrpc``).  When a server exposes
-        multiple A2A interfaces, the first one (by DB insertion order) is
+        multiple A2A interfaces, the most recently created one is
         returned — this avoids ``MultipleResultsFound`` when both v0.3 and
         v1 bindings exist.
 

@@ -209,12 +209,15 @@ Metadata tracking is **automatically enabled** for all new installations and upg
 
 ### **Proxy Support**
 
-Metadata capture automatically handles reverse proxy scenarios:
+Metadata capture records the client address that the gateway resolves for the request. The gateway applies `X-Forwarded-For` only when the direct peer is listed in `FORWARDED_ALLOW_IPS` (default `127.0.0.1,::1`). It then records the rightmost address that is not a trusted proxy:
 
 ```bash
-# Respects X-Forwarded-For headers
-X-Forwarded-For: 203.0.113.1, 192.168.1.1, 127.0.0.1
-# Records: created_from_ip = "203.0.113.1" (original client)
+# FORWARDED_ALLOW_IPS=10.0.0.0/8, request from proxy 10.0.0.5
+X-Forwarded-For: 198.51.100.9, 203.0.113.1
+# Records: created_from_ip = "203.0.113.1" (rightmost untrusted hop)
+
+# Request from a peer that is not in FORWARDED_ALLOW_IPS
+# Records: created_from_ip = <socket peer address>; X-Forwarded-For is ignored
 ```
 
 ### **Privacy Considerations**

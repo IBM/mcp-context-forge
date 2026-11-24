@@ -425,3 +425,17 @@ class TestFilterSensitiveHeaders:
         }
         result = filter_sensitive_headers(headers)
         assert result == headers
+
+
+class TestAwsSigV4Headers:
+    """SigV4 credential headers never reach plugins."""
+
+    @pytest.mark.parametrize("name", ["x-amz-security-token", "X-Amz-Security-Token", "X-AMZ-SECURITY-TOKEN", "x-amz-signature", "x-amz-credential", "Authorization"])
+    def test_credential_headers_are_removed(self, name):
+        result = filter_sensitive_headers({name: "value", "content-type": "application/json"})
+        assert result == {"content-type": "application/json"}
+
+    @pytest.mark.parametrize("name", ["x-amz-date", "x-amz-content-sha256", "x-amz-target"])
+    def test_non_secret_amz_headers_are_kept(self, name):
+        headers = {name: "value"}
+        assert filter_sensitive_headers(headers) == headers

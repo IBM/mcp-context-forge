@@ -633,22 +633,29 @@ class TestSecurityValidation:
         assert tool.auth.auth_value is not None
 
     def test_tool_create_jsonpath_filter(self):
-        """Test JSONPath filter validation."""
-        logger.debug("Testing tool JSONPath filter validation")
+        """A response filter must be a CEL expression over ``response``."""
+        logger.debug("Testing tool response filter validation")
 
-        # Valid JSONPath expressions
-        valid_jsonpaths = [
-            "$.data",
-            "$.items[*].name",
-            "$..price",
-            "$.store.book[?(@.price < 10)]",
+        valid_filters = [
+            "response.data",
+            "response.items.map(i, i.name)",
+            "response.store.book.filter(b, b.price < 10)",
             "",  # Empty is valid
         ]
 
-        for jsonpath in valid_jsonpaths:
-            logger.debug(f"Testing valid JSONPath: {jsonpath}")
-            tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, jsonpath_filter=jsonpath)
-            assert tool.jsonpath_filter == jsonpath
+        for expression in valid_filters:
+            logger.debug(f"Testing valid filter: {expression}")
+            tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, jsonpath_filter=expression)
+            assert tool.jsonpath_filter == expression
+
+        for expression in ["$.data", "$..price", ".data"]:
+            logger.debug(f"Testing rejected filter: {expression}")
+            with pytest.raises(ValidationError, match="jq or JSONPath filter, which is no longer supported"):
+                ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, jsonpath_filter=expression)
+
+        for expression in ["user@example.com", "response.items["]:
+            with pytest.raises(ValidationError, match="not a valid CEL expression"):
+                ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, jsonpath_filter=expression)
 
     # --- Test Resource Schemas ---
 
@@ -1913,44 +1920,49 @@ class TestInternationalization:
             assert tool.description is not None
 
 
-class TestJSONPathValidation:
-    """Additional JSONPath validation tests."""
+class TestResponseFilterValidation:
+    """Additional response filter validation tests."""
 
-    def test_complex_jsonpath_expressions(self):
-        """Test complex JSONPath expressions."""
-        logger.debug("Testing complex JSONPath expressions")
+    def test_complex_filter_expressions(self):
+        """Complex CEL expressions over the response are accepted."""
+        logger.debug("Testing complex response filter expressions")
 
-        jsonpaths = [
-            "$..book[?(@.price < 10)]",
-            "$.store.book[*].author",
-            "$..book[(@.length-1)]",
-            "$..*",
-            "$..book[?(@.isbn)]",
-            "$.store..price",
-            "$..book[?(@.price < $.expensive)]",
+        expressions = [
+            "response.store.book.filter(b, b.price < 10)",
+            "response.store.book.map(b, b.author)",
+            "response.store.book[size(response.store.book) - 1]",
+            "response.store.book.filter(b, has(b.isbn))",
+            "response.store.book.filter(b, b.price < response.expensive)",
+            '{"authors": response.store.book.map(b, b.author), "count": size(response.store.book)}',
+            "response.store.book.exists(b, b.price > 100) ? response.store.book : []",
         ]
 
-        for path in jsonpaths:
-            logger.debug(f"Testing JSONPath: {path}")
-            tool = ToolCreate(name="test_tool", url="https://example.com", jsonpath_filter=path)
-            assert tool.jsonpath_filter == path
+        for expression in expressions:
+            logger.debug(f"Testing filter: {expression}")
+            tool = ToolCreate(name="test_tool", url="https://example.com", jsonpath_filter=expression)
+            assert tool.jsonpath_filter == expression
 
-    def test_invalid_jsonpath_patterns(self):
-        """Test potentially dangerous JSONPath patterns."""
-        logger.debug("Testing dangerous JSONPath patterns")
+    def test_injection_attempts_are_rejected(self):
+        """Strings that are not CEL never reach the database, whatever they contain."""
+        logger.debug("Testing injection-looking response filters")
 
-        # JSONPath itself doesn't execute code, but test for injection attempts
-        dangerous_paths = [
+        dangerous = [
             "$[<script>alert('XSS')</script>]",
             "$['; DROP TABLE users; --]",
             "$[`rm -rf /`]",
+            "response; import os",
         ]
 
-        for path in dangerous_paths:
-            logger.debug(f"Testing dangerous JSONPath: {path}")
-            # JSONPath doesn't validate syntax strictly, so these might pass
-            tool = ToolCreate(name="test_tool", url="https://example.com", jsonpath_filter=path)
-            assert tool.jsonpath_filter == path
+        for expression in dangerous:
+            logger.debug(f"Testing rejected filter: {expression}")
+            with pytest.raises(ValidationError, match="no longer supported|not a valid CEL expression"):
+                ToolCreate(name="test_tool", url="https://example.com", jsonpath_filter=expression)
+
+    def test_unknown_names_are_rejected(self):
+        """A filter may reference only the response; any other name is an error."""
+        for expression in ["data.items", "os.environ", "response.a || secrets"]:
+            with pytest.raises(ValidationError, match="not a valid CEL expression"):
+                ToolCreate(name="test_tool", url="https://example.com", jsonpath_filter=expression)
 
 
 class TestAuthenticationValidation:

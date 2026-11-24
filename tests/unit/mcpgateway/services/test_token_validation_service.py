@@ -456,6 +456,22 @@ class TestValidateOauthTokenClaims:
 
         assert result.issuer_match is True
 
+    def test_token_issuer_overrides_as_issuer(self):
+        token = _make_jwt({"iss": "https://login.example.com"})
+        oauth_config = {"issuer": "https://mcp.example.com", "token_issuer": "https://login.example.com/"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.issuer_match is True
+
+    def test_token_issuer_list_accepts_any_entry_and_rejects_others(self):
+        oauth_config = {"issuer": "https://mcp.example.com", "token_issuer": ["https://a.example.com", "https://b.example.com"]}
+        ok = validate_oauth_token_claims(_make_jwt({"iss": "https://b.example.com"}), oauth_config, "https://gw.example.com", "test-gw")
+        bad = validate_oauth_token_claims(_make_jwt({"iss": "https://mcp.example.com"}), oauth_config, "https://gw.example.com", "test-gw")
+
+        assert ok.issuer_match is True
+        assert bad.issuer_match is False
+        assert bad.blocking_errors
+
     def test_no_iss_claim(self):
         token = _make_jwt({"aud": "test"})
         oauth_config = {"issuer": "https://auth.example.com"}

@@ -66,7 +66,6 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
-from mcpgateway.auth_user_helpers import is_passwordless_user
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
 from mcpgateway.auth_context import (
@@ -75,10 +74,15 @@ from mcpgateway.auth_context import (
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
+)
+from mcpgateway.auth_context import (
     import_envelope_includes_roots,
     is_unrestricted_platform_admin,
+    require_server_oauth_admin,
     selective_selection_includes_roots,
 )
+from mcpgateway.auth_context import get_user_id as get_canonical_user_id
+from mcpgateway.auth_user_helpers import is_passwordless_user
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -113,7 +117,15 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_admin_permission, require_any_permission, require_permission
+from mcpgateway.middleware.rbac import (
+    _ACCESS_DENIED_MSG,
+    get_current_user_with_permissions,
+    get_team_management_scope,
+    require_admin_permission,
+    require_any_permission,
+    require_permission,
+    require_team_scope,
+)
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     _encode_auth_headers_list,
@@ -161,7 +173,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, a2a_enabled, raise_if_a2a_disabled
+from mcpgateway.services.a2a_service import a2a_enabled, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, raise_if_a2a_disabled
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
@@ -206,6 +218,7 @@ from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationErr
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
+from mcpgateway.utils.origin import is_allowed_redirect, normalize_origin_parts, origin_from_url
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
@@ -216,7 +229,6 @@ from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeE
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.validate_signature import sign_data
-from mcpgateway.utils.origin import is_allowed_redirect, normalize_origin_parts, origin_from_url
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Conditional imports for gRPC support (only if grpcio is installed)
@@ -1112,6 +1124,7 @@ async def _assemble_actor_from_fields(fields: Any, *, encrypt_secret: bool) -> O
 
 _CLEARABLE_OAUTH_FORM_FIELDS: Dict[str, str] = {
     "oauth_issuer": "issuer",
+    "oauth_token_issuer": "token_issuer",
     "oauth_token_url": "token_url",
     "oauth_authorization_url": "authorization_url",
     "oauth_redirect_uri": "redirect_uri",
@@ -1137,8 +1150,8 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
       :func:`mcpgateway.utils.oauth_resource.parse_oauth_resource_form`
       (single URI → ``str``, multiple → ``list[str]``, RFC 7519 §4.1.3 shapes).
       Pass ``include_resource=False`` for entity types that do not consume
-      ``oauth_config["resource"]`` (A2A agents) so the value is neither
-      assembled nor able to trigger assembly on its own.
+      ``oauth_config["resource"]`` so the value is neither assembled nor able
+      to trigger assembly on its own.
     * ``encrypt_secret=True`` encrypts ``client_secret`` before storage
       (UI edit/add handlers); ``False`` stores it as submitted (the gateway
       create path, where encryption happens downstream in the service layer).
@@ -1155,6 +1168,7 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     """
     oauth_grant_type = str(fields.get("oauth_grant_type", ""))
     oauth_issuer = str(fields.get("oauth_issuer", ""))
+    oauth_token_issuers = str(fields.get("oauth_token_issuer", "")).replace(",", " ").split()
     oauth_token_url = str(fields.get("oauth_token_url", ""))
     oauth_authorization_url = str(fields.get("oauth_authorization_url", ""))
     oauth_redirect_uri = str(fields.get("oauth_redirect_uri", ""))
@@ -1177,6 +1191,8 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
         oauth_config["grant_type"] = oauth_grant_type
     if oauth_issuer:
         oauth_config["issuer"] = oauth_issuer
+    if oauth_token_issuers:
+        oauth_config["token_issuer"] = oauth_token_issuers[0] if len(oauth_token_issuers) == 1 else oauth_token_issuers
     if oauth_token_url:
         oauth_config["token_url"] = oauth_token_url
     if oauth_authorization_url:
@@ -1602,6 +1618,10 @@ def _build_admin_redirect(
 def get_client_ip(request: Request) -> str:
     """Extract client IP address from request.
 
+    ``request.client`` is already resolved from X-Forwarded-For by
+    ``ProxyHeadersMiddleware`` for peers in ``FORWARDED_ALLOW_IPS``; raw
+    forwarding headers are never read here.
+
     Args:
         request: FastAPI request object
 
@@ -1611,19 +1631,9 @@ def get_client_ip(request: Request) -> str:
     Examples:
         >>> from unittest.mock import MagicMock
         >>>
-        >>> # Test with X-Forwarded-For header
+        >>> # Forwarding headers are ignored
         >>> mock_request = MagicMock()
         >>> mock_request.headers = {"X-Forwarded-For": "192.168.1.1, 10.0.0.1"}
-        >>> get_client_ip(mock_request)
-        '192.168.1.1'
-        >>>
-        >>> # Test with X-Real-IP header
-        >>> mock_request.headers = {"X-Real-IP": "10.0.0.5"}
-        >>> get_client_ip(mock_request)
-        '10.0.0.5'
-        >>>
-        >>> # Test with direct client IP
-        >>> mock_request.headers = {}
         >>> mock_request.client.host = "127.0.0.1"
         >>> get_client_ip(mock_request)
         '127.0.0.1'
@@ -1633,17 +1643,6 @@ def get_client_ip(request: Request) -> str:
         >>> get_client_ip(mock_request)
         'unknown'
     """
-    # Check for X-Forwarded-For header (proxy/load balancer)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-
-    # Check for X-Real-IP header
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip
-
-    # Fall back to direct client IP
     return request.client.host if request.client else "unknown"
 
 
@@ -3063,6 +3062,20 @@ async def get_a2a_stats_cache_stats(
     return a2a_stats_cache.stats()
 
 
+def _redact_connection_url(url: Optional[str]) -> Optional[str]:
+    """Hide a connection URL, because any part of it can carry a credential.
+
+    Args:
+        url: Connection URL, or None.
+
+    Returns:
+        The input when it is empty. Otherwise the configured mask value.
+    """
+    if not url:
+        return url
+    return settings.masked_auth_value
+
+
 @admin_router.get("/config/settings")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_configuration_settings(
@@ -3143,9 +3156,9 @@ async def get_configuration_settings(
             "platform_admin_password": mask_sensitive(settings.platform_admin_password, "password"),
         },
         "Database & Cache": {
-            "database_url": settings.database_url.replace("://", "://***@") if "@" in settings.database_url else settings.database_url,
+            "database_url": _redact_connection_url(settings.database_url),
             "cache_type": settings.cache_type,
-            "redis_url": settings.redis_url.replace("://", "://***@") if settings.redis_url and "@" in settings.redis_url else settings.redis_url,
+            "redis_url": _redact_connection_url(settings.redis_url),
             "db_pool_size": settings.db_pool_size,
             "db_max_overflow": settings.db_max_overflow,
         },
@@ -3340,6 +3353,7 @@ async def admin_servers_partial_html(
         with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
         selectinload(DbServer.a2a_agents),
         with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
+        selectinload(DbServer.interfaces),
         joinedload(DbServer.email_team),
     )
 
@@ -3558,6 +3572,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         True
     """
     form = await request.form()
+    oauth_authorized = await require_server_oauth_admin(request, user, db, form.keys())
     # is_inactive_checked = form.get("is_inactive_checked", "false")
     team_id = _form_team_id(form)
 
@@ -3644,6 +3659,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             created_user_agent=creation_metadata["created_user_agent"],
             team_id=team_id_cast,
             visibility=visibility,
+            oauth_authorized=oauth_authorized,
         )
         return ORJSONResponse(
             content={"message": "Server created successfully!", "success": True},
@@ -3664,6 +3680,37 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     except Exception as ex:
         LOGGER.exception(f"Unexpected error in admin_add_server: {ex}")
         return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
+
+
+def _merge_server_oauth_form_config(existing: Dict[str, Any], submitted: Dict[str, Any]) -> Dict[str, Any]:
+    """Preserve OAuth settings that the edit form does not expose.
+
+    Args:
+        existing: Stored OAuth settings.
+        submitted: OAuth settings parsed from editable controls.
+
+    Returns:
+        Stored settings with changed controls applied.
+    """
+    merged = dict(existing)
+    issuers = existing.get("authorization_servers")
+    if not isinstance(issuers, list) or not issuers:
+        issuers = [existing.get("authorization_server", "")]
+    issuer = submitted["authorization_servers"][0]
+    if issuer != issuers[0]:
+        merged.pop("authorization_server", None)
+        merged["authorization_servers"] = [issuer, *issuers[1:]]
+    for key, alias in (("scopes_supported", "scopes"), ("token_endpoint", "token_endpoint"), ("audience", "audience")):
+        value = submitted.get(key)
+        previous = existing.get(key) or existing.get(alias)
+        if key == "scopes_supported":
+            previous = previous.split() if isinstance(previous, str) else previous
+        if (value or None) != (previous or None):
+            merged.pop(alias, None)
+            merged.pop(key, None)
+            if value:
+                merged[key] = value
+    return merged
 
 
 @admin_router.post("/servers/{server_id}/edit")
@@ -3709,6 +3756,7 @@ async def admin_edit_server(
         'admin_edit_server'
     """
     form = await request.form()
+    oauth_authorized = await require_server_oauth_admin(request, user, db, form.keys())
     team_id = _form_team_id(form)
 
     # Parse tags from comma-separated string
@@ -3783,9 +3831,14 @@ async def admin_edit_server(
             "visibility": visibility,
             "team_id": team_id,
             "owner_email": user_email,
-            "oauth_enabled": oauth_enabled,
-            "oauth_config": oauth_config,
         }
+        if oauth_authorized:
+            if oauth_config:
+                existing_server = db.get(DbServer, server_id)
+                existing_config = getattr(existing_server, "oauth_config", None)
+                if isinstance(existing_config, dict):
+                    oauth_config = _merge_server_oauth_form_config(existing_config, oauth_config)
+            server_kwargs.update(oauth_enabled=oauth_enabled, oauth_config=oauth_config)
         # Only include instructions when the form field was submitted; omitting it leaves the
         # stored override unchanged.  Passing None explicitly would land in model_fields_set
         # and clear a previously saved override.
@@ -3802,6 +3855,7 @@ async def admin_edit_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            oauth_authorized=oauth_authorized,
         )
 
         return ORJSONResponse(
@@ -3830,6 +3884,41 @@ async def admin_edit_server(
     except Exception as ex:
         LOGGER.exception(f"Unexpected error in admin_edit_server: {ex}")
         return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
+
+
+@admin_router.post("/servers/{server_id}/oauth/approve")
+@require_permission("servers.update", allow_admin_bypass=False)
+async def admin_approve_server_oauth(request: Request, server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+    """Approve reviewed server OAuth settings through the Admin UI.
+
+    Args:
+        request: Authenticated request containing the reviewed version.
+        server_id: Reviewed server identifier.
+        db: Active database session.
+        user: Authenticated principal.
+
+    Returns:
+        Approval status or an authorization, validation, or version error.
+
+    Raises:
+        HTTPException: If the caller lacks OAuth administration authority.
+    """
+    await require_server_oauth_admin(request, user, db, {"oauth_config"})
+    form = await request.form()
+    try:
+        version = int(str(form.get("version", "")))
+        if version < 1:
+            raise ValueError("Invalid reviewed version")
+        result = await server_service.approve_oauth_config(db, server_id, version, user_id=get_user_id(user))
+        return ORJSONResponse(content=result)
+    except (TypeError, ValueError):
+        return ORJSONResponse(content={"detail": "A positive reviewed version is required"}, status_code=422)
+    except ServerNotFoundError as exc:
+        return ORJSONResponse(content={"detail": str(exc)}, status_code=404)
+    except ServerLockConflictError as exc:
+        return ORJSONResponse(content={"detail": str(exc)}, status_code=409)
+    except ServerError as exc:
+        return ORJSONResponse(content={"detail": str(exc)}, status_code=422)
 
 
 @admin_router.post("/servers/{server_id}/state")
@@ -4144,7 +4233,7 @@ async def admin_set_gateway_state(
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
 
     try:
-        await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email)
+        await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email, user_id=get_canonical_user_id(user))
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s setting gateway state %s: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(gateway_id), e)
         error_code = "permission_denied"
@@ -4682,6 +4771,7 @@ async def admin_ui(
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
             "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
             "user_permissions": user_permissions,
+            "can_manage_server_oauth": can_manage_roots,
             # Password policy - pass actual requirements dict for user creation
             "password_requirements": PasswordPolicyService.get_password_requirements(is_privileged=False),
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
@@ -5971,10 +6061,13 @@ async def admin_get_all_team_ids(
     q: Optional[str] = Query(None, max_length=500, description="Search query"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    *,
+    request: Request,
 ):
     """Return all team IDs accessible to the current user.
 
     Args:
+        request: Incoming request context.
         include_inactive (bool): Whether to include inactive teams.
         visibility (Optional[str]): Filter by team visibility.
         q (Optional[str]): Search query string.
@@ -5984,6 +6077,7 @@ async def admin_get_all_team_ids(
     Returns:
         JSONResponse: Dictionary with list of team IDs and count.
     """
+    token_teams = await get_team_management_scope(request, user, db)
     team_service = TeamManagementService(db)
     user_email = get_user_email(user)
 
@@ -6002,7 +6096,9 @@ async def admin_get_all_team_ids(
     # Check admin
     if current_user.is_admin:
         # Admin sees all non-personal teams plus their own personal team (single query)
-        team_ids = await team_service.get_all_team_ids(include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=q, personal_owner_email=user_email)
+        team_ids = await team_service.get_all_team_ids(
+            include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=q, personal_owner_email=user_email, team_ids=token_teams
+        )
     else:
         # For non-admins, get user's teams + public teams logic?
         # get_user_teams gets all teams user is in.
@@ -6016,8 +6112,11 @@ async def admin_get_all_team_ids(
         # But we might need public teams too?
         # Let's align with list_teams logic.
 
+        allowed_team_ids = set(token_teams) if token_teams is not None else None
         filtered = []
         for t in all_teams:
+            if allowed_team_ids is not None and str(t.id) not in allowed_team_ids:
+                continue
             if not include_inactive and not t.is_active:
                 continue
             if visibility and t.visibility != visibility:
@@ -6628,6 +6727,8 @@ async def admin_view_team_members(
     Returns:
         HTMLResponse: Rendered unified team members management view
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         response = HTMLResponse(
             content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Email authentication is disabled</div>',
@@ -6785,6 +6886,8 @@ async def admin_add_team_members_view(
     Returns:
         HTMLResponse: Rendered add members interface
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -6902,6 +7005,27 @@ async def admin_add_team_members_view(
         return HTMLResponse(content=f'<div class="text-red-500">Error loading add members view: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
 
 
+async def _require_team_owner_or_admin(team_id: str, user: dict, db: Session) -> bool:
+    """Require team ownership or platform-administrator permission.
+
+    Args:
+        team_id: Authoritative target team ID.
+        user: Authenticated principal with resolved team scope.
+        db: Database session for role and permission checks.
+
+    Returns:
+        Whether the caller has platform-administrator permission.
+
+    Raises:
+        HTTPException: If the caller has neither authority.
+    """
+    user_email = get_user_email(user)
+    is_admin = await PermissionService(db).check_platform_admin_permission(user_email, token_teams=user.get("token_teams"))
+    if not is_admin and await TeamManagementService(db).get_user_role_in_team(user_email, team_id) != "owner":
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+    return is_admin
+
+
 @admin_router.get("/teams/{team_id}/edit")
 @require_permission("teams.update", allow_admin_bypass=False)
 async def admin_get_team_edit(
@@ -6919,6 +7043,8 @@ async def admin_get_team_edit(
     Returns:
         HTMLResponse: Rendered team edit form
     """
+    await require_team_scope(_request, _user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -6935,9 +7061,10 @@ async def admin_get_team_edit(
         if team.is_personal:
             return HTMLResponse(content='<div class="text-red-500">Personal teams cannot be edited</div>', status_code=403)
 
+        is_admin_edit = await _require_team_owner_or_admin(team_id, _user, db)
+
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
-        is_admin_edit = isinstance(_user, dict) and _user.get("is_admin")
         max_members_limit = settings.max_members_per_team
         current_exceeds_limit = bool(team.max_members is not None and team.max_members > max_members_limit)
         max_attr = "" if is_admin_edit else f'max="{max_members_limit}"'
@@ -7016,6 +7143,8 @@ async def admin_get_team_edit(
         """
         return HTMLResponse(content=edit_form)
 
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Error getting team edit form for {team_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error loading team: {html.escape(unexpected_error_detail(e))}</div>', status_code=500)
@@ -7040,13 +7169,15 @@ async def admin_update_team(
     Returns:
         Response: Result of team update operation
     """
-    # Ensure root_path is available for URL construction in all branches
+    await require_team_scope(request, user, team_id, db)
+
     root_path = _resolve_root_path(request) if request else ""
 
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
+        is_admin = await _require_team_owner_or_admin(team_id, user, db)
         team_service = TeamManagementService(db)
 
         form = await request.form()
@@ -7106,8 +7237,7 @@ async def admin_update_team(
             return RedirectResponse(_build_admin_redirect(root_path, "teams", error="invalid_input"), status_code=303)
 
         # Update team
-        user_email = getattr(user, "email", None) or str(user)
-        is_admin = isinstance(user, dict) and user.get("is_admin")
+        user_email = get_user_email(user)
         # Three-way max_members resolution:
         #   checkbox checked  → None  (clear per-team override, revert to global default)
         #   number provided   → int   (set explicit per-team limit)
@@ -7148,6 +7278,8 @@ async def admin_update_team(
         # For regular form submission, redirect to admin page with teams section
         return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
 
+    except HTTPException:
+        raise
     except ValueError as e:
         # Rollback to discard any partial mutations (e.g. name/description set before max_members check failed)
         db.rollback()
@@ -7190,10 +7322,13 @@ async def admin_delete_team(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(_request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
+        await _require_team_owner_or_admin(team_id, user, db)
         team_service = TeamManagementService(db)
 
         # Get team name for success message
@@ -7222,6 +7357,8 @@ async def admin_delete_team(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Error deleting team {team_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error deleting team: {html.escape(unexpected_error_detail(e))}</div>', status_code=400)
@@ -7248,6 +7385,8 @@ async def admin_add_team_members(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7466,6 +7605,8 @@ async def admin_update_team_member_role(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7542,6 +7683,8 @@ async def admin_remove_team_member(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7619,6 +7762,8 @@ async def admin_leave_team(
     Returns:
         HTMLResponse: Success message or error response
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7789,9 +7934,9 @@ async def admin_cancel_join_request(
         user_email = get_user_email(user)
 
         # Cancel the join request
-        success = await team_service.cancel_join_request(request_id, user_email)
+        success = await team_service.cancel_join_request(request_id, user_email, team_id)
         if not success:
-            return HTMLResponse(content='<div class="text-red-500">Failed to cancel join request</div>', status_code=400)
+            return HTMLResponse(content='<div class="text-red-500">Join request not found or unavailable</div>', status_code=404)
 
         # Return the "Request to Join" button with HX-Trigger for list refresh
         # Check if join requests are currently enabled
@@ -7841,6 +7986,8 @@ async def admin_list_join_requests(
     Returns:
         HTML response with join requests list
     """
+    await require_team_scope(_request, user, team_id, db)
+
     if not getattr(settings, "email_auth_enabled", False):
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7913,15 +8060,11 @@ async def admin_list_join_requests(
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/approve")
 @require_permission("teams.manage_members", allow_admin_bypass=False)
-async def admin_approve_join_request(
-    team_id: str,
-    request_id: str,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> HTMLResponse:
+async def admin_approve_join_request(team_id: str, request_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions), *, request: Request) -> HTMLResponse:
     """Approve a join request via admin UI.
 
     Args:
+        request: Incoming request context.
         team_id: ID of the team
         request_id: ID of the join request to approve
         db: Database session
@@ -7930,6 +8073,8 @@ async def admin_approve_join_request(
     Returns:
         HTML response with success message
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not getattr(settings, "email_auth_enabled", False):
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -7967,15 +8112,11 @@ async def admin_approve_join_request(
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/reject")
 @require_permission("teams.manage_members", allow_admin_bypass=False)
-async def admin_reject_join_request(
-    team_id: str,
-    request_id: str,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> HTMLResponse:
+async def admin_reject_join_request(team_id: str, request_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions), *, request: Request) -> HTMLResponse:
     """Reject a join request via admin UI.
 
     Args:
+        request: Incoming request context.
         team_id: ID of the team
         request_id: ID of the join request to reject
         db: Database session
@@ -7984,6 +8125,8 @@ async def admin_reject_join_request(
     Returns:
         HTML response with success message
     """
+    await require_team_scope(request, user, team_id, db)
+
     if not getattr(settings, "email_auth_enabled", False):
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
@@ -8242,6 +8385,9 @@ async def admin_users_partial_html(
     Returns:
         Response: HTML response with users list and pagination controls
     """
+    if team_id and render == "selector":
+        await require_team_scope(request, user, team_id, db)
+
     try:
         if not settings.email_auth_enabled:
             return HTMLResponse(
@@ -8398,20 +8544,22 @@ async def admin_team_members_partial_html(
     Returns:
         Response: HTML response with team members and pagination data.
     """
-    try:
-        if not settings.email_auth_enabled:
-            return HTMLResponse(
-                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
-                status_code=200,
-            )
+    if not settings.email_auth_enabled:
+        return HTMLResponse(
+            content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
+            status_code=200,
+        )
 
+    try:
+        team_id = _normalize_team_id(team_id)
+    except ValueError:
+        return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
+
+    await require_team_scope(request, user, team_id, db)
+
+    try:
         team_service = TeamManagementService(db)
         current_user_email = get_user_email(user)
-
-        try:
-            team_id = _normalize_team_id(team_id)
-        except ValueError:
-            return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
 
         team = await team_service.get_team_by_id(team_id)
         if not team:
@@ -8493,21 +8641,23 @@ async def admin_team_non_members_partial_html(
     Returns:
         Response: HTML response with non-members and pagination data.
     """
-    try:
-        if not settings.email_auth_enabled:
-            return HTMLResponse(
-                content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
-                status_code=200,
-            )
+    if not settings.email_auth_enabled:
+        return HTMLResponse(
+            content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
+            status_code=200,
+        )
 
+    try:
+        team_id = _normalize_team_id(team_id)
+    except ValueError:
+        return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
+
+    await require_team_scope(request, user, team_id, db)
+
+    try:
         auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
         current_user_email = get_user_email(user)
-
-        try:
-            team_id = _normalize_team_id(team_id)
-        except ValueError:
-            return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
 
         team = await team_service.get_team_by_id(team_id)
         if not team:
@@ -12629,6 +12779,7 @@ async def admin_add_tool(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            user_id=get_canonical_user_id(user),
         )
         return ORJSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
@@ -12786,6 +12937,7 @@ async def admin_edit_tool(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_canonical_user_id(user),
         )
         return ORJSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except PermissionError as e:
@@ -12966,7 +13118,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     LOGGER.debug(f"User {user_email} is deleting tool ID {tool_id}")
     error_code = None
     try:
-        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics, user_id=get_canonical_user_id(user))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
         error_code = "permission_denied"
@@ -13019,7 +13171,7 @@ async def admin_set_tool_state(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
+        await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email, user_id=get_canonical_user_id(user))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting tool state {tool_id}: {e}")
         error_code = "permission_denied"
@@ -13322,6 +13474,7 @@ async def admin_add_gateway(
             team_id=team_id_cast,
             owner_email=user_email,
             initialize_timeout=settings.httpx_admin_read_timeout,
+            user_id=get_canonical_user_id(user),
         )
 
         # Provide specific guidance for OAuth Authorization Code flow
@@ -13478,6 +13631,7 @@ async def admin_update_gateway_rest(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_canonical_user_id(user),
         )
         is_pending = _gateway_result_status(result) == "pending"
         # Keep accepted/success text in `message`; reserve `error` for failures.
@@ -13549,7 +13703,7 @@ async def admin_delete_gateway_rest(
     LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
 
     try:
-        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, user_id=get_canonical_user_id(user))
         if getattr(result, "status", None) == "deleting":
             return ORJSONResponse(
                 content={
@@ -13734,13 +13888,20 @@ async def admin_edit_gateway(
             auth_type_from_form = "oauth"
             LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
 
+        # The edit form has no SigV4 option and submits an empty auth_type for these gateways.
+        # Keep the stored SigV4 auth instead of clearing it.
+        if existing_gateway is not None and getattr(existing_gateway, "auth_type", None) == "sigv4" and not auth_type_from_form:
+            auth_type_for_update: Optional[str] = None
+        else:
+            auth_type_for_update = auth_type_from_form
+
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=form.get("name"),
             url=form.get("url"),
             description=str(form.get("description")),
             transport=str(form.get("transport", "SSE")),
             tags=tags,
-            auth_type=auth_type_from_form,
+            auth_type=auth_type_for_update,
             auth_username=str(form.get("auth_username", "")),
             auth_password=str(form.get("auth_password", "")),
             auth_token=str(form.get("auth_token", "")),
@@ -13769,6 +13930,7 @@ async def admin_edit_gateway(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            user_id=get_canonical_user_id(user),
         )
         is_pending = _gateway_result_status(result) == "pending"
         # Keep accepted/success text in `message`; reserve `error` for failures.
@@ -13840,7 +14002,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     error_code = None
     accepted_message = None
     try:
-        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        result = await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, user_id=get_canonical_user_id(user))
         if getattr(result, "status", None) == "deleting":
             accepted_message = "gateway_delete_pending"
     except PermissionError as e:
@@ -15724,6 +15886,8 @@ async def admin_import_tools(
                     federation_source=base_metadata["federation_source"],
                     team_id=team_id,
                     owner_email=user_email,
+                    user_id=get_canonical_user_id(user),
+                    token_teams=token_teams,
                 )
                 created.append({"index": i, "name": name})
             except IntegrityError as ex:
@@ -16816,7 +16980,7 @@ async def admin_add_a2a_agent(
     form = await request.form()
     team_id = _form_team_id(form)
     try:
-        LOGGER.info(f"A2A agent creation form data: {dict(form)}")
+        LOGGER.info("A2A agent creation form fields: %s", sorted(str(key) for key in form.keys()))
 
         _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=team_id)
 
@@ -16842,7 +17006,7 @@ async def admin_add_a2a_agent(
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
 
-        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
+        LOGGER.info("DEBUG: oauth_config_json from form present: %s", oauth_config_json != "None")
         LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
 
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
@@ -16858,11 +17022,8 @@ async def admin_add_a2a_agent(
                 oauth_config = None
 
         # Option 2: Assemble from individual UI form fields.
-        # include_resource=False: A2A agents do not consume oauth_config["resource"]
-        # (no per-user token storage / audience validation on the A2A path), so the
-        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
@@ -17087,11 +17248,8 @@ async def admin_edit_a2a_agent(
                 oauth_config = None
 
         # Option 2: Assemble from individual UI form fields.
-        # include_resource=False: A2A agents do not consume oauth_config["resource"]
-        # (no per-user token storage / audience validation on the A2A path), so the
-        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
             if oauth_config:
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 

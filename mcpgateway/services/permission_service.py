@@ -25,6 +25,20 @@ from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_n
 
 logger = logging.getLogger(__name__)
 
+# SECURITY: User, role and identity-provider administration spans every team.
+# A team-scoped role must never grant these permissions, so check_permission()
+# evaluates them against global and personal roles only.
+GLOBAL_ONLY_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        Permissions.ADMIN_USER_MANAGEMENT,
+        Permissions.ADMIN_SECURITY_AUDIT,
+        Permissions.ADMIN_SSO_PROVIDERS_CREATE,
+        Permissions.ADMIN_SSO_PROVIDERS_READ,
+        Permissions.ADMIN_SSO_PROVIDERS_UPDATE,
+        Permissions.ADMIN_SSO_PROVIDERS_DELETE,
+    }
+)
+
 
 class PermissionService:
     """Service for checking and managing user permissions.
@@ -85,7 +99,8 @@ class PermissionService:
         and returns True if any role grants the required permission.
 
         Args:
-            user_email: Email of the user to check
+            user_email: Canonical user_id of the user to check. The phase-1
+                       value is the e-mail. The role queries are unchanged.
             permission: Permission to check (e.g., 'tools.create')
             resource_type: Type of resource being accessed
             resource_id: Specific resource ID if applicable
@@ -100,6 +115,8 @@ class PermissionService:
                                Default is True for backward compatibility.
             check_any_team: If True, check permission across ALL team-scoped roles
                            (used for list/read endpoints with multi-team session tokens)
+
+        ``team_id`` and ``check_any_team`` are ignored for ``GLOBAL_ONLY_PERMISSIONS``.
 
         Returns:
             bool: True if permission is granted, False otherwise
@@ -130,6 +147,9 @@ class PermissionService:
             elif allow_admin_bypass and await self._is_user_admin(user_email):
                 # Check if user is admin (bypass all permission checks if allowed)
                 return True
+
+            if permission in GLOBAL_ONLY_PERMISSIONS:
+                team_id, check_any_team = None, False
 
             # Get user's effective permissions (uses cache when valid)
             user_permissions = await self.get_user_permissions(user_email, team_id, include_all_teams=check_any_team, token_teams=token_teams)
@@ -229,7 +249,8 @@ class PermissionService:
         Includes role inheritance and handles permission caching.
 
         Args:
-            user_email: Email of the user
+            user_email: Canonical user_id of the user. The phase-1 value is
+                       the e-mail. The role queries are unchanged.
             team_id: Optional team context
             include_all_teams: If True, include ALL team-scoped roles (for list/read endpoints)
             token_teams: Optional list of team IDs from token narrowing. When include_all_teams=True
@@ -522,7 +543,8 @@ class PermissionService:
           with scope_id=NULL (roles that apply to all teams, e.g. during login)
 
         Args:
-            user_email: Email address of the user
+            user_email: Canonical user_id of the user. The phase-1 value is
+                       the e-mail. The UserRole.user_email query is unchanged.
             team_id: Optional team ID to filter to a specific team's roles
             include_all_teams: If True, include ALL team-scoped roles (for list/read with session tokens)
             token_teams: Optional list of team IDs from token narrowing. When include_all_teams=True

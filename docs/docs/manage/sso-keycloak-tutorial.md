@@ -1044,8 +1044,10 @@ If Keycloak uses self-signed certificates:
 SKIP_SSL_VERIFY=true
 
 # Production - add CA certificate to system trust store
-# Or configure custom CA bundle
+# Or set ca_certificate on the SSO provider (PUT /auth/sso/admin/providers/<id>)
 ```
+
+The provider `ca_certificate` field takes a PEM bundle. It applies to OIDC discovery, token exchange, userinfo, and JWKS requests for that provider only.
 
 !!! warning "JWKS follows `SKIP_SSL_VERIFY`"
     `SKIP_SSL_VERIFY=true` also disables TLS verification when ContextForge fetches the JWKS

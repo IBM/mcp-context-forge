@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 import jwt
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -25,6 +25,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.oidc_tls import CaCertificateError
 from mcpgateway.services.sso_service import invalidate_trusted_provider_cache, SSOService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -50,6 +51,7 @@ class SSOProviderCreateRequest(BaseModel):
     userinfo_url: str
     issuer: Optional[str] = None
     jwks_uri: Optional[str] = None
+    ca_certificate: Optional[str] = Field(None, max_length=65536)  # PEM CA bundle trusted, besides system CAs, for TLS to this provider
     scope: str = "openid profile email"
     trusted_domains: List[str] = []
     auto_create_users: bool = True
@@ -86,6 +88,7 @@ class SSOProviderUpdateRequest(BaseModel):
     userinfo_url: Optional[str] = None
     issuer: Optional[str] = None
     jwks_uri: Optional[str] = None
+    ca_certificate: Optional[str] = Field(None, max_length=65536)  # PEM CA bundle; empty string clears it
     scope: Optional[str] = None
     trusted_domains: Optional[List[str]] = None
     auto_create_users: Optional[bool] = None
@@ -538,6 +541,8 @@ async def create_sso_provider(
 
     try:
         provider = await sso_service.create_provider(provider_data.model_dump())
+    except CaCertificateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         logger.warning(f"SSO provider create error: {exc}")
         raise HTTPException(status_code=400, detail="Invalid SSO provider configuration") from exc
@@ -640,6 +645,7 @@ async def get_sso_provider(
         "userinfo_url": provider.userinfo_url,
         "issuer": provider.issuer,
         "jwks_uri": provider.jwks_uri,
+        "ca_certificate": provider.ca_certificate,
         "scope": provider.scope,
         "trusted_domains": provider.trusted_domains,
         "auto_create_users": provider.auto_create_users,
@@ -687,6 +693,8 @@ async def update_sso_provider(
 
     try:
         provider = await sso_service.update_provider(provider_id, update_data)
+    except CaCertificateError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         logger.warning(f"SSO provider update error: {exc}")
         raise HTTPException(status_code=400, detail="Invalid SSO provider configuration") from exc

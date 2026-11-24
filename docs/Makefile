@@ -4,30 +4,25 @@
 HANDBOOK_NAME := mcpgateway-docs
 
 # Do not change anything below this line
-VENV_DIR := $(CURDIR)/.venv
-
-# Setup to support M1 Macs - Linux will be empty; x86 Macs essentially NO-OP
-BREW_SHELLENV := $(shell brew shellenv 2>/dev/null)
+# Shared project venv (same one as the root Makefile); override with VENV_DIR=...
+VENV_DIR ?= $(abspath $(CURDIR)/../.venv)
 
 .PHONY: help
 help:
 	@grep "^# help\:" Makefile | grep -v grep | sed 's/\# help\: //' | sed 's/\# help\://'
 
 # help: MAINTAIN
-# help: venv                           - create a clean virtual environment for development
+# help: venv                           - install docs dependencies into the shared project venv (root: make install-docs)
 .PHONY: venv
 venv:
-	@mkdir -p "$(VENV_DIR)"
-	@rm -Rf "$(VENV_DIR)"
-	@eval '$(BREW_SHELLENV)' && python3 -m venv "$(VENV_DIR)"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install --upgrade pip setuptools wheel && pip install markdown-blockdiag && pip install -r requirements.txt"
+	@$(MAKE) -C .. install-docs VENV_DIR="$(VENV_DIR)"
 	@echo -e "Enter virtual environment using:\n. $(VENV_DIR)/bin/activate\n"
 
 
-# help: venv-update                    - update a virtual environment for development
+# help: venv-update                    - upgrade docs dependencies in the shared project venv
 .PHONY: venv-update
 venv-update:
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pip install --upgrade pip setuptools wheel && pip install --upgrade markdown-blockdiag && pip install --upgrade -r requirements.txt"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install --upgrade --group ../pyproject.toml:docs"
 	@echo -e "Enter virtual environment using:\n. $(VENV_DIR)/bin/activate\n"
 
 

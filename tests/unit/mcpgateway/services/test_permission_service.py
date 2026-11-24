@@ -9,13 +9,13 @@ Unit tests for PermissionService.
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.permission_service import GLOBAL_ONLY_PERMISSIONS, PermissionService
 
 
 @pytest.fixture
@@ -797,3 +797,42 @@ def test_get_roles_for_audit_empty(svc):
     """Empty cache returns empty roles."""
     result = svc._get_roles_for_audit("user@test.com", None)
     assert result == {"roles": []}
+
+
+# ---------- Global-only permissions ----------
+
+_GLOBAL_ONLY = ("admin.security_audit", "admin.sso_providers:create", "admin.sso_providers:delete", "admin.sso_providers:read", "admin.sso_providers:update", "admin.user_management")
+
+
+def test_global_only_permissions_set():
+    """The global-only set covers user, audit and SSO-provider administration."""
+    assert GLOBAL_ONLY_PERMISSIONS == frozenset(_GLOBAL_ONLY)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("permission", _GLOBAL_ONLY)
+@pytest.mark.parametrize("team_id,check_any_team", [(None, True), ("team-a", False), ("team-a", True)])
+async def test_global_only_permission_ignores_team_context(svc, permission, team_id, check_any_team):
+    """Global-only permissions are evaluated without team-scoped roles."""
+    svc._is_user_admin = AsyncMock(return_value=False)
+    svc.get_user_permissions = AsyncMock(return_value=set())
+    assert await svc.check_permission("u@example.com", permission, team_id=team_id, check_any_team=check_any_team, token_teams=["team-a"]) is False
+    svc.get_user_permissions.assert_awaited_once_with("u@example.com", None, include_all_teams=False, token_teams=["team-a"])
+
+
+@pytest.mark.asyncio
+async def test_non_global_only_permission_keeps_team_context(svc):
+    """Other permissions still use the caller-supplied team context."""
+    svc._is_user_admin = AsyncMock(return_value=False)
+    svc.get_user_permissions = AsyncMock(return_value={"tools.read"})
+    assert await svc.check_permission("u@example.com", "tools.read", team_id="team-a", check_any_team=True) is True
+    svc.get_user_permissions.assert_awaited_once_with("u@example.com", "team-a", include_all_teams=True, token_teams=None)
+
+
+@pytest.mark.asyncio
+async def test_global_only_permission_admin_bypass_unchanged(svc):
+    """Platform admins still bypass the check for global-only permissions."""
+    svc._is_user_admin = AsyncMock(return_value=True)
+    svc.get_user_permissions = AsyncMock()
+    assert await svc.check_permission("admin@example.com", "admin.user_management", check_any_team=True) is True
+    svc.get_user_permissions.assert_not_awaited()

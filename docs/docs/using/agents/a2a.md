@@ -447,6 +447,16 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-
 
 Without `path`, the gateway tries `/.well-known/agent-card.json` and then `/.well-known/agent.json`.
 
+**Extended card.** When `headers` are present and the card declares `capabilities.extendedAgentCard`, the gateway also requests the authenticated extended card through the JSON-RPC interface of the card. It sends `GetExtendedAgentCard` to a 1.0 interface and `agent/getAuthenticatedExtendedCard` to a 0.3 interface. The gateway sends the headers only when the interface shares an origin with the card URL. The response then carries `extendedOutcome`, and for `found` also `extendedCard`, `extendedRawCard`, and `extendedAdditions`, the dotted field paths the extended card adds or changes.
+
+| `extendedOutcome` | Meaning |
+|-------------------|---------|
+| `found` | The agent returned a valid extended card. The credentials work. |
+| `auth_rejected` | The agent answered 401 or 403. The credentials are wrong. |
+| `unavailable` | The request failed, the answer was not a card, the interface is not JSON-RPC, or the interface is on another origin. The credentials stay unproven. |
+
+The response adds these fields when an extended card is found: `extendedCard` (normalized to 1.0), `extendedRawCard` (the document as fetched, omitted when identical to `extendedCard`), `extendedEtag`, `extendedMaxAge`, and `extendedAdditions`. `extendedAdditions` lists the field paths that the extended card adds to the public card. It is `[]` when the extended card adds nothing. The extended request has its own deadline, so a slow extended card never discards the public card. A timeout gives `extendedOutcome` `unavailable`.
+
 | `outcome` | `found` | Meaning |
 |-----------|---------|---------|
 | `found` | `true` | A valid card. `card` is normalized to 1.0, `rawCard` is the document as fetched (omitted when identical), `suggestedAgent` maps the card, `warnings` lists what could not be mapped. |
@@ -464,6 +474,22 @@ Notes on the suggested mapping:
 
 The fetch applies the SSRF settings (`SSRF_ALLOW_LOCALHOST`, `SSRF_ALLOW_PRIVATE_NETWORKS`, `SSRF_BLOCKED_NETWORKS`, `SSRF_ALLOWED_NETWORKS`), does not follow redirects,
 pins DNS, rejects content-encoded responses, caps the body at 1 MiB, and ends after `FEDERATION_TIMEOUT` seconds in total, including DNS resolution and every candidate URL.
+
+## Stored Agent Cards
+
+`POST /a2a` accepts an optional `card_url`. The gateway fetches the card, as `POST /a2a/fetch-card` does, and stores it as the next version in the `a2a_agent_cards` table. A missing card fails the registration and creates nothing. A client cannot send a card document.
+
+The gateway sends the registration credentials (`basic`, `bearer`, `authheaders`) to `card_url` only when `card_url` has the same origin as `endpoint_url`.
+
+When the card declares an extended card and the registration carries credentials, the gateway also requests the extended card before any write. A rejected credential fails the registration with 400. A returned extended card is stored as a separate row with `kind` `extended`. When the extended card is unavailable, the registration succeeds and the gateway stores no extended card, so the credentials stay unproven.
+
+`GET /a2a/{agent_id}/stored-card` returns the current stored card. It needs `a2a.read` and applies the same visibility rules as the agent read. It returns 404 when the agent has no stored card.
+
+Stored cards share one version counter per agent. A public card and an extended card stored together take two consecutive numbers, so the public versions can run 1, 3, 5. Each stored card has a `kind` of `public` or `extended`. For an `extended` card, `detectedVersion` and `sourceUrl` describe the public card the extended card belongs to, not the JSON-RPC interface. Each read of the stored extended card writes an audit entry.
+
+`GET /a2a/{agent_id}/stored-card/extended` returns the stored extended card. The extended card is content that the agent shows only to credentialed callers, so the route needs `a2a.update`, not `a2a.read`. The caller must also own the agent, as for task and push config routes: the agent owner, a team owner for team agents, or a platform admin. Other callers get 404. The route also returns 404 when the agent has no stored extended card.
+
+**Visibility of stored cards.** The route does not check how the card was fetched. A card fetched with registration credentials is readable by every caller who has `a2a.read` and can see the agent. For a `team` or `public` agent, that includes every team member or every user. Do not register a card behind credentials with a `team` or `public` agent if its content is confidential. Use `private` visibility instead.
 
 ## Agent Types
 
@@ -515,7 +541,7 @@ For agents that expect standard JSONRPC format:
 |-----------|-------------|---------|
 | `api_key` | API key in Authorization header | `Authorization: Bearer your-key` |
 | `bearer` | Bearer token authentication | `Authorization: Bearer your-token` |
-| `oauth` | OAuth 2.0 client credentials | The gateway gets a token from `oauth_config.token_url` and sends it as `Authorization: Bearer`. It caches the token until 30 seconds before it expires. A token with no `expires_in`, or with `expires_in` of 30 seconds or less, is not cached. The authorization-code grant is not supported. A missing `oauth_config`, an unsupported grant, or a token failure fails the invocation with an error that names the agent. |
+| `oauth` | OAuth 2.0 `client_credentials` grant | The gateway requests and caches one agent-level token; see [OAuth resource configuration](../../manage/oauth-resource-configuration.md#a2a-agents) |
 | `none` | No authentication required | - |
 
 When `auth_type` is `api_key`, the configured API key is sent as the outbound `Authorization` header. If a base or passthrough request header also contains `Authorization`, the configured A2A agent API key takes precedence for the outbound agent call.
@@ -622,6 +648,31 @@ Associate A2A agents with virtual servers to:
 - **Control access** via server-specific endpoints
 - **Group capabilities** for specific use cases
 - **Enable MCP discovery** for client tools
+
+### Publishing a Virtual Server as an A2A Agent
+
+A virtual server can publish an A2A interface. Send `interfaces` when you create or update the server:
+
+```bash
+curl -s -X POST "http://localhost:4444/v1/virtual-servers" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "server": {
+      "name": "support-agent",
+      "interfaces": [
+        {"protocol": "a2a", "binding": "https://agent.example.com/a2a", "version": "1.0"}
+      ]
+    }
+  }'
+```
+
+- `binding` is the agent endpoint URL that the card publishes. It follows the same URL rules as `endpoint_url`, including the SSRF hostname block.
+- A server accepts at most 10 interfaces. Two entries with the same protocol and binding are a duplicate. The protocol, scheme, and host compare without case. The path compares with case.
+- An update that omits `interfaces` keeps the stored interfaces. A list replaces them, and `[]` removes them.
+- `GET /a2a/{server_id}/card` returns the card while an `a2a` interface is enabled. It returns `404` after you disable the interface.
+- The same field works on the legacy `/servers` routes, and `/admin/servers` returns it.
+- Server export and import do not include `interfaces`. Set them again after you import a server.
 
 ## Configuration
 

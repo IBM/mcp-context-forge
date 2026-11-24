@@ -707,7 +707,20 @@ SKIP_SSL_VERIFY=true
     signing keys. An attacker on the network path can then serve their own keys and forge tokens.
     Use it in development only. The gateway logs a warning on each JWKS fetch while it is set.
 
-For production, fix the certificate issue at the provider level.
+**Production solution**: Trust the provider's CA for this provider only. Set `ca_certificate` to the PEM bundle when you create or update the provider. An empty string clears it.
+
+```bash
+curl -sS -X PUT "$GW/auth/sso/admin/providers/<provider-id>" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "$(jq -n --arg ca "$(cat provider-ca.pem)" '{ca_certificate: $ca}')"
+```
+
+The CA applies to OIDC discovery, token exchange, userinfo, and JWKS requests for that provider. It adds to the system trust store and stays active when `SKIP_SSL_VERIFY=true`.
+
+Supply only the CA that issued the provider's certificate. A bundle that includes a broad public root makes the gateway trust every certificate that root signed, for this provider.
+
+!!! note "API only"
+    The Admin UI has no field for `ca_certificate`. Set it through the API.
 
 ## Testing Checklist
 

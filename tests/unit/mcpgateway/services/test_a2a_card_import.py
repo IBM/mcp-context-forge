@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 from fastapi import HTTPException, Request
+import orjson
 import pytest
 
 # First-Party
@@ -21,6 +22,7 @@ from mcpgateway.services import a2a_card_import
 from mcpgateway.services.a2a_card_import import (
     build_candidate_urls,
     CardPathError,
+    CardResponse,
     fetch_agent_card,
     is_agent_card,
     normalize_card,
@@ -98,9 +100,10 @@ def fetch(monkeypatch):
     responses = {}
     seen = []
 
-    async def _get_json(url, headers):
+    async def _get_json(url, headers, payload=None):
         seen.append((url, headers))
-        return responses.get(url, (404, None, None))
+        outcome = responses.get(url, (404, None, None))
+        return outcome if isinstance(outcome, CardResponse) else CardResponse(*outcome)
 
     monkeypatch.setattr(a2a_card_import, "_get_json", _get_json)
     return SimpleNamespace(responses=responses, seen=seen)
@@ -619,7 +622,7 @@ class TestTotalDeadline:
         async def slow_not_found(url, headers):
             calls.append(url)
             await asyncio.sleep(0.04)
-            return 404, None, None
+            return CardResponse(404)
 
         monkeypatch.setattr(a2a_card_import, "_get_json", slow_not_found)
         result = await fetch_agent_card("https://old.example.com", None, None)
@@ -634,14 +637,14 @@ class TestTotalDeadline:
             await asyncio.sleep(5)
 
         monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", hung_resolver)
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (None, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(None)  # pylint: disable=protected-access
 
     async def test_fast_search_is_unaffected(self, monkeypatch):
         """A search that finishes inside the limit still returns the card."""
         monkeypatch.setattr(a2a_card_import.settings, "federation_timeout", 5)
 
         async def quick(url, headers):
-            return (200, V1_CARD, None) if url.endswith("agent-card.json") else (404, None, None)
+            return CardResponse(200, V1_CARD) if url.endswith("agent-card.json") else CardResponse(404)
 
         monkeypatch.setattr(a2a_card_import, "_get_json", quick)
         assert (await fetch_agent_card("https://agent.example.com", None, None)).found is True
@@ -656,7 +659,7 @@ class TestGetJson:
         monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", AsyncMock(side_effect=ValueError("blocked")))
         client = MagicMock()
         monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", client)
-        assert await a2a_card_import._get_json("http://169.254.169.254/x.json", None) == (None, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("http://169.254.169.254/x.json", None) == CardResponse(None)  # pylint: disable=protected-access
         client.assert_not_called()
 
     async def test_oversized_body_is_discarded(self, monkeypatch):
@@ -695,7 +698,7 @@ class TestGetJson:
                 return False
 
         monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", lambda **kwargs: _Ctx())
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(200)  # pylint: disable=protected-access
 
 
 def _stub_stream(monkeypatch, response=None, error=None):
@@ -747,13 +750,13 @@ class TestGetJsonOutcomes:
     async def test_valid_json_is_returned(self, monkeypatch):
         """A 200 response with a JSON body yields the parsed document."""
         _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}'))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", {"X-K": "v"}) == (200, {"name": "a"}, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", {"X-K": "v"}) == CardResponse(200, {"name": "a"})  # pylint: disable=protected-access
 
     @pytest.mark.parametrize("encoding", ["gzip", "br", "deflate", "zstd"])
     async def test_content_encoded_response_is_discarded(self, monkeypatch, encoding):
         """A compressed body is never decoded, so it cannot expand past the size cap."""
         _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}', headers={"content-encoding": encoding}))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(200)  # pylint: disable=protected-access
 
     async def test_requests_identity_encoding(self, monkeypatch):
         """The request asks for an uncompressed body."""
@@ -773,27 +776,33 @@ class TestGetJsonOutcomes:
                     yield b" "
 
         _stub_stream(monkeypatch, _Slow(200))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (None, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(None)  # pylint: disable=protected-access
 
     async def test_non_200_returns_status_only(self, monkeypatch):
         """A non-200 status is reported without reading the body."""
         _stub_stream(monkeypatch, _Resp(404))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (404, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(404)  # pylint: disable=protected-access
 
     async def test_challenge_header_is_returned_on_401(self, monkeypatch):
         """A 401 reports its WWW-Authenticate value."""
         _stub_stream(monkeypatch, _Resp(401, headers={"www-authenticate": "Bearer realm=x"}))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (401, None, "Bearer realm=x")  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(401, None, challenge="Bearer realm=x")  # pylint: disable=protected-access
 
     async def test_invalid_json_yields_no_document(self, monkeypatch):
         """A 200 response that is not JSON yields no document."""
         _stub_stream(monkeypatch, _Resp(200, b"<html>"))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (200, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(200)  # pylint: disable=protected-access
 
     async def test_transport_error_returns_no_status(self, monkeypatch):
         """A transport failure is logged and reported as no status."""
         _stub_stream(monkeypatch, error=RuntimeError("boom"))
-        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == (None, None, None)  # pylint: disable=protected-access
+        assert await a2a_card_import._get_json("https://a.example.com/card.json", None) == CardResponse(None)  # pylint: disable=protected-access
+
+    async def test_captures_etag_and_max_age(self, monkeypatch):
+        """ETag and Cache-Control max-age travel with a successful card read."""
+        _stub_stream(monkeypatch, _Resp(200, b'{"name": "a"}', headers={"etag": '"v1"', "cache-control": "public, max-age=60"}))
+        result = await a2a_card_import._get_json("https://a.example.com/card.json", None)  # pylint: disable=protected-access
+        assert result == CardResponse(200, {"name": "a"}, etag='"v1"', max_age=60)
 
 
 class TestRequestSchema:
@@ -913,3 +922,72 @@ class TestRouteAuthorization:
         await main.fetch_a2a_agent_card(A2AFetchCardRequest(baseUrl="https://a.example.com"), request=request, user={"email": "u@example.com", "db": MagicMock()})
 
         assert seen["request"] is request
+
+
+@pytest.mark.asyncio
+class TestGetJsonTransport:
+    """The real request that ``_get_json`` sends, with the HTTP client replaced (M5)."""
+
+    @pytest.fixture
+    def sent(self, monkeypatch):
+        """Record the call that reaches the isolated client."""
+        record = {}
+        target = MagicMock()
+        target.apply_headers.side_effect = lambda h: dict(h)
+        target.pin.return_value = "https://1.2.3.4/rpc"
+        target.validated_url = "https://a.example.com/rpc"
+        target.extensions = {"sni_hostname": "a.example.com"}
+        monkeypatch.setattr(a2a_card_import, "resolve_pinned_target", AsyncMock(return_value=target))
+
+        class _Resp:
+            status_code = 200
+            headers = {"etag": '"e"'}
+
+            async def aiter_raw(self):
+                yield b'{"ok": true}'
+
+        class _Stream:
+            async def __aenter__(self):
+                return _Resp()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _Client:
+            def stream(self, method, url, **kwargs):
+                record.update(method=method, url=url, **kwargs)
+                return _Stream()
+
+        class _Ctx:
+            async def __aenter__(self):
+                return _Client()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        monkeypatch.setattr(a2a_card_import, "get_isolated_http_client", lambda **kwargs: _Ctx())
+        return record
+
+    async def test_payload_is_posted_as_json_to_the_pinned_host(self, sent):
+        """A payload makes a POST with a JSON body, the JSON content type, the credential, and the pinned address."""
+        payload = {"jsonrpc": "2.0", "id": "1", "method": "GetExtendedAgentCard", "params": {}}
+        result = await a2a_card_import._get_json("https://a.example.com/rpc", {"Authorization": "Bearer t"}, payload)  # pylint: disable=protected-access
+        assert result == CardResponse(200, {"ok": True}, etag='"e"')
+        assert (sent["method"], sent["url"]) == ("POST", "https://1.2.3.4/rpc")
+        assert orjson.loads(sent["content"]) == payload
+        assert sent["headers"]["Content-Type"] == "application/json"
+        assert sent["headers"]["Authorization"] == "Bearer t"
+        assert sent["extensions"] == {"sni_hostname": "a.example.com"}
+
+    async def test_without_payload_stays_a_get_with_no_body(self, sent):
+        """No payload means a GET, no body, and no content type."""
+        await a2a_card_import._get_json("https://a.example.com/rpc", None)  # pylint: disable=protected-access
+        assert (sent["method"], sent["content"]) == ("GET", None)
+        assert "Content-Type" not in sent["headers"]
+
+    async def test_caller_content_type_overrides_the_default(self, sent):
+        """A caller Content-Type wins over the default, and the request is still a POST with a JSON body."""
+        await a2a_card_import._get_json("https://a.example.com/rpc", {"Content-Type": "application/a2a+json"}, {"id": "1"})  # pylint: disable=protected-access
+        assert sent["method"] == "POST"
+        assert sent["headers"]["Content-Type"] == "application/a2a+json"
+        assert orjson.loads(sent["content"]) == {"id": "1"}

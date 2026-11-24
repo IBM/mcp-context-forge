@@ -229,10 +229,10 @@ def test_get_db_rollback_invalidate_on_failure(monkeypatch: pytest.MonkeyPatch):
 
 def test_get_client_ip_and_user_agent():
     request = SimpleNamespace(headers={"X-Forwarded-For": "1.2.3.4"}, client=SimpleNamespace(host="9.9.9.9"))
-    assert email_auth.get_client_ip(request) == "1.2.3.4"
+    assert email_auth.get_client_ip(request) == "9.9.9.9"
 
     request = SimpleNamespace(headers={"X-Real-IP": "5.6.7.8"}, client=SimpleNamespace(host="9.9.9.9"))
-    assert email_auth.get_client_ip(request) == "5.6.7.8"
+    assert email_auth.get_client_ip(request) == "9.9.9.9"
 
     request = SimpleNamespace(headers={}, client=SimpleNamespace(host="9.9.9.9"))
     assert email_auth.get_client_ip(request) == "9.9.9.9"

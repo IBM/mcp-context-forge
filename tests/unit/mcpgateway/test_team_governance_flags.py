@@ -21,6 +21,9 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser
 
+# Local
+from tests.helpers.auth import make_test_scope_request
+
 
 class TestAllowTeamCreationFlag:
     """Tests for the allow_team_creation feature flag."""
@@ -609,7 +612,7 @@ class TestInvitationFlagReturns403:
         db = MagicMock(spec=Session)
 
         with pytest.raises(HTTPException) as exc_info:
-            await invite_team_member(team_id="team-1", request=request, current_user=current_user, db=db)
+            await invite_team_member(team_id="team-1", request=request, current_user=current_user, db=db, http_request=make_test_scope_request())
         assert exc_info.value.status_code == 403
         assert "disabled" in exc_info.value.detail.lower()
 

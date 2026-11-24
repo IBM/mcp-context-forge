@@ -1208,6 +1208,69 @@ class TestServerEndpoints:
         mock_list_prompts.assert_called_once()
 
 
+@pytest.mark.parametrize("wrapper", ["server", "virtual_server"])
+@pytest.mark.parametrize(
+    "fields", [{"oauth_enabled": False}, {"oauth_enabled": True}, {"oauth_config": None}, {"oauth_config": {}}, {"oauth_config": {"authorization_servers": ["https://issuer.example.com"]}}]
+)
+def test_server_oauth_create_rejects_explicit_fields(test_client, auth_headers, monkeypatch, wrapper, fields):
+    """Unauthorized callers cannot submit OAuth fields through either create wrapper."""
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    with patch("mcpgateway.main.server_service.register_server", new_callable=AsyncMock) as register:
+        response = test_client.post("/servers", json={wrapper: {"name": "oauth_server", **fields}}, headers=auth_headers)
+    assert response.status_code == 403
+    register.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"oauth_enabled": False},
+        {"oauth_enabled": True},
+        {"oauth_enabled": None},
+        {"oauth_config": None},
+        {"oauth_config": {}},
+        {"oauth_config": {"authorization_servers": ["https://issuer.example.com"]}},
+    ],
+)
+def test_server_oauth_update_rejects_explicit_fields(test_client, auth_headers, monkeypatch, caplog, fields):
+    """Unauthorized callers cannot submit OAuth update fields, including explicit defaults."""
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    with patch("mcpgateway.main.server_service.update_server", new_callable=AsyncMock) as update:
+        response = test_client.put("/servers/server-id", json=fields, headers=auth_headers)
+    assert response.status_code == 403
+    event = next(record for record in caplog.records if getattr(record, "event_type", None) == "server_oauth_authorization_denied")
+    assert event.security_event is True
+    assert event.oauth_fields == sorted(fields)
+    update.assert_not_awaited()
+
+
+@pytest.mark.parametrize("authorized", [False, True])
+def test_server_oauth_approval_requires_unrestricted_admin(test_client, auth_headers, monkeypatch, authorized):
+    """Reapproval requires unrestricted authority before calling the approval service."""
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=authorized))
+    with patch("mcpgateway.main.server_service.approve_oauth_config", new_callable=AsyncMock, return_value={"oauth_config_approved": True, "version": 3}) as approve:
+        response = test_client.post("/servers/server-id/oauth/approve", json={"version": 2}, headers=auth_headers)
+    assert response.status_code == (200 if authorized else 403)
+    if authorized:
+        approve.assert_awaited_once()
+        assert approve.call_args.kwargs["user_id"]
+    else:
+        approve.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure,status", [("missing", 404), ("stale", 409), ("unconfigured", 422)])
+def test_server_oauth_approval_preserves_service_errors(test_client, auth_headers, monkeypatch, failure, status):
+    """REST approval preserves missing, concurrent-update, and invalid-configuration errors."""
+    from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNotFoundError
+
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+    failures = {"missing": ServerNotFoundError("missing"), "stale": ServerLockConflictError("stale"), "unconfigured": ServerError("unconfigured")}
+    with patch("mcpgateway.main.server_service.approve_oauth_config", new_callable=AsyncMock, side_effect=failures[failure]):
+        response = test_client.post("/servers/server-id/oauth/approve", json={"version": 2}, headers=auth_headers)
+    assert response.status_code == status
+    assert response.json()["detail"] == failure
+
+
 class TestServerHandshakeEndpoint:
     """Tests for POST /servers/{server_id}/test-handshake (issue #6370).
 
@@ -1581,6 +1644,24 @@ class TestToolEndpoints:
         response = test_client.delete("/tools/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+
+    @patch("mcpgateway.main.tool_service.delete_tool")
+    def test_delete_tool_passes_canonical_user_id(self, mock_delete, test_client, auth_headers):
+        """The router passes the canonical user_id to the service next to the caller e-mail."""
+        # First-Party
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        mock_delete.return_value = None
+        overrides = test_client.app.dependency_overrides
+        original = overrides[get_current_user_with_permissions]
+        overrides[get_current_user_with_permissions] = lambda: {"email": "diverged@example.com", "user_id": "u-123", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test"}
+        try:
+            response = test_client.delete("/tools/1", headers=auth_headers)
+        finally:
+            overrides[get_current_user_with_permissions] = original
+        assert response.status_code == 200
+        assert mock_delete.call_args.kwargs["user_email"] == "diverged@example.com"
+        assert mock_delete.call_args.kwargs["user_id"] == "u-123"
 
 
 # ----------------------------------------------------- #
@@ -7011,6 +7092,115 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
 
     warning_found = any("DATABASE POOL: Running with 13 gunicorn workers" in record.message and "1560" in record.message for record in caplog.records)
     assert warning_found, "Expected DB pool warning not found in logs"
+
+
+def _stub_lifespan_dependencies(monkeypatch, main_mod):
+    """Replace every lifespan dependency with a mock so only the sandbox pool hooks are under test."""
+    for name in (
+        "db_pool_size",
+        "db_max_overflow",
+    ):
+        monkeypatch.setattr(main_mod.settings, name, 5)
+    for name in (
+        "mcpgateway_session_affinity_enabled",
+        "enable_header_passthrough",
+        "mcpgateway_tool_cancellation_enabled",
+        "mcpgateway_elicitation_enabled",
+        "metrics_buffer_enabled",
+        "db_metrics_recording_enabled",
+        "metrics_cleanup_enabled",
+        "metrics_rollup_enabled",
+        "sso_enabled",
+        "metrics_aggregation_enabled",
+        "llmchat_enabled",
+        "mcpgateway_a2a_enabled",
+    ):
+        monkeypatch.setattr(main_mod.settings, name, False)
+
+    for attr in (
+        "tool_service",
+        "resource_service",
+        "prompt_service",
+        "gateway_service",
+        "root_service",
+        "completion_service",
+        "sampling_handler",
+        "resource_cache",
+        "streamable_http_session",
+        "session_registry",
+        "export_service",
+        "import_service",
+        "logging_service",
+        "a2a_service",
+    ):
+        service = MagicMock()
+        service.initialize = AsyncMock()
+        service.shutdown = AsyncMock()
+        monkeypatch.setattr(main_mod, attr, service)
+
+    monkeypatch.setattr(main_mod, "get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
+    monkeypatch.setattr(main_mod, "get_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
+    monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
+    monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+    monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+    main_mod.app.state.update_http_pool_metrics = MagicMock()
+
+
+def _record_sandbox_pool_hooks(monkeypatch, main_mod, calls, *, failing=None):
+    """Patch the six sandbox pool hooks on ``main`` to append their name to ``calls``; ``failing`` raises instead."""
+
+    def make_hook(name):
+        def hook():
+            calls.append(name)
+            if name == failing:
+                raise RuntimeError(f"{name} failed")
+
+        return hook
+
+    for name in ("start_validation_pool", "start_cel_pool", "shutdown_validation_pool", "shutdown_cel_pool"):
+        monkeypatch.setattr(main_mod, name, make_hook(name))
+
+
+@pytest.mark.asyncio
+async def test_lifespan_starts_sandbox_pools_in_order_and_shuts_them_down(monkeypatch):
+    """The lifespan starts the validation and CEL pools before bootstrap, and stops them in the same order on exit."""
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    _stub_lifespan_dependencies(monkeypatch, main_mod)
+    calls = []
+    _record_sandbox_pool_hooks(monkeypatch, main_mod, calls)
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock(side_effect=lambda: calls.append("bootstrap_db")))
+
+    async with main_mod.lifespan(main_mod.app):
+        assert calls == ["start_validation_pool", "start_cel_pool", "bootstrap_db"]
+
+    assert calls[3:] == ["shutdown_validation_pool", "shutdown_cel_pool"]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_aborts_boot_when_a_sandbox_pool_fails_to_start(monkeypatch):
+    """A pool that fails to start aborts the boot before bootstrap and before later pools start."""
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    _stub_lifespan_dependencies(monkeypatch, main_mod)
+    calls = []
+    _record_sandbox_pool_hooks(monkeypatch, main_mod, calls, failing="start_validation_pool")
+    bootstrap = AsyncMock()
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", bootstrap)
+
+    with pytest.raises(RuntimeError, match="start_validation_pool failed"):
+        async with main_mod.lifespan(main_mod.app):
+            pytest.fail("lifespan must not yield when a sandbox pool fails to start")
+
+    assert calls == ["start_validation_pool"]
+    bootstrap.assert_not_awaited()
 
 
 # ========================================================================== #

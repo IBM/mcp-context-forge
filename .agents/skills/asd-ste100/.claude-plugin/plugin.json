@@ -1,0 +1,7 @@
+{
+  "name": "asd-ste100",
+  "description": "Rewrite ambiguous English into ASD-STE100 Simplified Technical English",
+  "author": { "name": "danyuchn" },
+  "repository": "https://github.com/danyuchn/asd-ste100-skill",
+  "license": "MIT"
+}

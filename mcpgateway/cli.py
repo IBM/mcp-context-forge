@@ -18,7 +18,7 @@ Features
   when the user doesn't supply one explicitly.
 * Adds sensible default host/port (127.0.0.1:4444) unless the user passes
   ``--host``/``--port`` or overrides them via the environment variables
-  ``MCG_HOST`` and ``MCG_PORT``.
+  ``HOST`` and ``PORT`` (legacy aliases: ``MCG_HOST`` and ``MCG_PORT``).
 * Forwards *all* remaining arguments verbatim to Uvicorn's own CLI, so
   `--reload`, `--workers`, etc. work exactly the same.
 
@@ -36,7 +36,6 @@ $ mcpgateway mypkg.other:app          # run a different ASGI callable
 from __future__ import annotations
 
 # Standard
-import os
 from pathlib import Path
 import sys
 from typing import List, Optional
@@ -46,16 +45,18 @@ import orjson
 from pydantic import ValidationError
 import uvicorn
 
-# First-Party
 from mcpgateway import __version__
 from mcpgateway.config import SecurityConfigurationError, Settings
+
+# First-Party
+from mcpgateway.config_sections import ListenerHostSettings, ListenerPortSettings, ListenerSettings
 
 # ---------------------------------------------------------------------------
 # Configuration defaults (overridable via environment variables)
 # ---------------------------------------------------------------------------
 DEFAULT_APP = "mcpgateway.main:app"  # dotted path to FastAPI instance
-DEFAULT_HOST = os.getenv("MCG_HOST", "127.0.0.1")
-DEFAULT_PORT = int(os.getenv("MCG_PORT", "4444"))
+DEFAULT_HOST = ListenerSettings.model_fields["host"].default
+DEFAULT_PORT = ListenerSettings.model_fields["port"].default
 
 # ---------------------------------------------------------------------------
 # Helper utilities
@@ -113,11 +114,22 @@ def _insert_defaults(raw_args: List[str]) -> List[str]:
         args.insert(0, DEFAULT_APP)
 
     # 2️⃣  Supply host/port if neither supplied nor UNIX domain socket.
-    if "--uds" not in args:
-        if "--host" not in args and "--http" not in args:
-            args.extend(["--host", DEFAULT_HOST])
-        if "--port" not in args:
-            args.extend(["--port", str(DEFAULT_PORT)])
+    def has_option(option: str) -> bool:
+        """Report whether argv supplies an option, including equals syntax.
+
+        Args:
+            option: Uvicorn option name.
+
+        Returns:
+            True when the option is present.
+        """
+        return any(arg == option or arg.startswith(option + "=") for arg in args)
+
+    if not has_option("--help") and not has_option("--uds") and not has_option("--fd"):
+        if not has_option("--host") and not has_option("--http"):
+            args.extend(["--host", ListenerHostSettings().host])
+        if not has_option("--port"):
+            args.extend(["--port", str(ListenerPortSettings().port)])
 
     return args
 
@@ -259,8 +271,8 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
     Also supports export/import subcommands for configuration management.
 
     Environment Variables:
-        MCG_HOST: Default host (default: "127.0.0.1")
-        MCG_PORT: Default port (default: "4444")
+        HOST: Default host (default: "127.0.0.1"; legacy alias MCG_HOST)
+        PORT: Default port (default: "4444"; legacy alias MCG_PORT)
 
     Usage:
         mcpgateway --reload
@@ -348,7 +360,11 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
 
     # Discard the program name and inspect the rest.
     user_args = sys.argv[1:]
-    uvicorn_argv = _insert_defaults(user_args)
+    try:
+        uvicorn_argv = _insert_defaults(user_args)
+    except ValidationError as exc:
+        print(f"Invalid listener configuration: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
 
     # Uvicorn's `main()` uses sys.argv - patch it in and run.
     sys.argv = ["mcpgateway", *uvicorn_argv]

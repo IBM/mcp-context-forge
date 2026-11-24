@@ -19,7 +19,7 @@ import logging
 import re
 import secrets
 from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import parse_qsl, quote, urlparse
+from urllib.parse import parse_qsl, quote, urlencode, urlparse
 
 # Third-Party
 import httpx
@@ -46,11 +46,12 @@ from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, Dc
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
 from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
+from mcpgateway.services.token_validation_service import resolve_expected_token_issuers
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.oauth_errors import oauth_failure, response_oauth_code
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 
 logger = logging.getLogger(__name__)
@@ -410,15 +411,20 @@ class OAuthManager:
             raise OAuthError(f"Token endpoint blocked by URL policy: {exc}") from exc
 
         extensions = pinned_target.extensions
+        body: Dict[str, Any] = {"data": data}
+        if isinstance(data, (list, tuple)):
+            # httpx reads a list as a byte stream and fails on an async client. Encode repeated keys (RFC 8707 resource) as the form body.
+            body = {"content": urlencode(data)}
+            pinned_headers = {**pinned_headers, "Content-Type": "application/x-www-form-urlencoded"}
         if ca_certificate or client_cert or client_key:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions)
+                return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions, **body)
         # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
         # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
         # would reuse a connection whose certificate was verified for that other name.
         async with get_isolated_http_client(follow_redirects=False) as client:
-            return await client.post(pinned_url, data=data, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions)
+            return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions, **body)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "actor_token", "client_assertion"})
@@ -815,24 +821,13 @@ class OAuthManager:
         token_response = await self.get_client_credentials_token_response(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         return token_response["access_token"]
 
-    async def get_client_credentials_token(self, credentials: Dict[str, Any]) -> Tuple[str, Optional[int]]:
-        """Fetch a client-credentials access token together with its lifetime.
-
-        Args:
-            credentials: Stored OAuth configuration (``grant_type`` must be ``client_credentials``).
-
-        Returns:
-            Tuple of the access token and ``expires_in`` seconds (``None`` when the provider omitted it).
-        """
-        token_response = await self.get_client_credentials_token_response(credentials)
-        return token_response["access_token"], parse_expires_in(token_response)
-
     async def get_client_credentials_token_response(
         self,
         credentials: Dict[str, Any],
         ca_certificate: Optional[str] = None,
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
+        send_resource: bool = False,
     ) -> Dict[str, Any]:
         """Run the client-credentials grant and return the parsed token response, including ``expires_in``.
 
@@ -843,6 +838,7 @@ class OAuthManager:
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
+            send_resource: Send the RFC 8707 ``resource`` from ``credentials`` on the token request. Off by default so existing callers keep their request shape.
 
         Returns:
             Parsed token endpoint response containing at least ``access_token``.
@@ -870,6 +866,13 @@ class OAuthManager:
         if audience:
             token_data["audience"] = audience
             logger.debug("Including audience parameter in client credentials request: %s", sanitize_for_log(audience))
+
+        resource = runtime_credentials.get("resource")
+        if send_resource and resource and self._should_include_resource_parameter(runtime_credentials, scopes):
+            if isinstance(resource, list):
+                token_data = list(token_data.items()) + [("resource", item) for item in resource if item]  # type: ignore[assignment]
+            else:
+                token_data["resource"] = resource
 
         # Fetch token with retries
         for attempt in range(self.max_retries):
@@ -1261,7 +1264,7 @@ class OAuthManager:
         return {**credentials, "redirect_uri": resolved}
 
     async def initiate_authorization_code_flow(
-        self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None, popup: bool = False, default_redirect_uri: Optional[str] = None
+        self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None, popup: bool = False, default_redirect_uri: Optional[str] = None, *, browser_binding: str
     ) -> Dict[str, str]:
         """Initiate Authorization Code flow with PKCE and return authorization URL.
 
@@ -1271,6 +1274,7 @@ class OAuthManager:
             app_user_email: ContextForge user email to associate with tokens
             popup: When True, the state token is prefixed with ``popup.`` so the
                 callback endpoint knows to respond with postMessage instead of HTML.
+            browser_binding: Browser transaction secret whose digest binds the callback.
             default_redirect_uri: Fallback used by :meth:`_apply_default_redirect_uri` when
                 *credentials* carries no ``redirect_uri`` (defence-in-depth; today's router
                 caller already resolves one before DCR runs, so this is normally a no-op).
@@ -1315,6 +1319,7 @@ class OAuthManager:
                 app_user_email=app_user_email,
                 redirect_uri=credentials.get("redirect_uri"),
                 team_id=team_id,
+                browser_binding_hash=hashlib.sha256(browser_binding.encode()).hexdigest(),
             )
 
         # Generate authorization URL with PKCE
@@ -1437,10 +1442,13 @@ class OAuthManager:
         client_key: Optional[str] = None,
         default_redirect_uri: Optional[str] = None,
         iss: Optional[str] = None,
+        *,
+        validated_state: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
         Args:
+            validated_state: Context returned by consume_and_validate_authorization_state.
             gateway_id: ID of the gateway
             code: Authorization code from callback
             state: State parameter for CSRF validation
@@ -1461,8 +1469,10 @@ class OAuthManager:
         Raises:
             OAuthError: If state validation fails or token exchange fails
         """
-        # Validate state and retrieve code_verifier (atomically consumes state)
-        state_data = await self._validate_and_retrieve_state(gateway_id, state)
+        # Only the shared consumption operation supplies this transaction context.
+        state_data = validated_state
+        if not state_data or state_data.get("gateway_id") != gateway_id or state_data.get("state") != state:
+            raise OAuthError("Invalid authorization transaction")
         if not state_data:
             raise OAuthError("Invalid or expired state parameter - possible replay attack")
 
@@ -1527,9 +1537,9 @@ class OAuthManager:
         # audience for the wrong IdP.  Passing None to store_tokens leaves any
         # previously-learned value for this user intact (it only overwrites on
         # non-None).  The check is skipped when no issuer is configured.
-        configured_issuer = credentials.get("issuer")
-        if configured_issuer and token_aud is not None:
-            if not isinstance(token_iss, str) or token_iss.rstrip("/") != str(configured_issuer).rstrip("/"):
+        expected_issuers = resolve_expected_token_issuers(credentials)
+        if expected_issuers and token_aud is not None:
+            if not isinstance(token_iss, str) or token_iss.rstrip("/") not in expected_issuers:
                 logger.debug(
                     "Skipping learned audience persistence for gateway %s: token iss does not match configured issuer",
                     gateway_id,
@@ -1720,6 +1730,7 @@ class OAuthManager:
         app_user_email: Optional[str] = None,
         redirect_uri: Optional[str] = None,
         team_id: Optional[str] = None,
+        browser_binding_hash: Optional[str] = None,
     ) -> None:
         """Store authorization state for validation with TTL.
 
@@ -1732,6 +1743,7 @@ class OAuthManager:
                 ``complete_authorization_code_flow`` can reuse the exact same value at token
                 exchange time (RFC 6749 §4.1.3) instead of recomputing it from live gateway
                 state, which could have changed between authorize and callback.
+            browser_binding_hash: Digest of the initiating browser transaction secret.
             team_id: Team ID from JWT for Vault token storage path
         """
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=STATE_TTL_SECONDS)
@@ -1751,6 +1763,7 @@ class OAuthManager:
                         "app_user_email": app_user_email,
                         "redirect_uri": redirect_uri,
                         "team_id": team_id,
+                        "browser_binding_hash": browser_binding_hash,
                         "expires_at": expires_at.isoformat(),
                         "used": False,
                     }
@@ -1789,6 +1802,7 @@ class OAuthManager:
                     if hasattr(OAuthState, "team_id") and team_id:
                         oauth_state_kwargs["team_id"] = team_id
 
+                    oauth_state_kwargs["browser_binding_hash"] = browser_binding_hash
                     oauth_state = OAuthState(**oauth_state_kwargs)
                     db.add(oauth_state)
                     db.commit()
@@ -1811,6 +1825,7 @@ class OAuthManager:
                 "app_user_email": app_user_email,
                 "redirect_uri": redirect_uri,
                 "team_id": team_id,
+                "browser_binding_hash": browser_binding_hash,
                 "expires_at": expires_at.isoformat(),
                 "used": False,
             }
@@ -1957,6 +1972,29 @@ class OAuthManager:
             logger.debug("Successfully validated OAuth state from memory for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
             return True
 
+    async def consume_and_validate_authorization_state(self, gateway_id: str, state: str, browser_binding: Optional[str]) -> Dict[str, Any]:
+        """Consume a transaction and validate its initiating browser.
+
+        Args:
+            gateway_id: Gateway resolved from server-side state.
+            state: Opaque authorization transaction identifier.
+            browser_binding: Secret from the transaction cookie.
+
+        Returns:
+            Validated server-side transaction context.
+
+        Raises:
+            OAuthError: If the transaction or browser binding is invalid.
+        """
+        context = await self._validate_and_retrieve_state(gateway_id, state)
+        expected = context.get("browser_binding_hash") if context else None
+        if not browser_binding or len(browser_binding) > 128 or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise OAuthError("Invalid authorization transaction; restart authorization", error_code="invalid_state")
+        actual = hashlib.sha256(browser_binding.encode()).hexdigest()
+        if not secrets.compare_digest(expected, actual):
+            raise OAuthError("Invalid authorization transaction; restart authorization", error_code="invalid_state")
+        return context
+
     async def _validate_and_retrieve_state(self, gateway_id: str, state: str) -> Optional[Dict[str, Any]]:
         """Validate state and return full state data including code_verifier.
 
@@ -2013,6 +2051,16 @@ class OAuthManager:
                     if not oauth_state:
                         return None
 
+                    # A conditional claim prevents two workers from redeeming the same state.
+                    claimed = (
+                        db.query(OAuthState)
+                        .filter(OAuthState.id == oauth_state.id, OAuthState.used.is_(False), OAuthState.expires_at > datetime.now(timezone.utc))
+                        .update({"used": True}, synchronize_session=False)
+                    )
+                    if claimed != 1:
+                        db.rollback()
+                        return None
+
                     # Check expiration
                     expires_at = oauth_state.expires_at
                     if expires_at.tzinfo is None:
@@ -2032,6 +2080,7 @@ class OAuthManager:
                         "state": oauth_state.state,
                         "gateway_id": oauth_state.gateway_id,
                         "code_verifier": oauth_state.code_verifier,
+                        "browser_binding_hash": oauth_state.browser_binding_hash,
                         "expires_at": oauth_state.expires_at.isoformat(),
                     }
                     if hasattr(oauth_state, "app_user_email"):
@@ -2166,9 +2215,6 @@ class OAuthManager:
         Returns:
             Authorization URL string with PKCE parameters
         """
-        # Standard
-        from urllib.parse import urlencode  # pylint: disable=import-outside-toplevel
-
         client_id = credentials["client_id"]
         redirect_uri = credentials["redirect_uri"]
         authorization_url = credentials["authorization_url"]
