@@ -362,6 +362,27 @@ class OAuthManager:
 
         return runtime_credentials
 
+    def _oauth_http_client(self, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> Any:
+        """Return the HTTP client used for a pinned OAuth token or discovery request.
+
+        When CA or mTLS material is supplied, the client uses a custom SSL context
+        so private-CA and mTLS IdPs work the same way for discovery GETs and token
+        posts. Otherwise it uses an isolated client with redirects disabled, so the
+        request does not share the pooled connections used by other destinations.
+
+        Args:
+            ca_certificate: Optional PEM-encoded CA certificate.
+            client_cert: Optional client certificate for mTLS.
+            client_key: Optional client private key for mTLS.
+
+        Returns:
+            An async context manager that yields an HTTP client.
+        """
+        if ca_certificate or client_cert or client_key:
+            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
+            return httpx.AsyncClient(verify=ssl_context)
+        return get_isolated_http_client(follow_redirects=False)
+
     async def _post_token_request(
         self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, headers: Optional[Dict[str, str]] = None
     ) -> httpx.Response:
@@ -416,15 +437,14 @@ class OAuthManager:
             # httpx reads a list as a byte stream and fails on an async client. Encode repeated keys (RFC 8707 resource) as the form body.
             body = {"content": urlencode(data)}
             pinned_headers = {**pinned_headers, "Content-Type": "application/x-www-form-urlencoded"}
-        if ca_certificate or client_cert or client_key:
-            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-            async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions, **body)
         # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
         # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
         # would reuse a connection whose certificate was verified for that other name.
-        async with get_isolated_http_client(follow_redirects=False) as client:
-            return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions, **body)
+        request_kwargs: Dict[str, Any] = {"headers": pinned_headers, "timeout": self.request_timeout, "extensions": extensions, **body}
+        if ca_certificate or client_cert or client_key:
+            request_kwargs["follow_redirects"] = False
+        async with self._oauth_http_client(ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key) as client:
+            return await client.post(pinned_url, **request_kwargs)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "actor_token", "client_assertion"})
@@ -821,7 +841,13 @@ class OAuthManager:
         token_response = await self.get_client_credentials_token_response(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         return token_response["access_token"]
 
-    async def _resolve_client_credentials_token_url(self, runtime_credentials: Dict[str, Any]) -> str:
+    async def _resolve_client_credentials_token_url(
+        self,
+        runtime_credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> str:
         """Return the token URL, resolving it from OIDC discovery when it is not typed.
 
         A2A Agent Cards may advertise an openIdConnectUrl instead of a token URL.
@@ -838,6 +864,9 @@ class OAuthManager:
 
         Args:
             runtime_credentials: Decrypted OAuth configuration.
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
+            client_cert: Optional client certificate for mTLS (PEM format or file path).
+            client_key: Optional client private key for mTLS (PEM format or file path).
 
         Returns:
             The token endpoint URL to use for the client-credentials grant.
@@ -867,7 +896,7 @@ class OAuthManager:
             raise OAuthError(f"OAuth discovery URL blocked by URL policy: {exc}") from exc
 
         try:
-            async with get_isolated_http_client(follow_redirects=False) as client:
+            async with self._oauth_http_client(ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key) as client:
                 response = await client.get(
                     pinned_url,
                     timeout=self.request_timeout,
@@ -933,7 +962,7 @@ class OAuthManager:
         # Decryption failure can return the caller's original dict. Keep the resolved
         # URL local, including for private_key_jwt assertion audiences and retries.
         runtime_credentials = dict(await self._prepare_runtime_credentials(credentials, "client_credentials"))
-        token_url = await self._resolve_client_credentials_token_url(runtime_credentials)
+        token_url = await self._resolve_client_credentials_token_url(runtime_credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         runtime_credentials["token_url"] = token_url
         scopes = runtime_credentials.get("scopes", [])
 

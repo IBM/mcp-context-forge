@@ -1789,3 +1789,21 @@ class TestClientCredentialsOidcDiscovery:
             with pytest.raises(OAuthError, match="token_endpoint was rejected"):
                 await OAuthManager().get_client_credentials_token_response(self._credentials())
         mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_discovery_get_uses_ca_certificate(self):
+        """Discovery GET uses the same custom CA / mTLS client as the token POST."""
+        manager = OAuthManager()
+        _, mock_ssl_context, mock_client, ca_cert, client_cert, client_key = TestOAuthManager()._make_ca_cert_mocks({"access_token": "discovered_token"})
+        mock_client.get = AsyncMock(return_value=self._discovery_response())
+
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+            with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
+                result = await manager.get_client_credentials_token_response(self._credentials(), ca_certificate=ca_cert, client_cert=client_cert, client_key=client_key)
+
+        assert result["access_token"] == "discovered_token"
+        assert mock_get_ssl.call_count == 2
+        mock_get_ssl.assert_called_with(ca_cert, client_cert=client_cert, client_key=client_key)
+        mock_client.get.assert_awaited()
+        mock_client.post.assert_awaited()
+        assert mock_client.get.await_args.kwargs["follow_redirects"] is False
