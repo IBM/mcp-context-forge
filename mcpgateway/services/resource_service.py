@@ -821,7 +821,7 @@ class ResourceService(BaseService):
             db.refresh(db_resource)
             after_import_commit_sync(notify_dataplane)
 
-            await _get_registry_cache().invalidate_resources()
+            await after_import_commit(_get_registry_cache().invalidate_resources)
 
             # Notify subscribers
             await after_import_commit(self._notify_resource_added, db_resource)

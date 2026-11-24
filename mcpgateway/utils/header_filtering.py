@@ -57,6 +57,22 @@ _TOOL_CREDENTIAL_HEADER_PATTERNS = (
     re.compile(r"^set-cookie$", re.IGNORECASE),
 )
 
+_PROVIDER_CREDENTIAL_HEADERS = frozenset(
+    {
+        "ocp-apim-subscription-key",
+        "private-token",
+        "x-amz-credential",
+        "x-amz-security-token",
+        "x-amz-signature",
+        "x-auth",
+        "x-custom-auth",
+        "x-github-token",
+        "x-goog-api-key",
+        "x-vault-token",
+        "x-webhook-secret",
+    }
+)
+
 _TOOL_RESTRICTED_MAPPING_HEADER_PATTERNS = (
     re.compile(r"^host$", re.IGNORECASE),
     re.compile(r"^transfer-encoding$", re.IGNORECASE),
@@ -78,7 +94,7 @@ def is_tool_credential_header_name(name: str) -> bool:
         Whether the header carries credentials.
     """
     normalized_name = str(name).strip().lower()
-    return any(pattern.match(normalized_name) for pattern in _TOOL_CREDENTIAL_HEADER_PATTERNS)
+    return normalized_name in _PROVIDER_CREDENTIAL_HEADERS or any(pattern.match(normalized_name) for pattern in _TOOL_CREDENTIAL_HEADER_PATTERNS)
 
 
 def is_sensitive_tool_header_name(name: str) -> bool:

@@ -515,6 +515,8 @@ mcpgateway export --include-inactive --types tools
 
 Configure credentials on the destination for the entities listed in the API response's `credentials_required` field. A gateway that needs credentials remains pending and unreachable until you configure them. Imports keep destination credentials for same-origin updates. A change to a different URL origin clears the old credentials.
 
+Import skips federated items that a credential-blocked gateway has yet to discover. Existing server bindings stay in place if a tool reference remains unresolved. Configure the gateway credentials, then repeat the import to resolve its items.
+
 Use `python -m mcpgateway.scripts.migrate_enc_secret` to [rotate the encryption secret](../operations/auth-encryption-secret-rotation.md).
 
 #### Import Conflicts Not Resolving

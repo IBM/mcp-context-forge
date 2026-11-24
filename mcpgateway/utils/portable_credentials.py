@@ -37,35 +37,53 @@ _CREDENTIAL_FIELDS = frozenset(
     }
 )
 _SAFE_KEY = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+_SIGNATURE_QUERY_KEYS = frozenset({"sig", "signature", "x-goog-credential", "x-goog-signature", "x-goog-security-token"})
 
 
-def without_file_credentials(data: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+class InvalidPortableHeaders(ValueError):
+    """The file contains malformed operational headers."""
+
+
+def without_file_credentials(data: dict[str, Any], *, validate_headers: bool = False) -> tuple[dict[str, Any], tuple[str, ...]]:
     """Return configuration data with credential values removed.
 
     Args:
         data: A tool or gateway file entity.
+        validate_headers: Reject malformed operational headers in import files.
 
     Returns:
         Portable entity data and safe names of removed credential fields.
+
+    Raises:
+        InvalidPortableHeaders: An import file contains malformed headers.
     """
     removed = set(data.keys() & _CREDENTIAL_FIELDS)
     cleaned = {key: value for key, value in data.items() if key not in _CREDENTIAL_FIELDS and key != "auth_type"}
     if data.get("auth_type") not in {None, "", "none", "one_time_auth"}:
         cleaned["credentials_required"] = True
-    if "headers" in cleaned and isinstance(cleaned["headers"], dict):
-        headers = cleaned["headers"]
-        remaining = {key: value for key, value in headers.items() if not is_tool_credential_header_name(key) and isinstance(value, str) and value not in (settings.masked_auth_value, "********")}
-        for key in headers.keys() - remaining.keys():
-            removed.add(f"headers.{key}" if _SAFE_KEY.fullmatch(key) else "headers")
+    headers = cleaned.get("headers")
+    if isinstance(headers, dict):
+        remaining = {}
+        for key, value in headers.items():
+            if isinstance(key, str) and (is_tool_credential_header_name(key) or isinstance(value, str) and value in (settings.masked_auth_value, "********")):
+                removed.add(f"headers.{key}" if _SAFE_KEY.fullmatch(key) else "headers")
+            elif isinstance(key, str) and isinstance(value, str):
+                remaining[key] = value
+            elif validate_headers:
+                raise InvalidPortableHeaders("Operational header names and values must be strings")
         cleaned["headers"] = remaining
+    elif headers is not None:
+        if validate_headers:
+            raise InvalidPortableHeaders("Headers must be an object")
+        cleaned.pop("headers")
     if isinstance(cleaned.get("url"), str):
         url = urlsplit(cleaned["url"])
         query_values = data.get("auth_query_params")
-        names = set(STATIC_SENSITIVE_PARAMS)
+        names = STATIC_SENSITIVE_PARAMS | _SIGNATURE_QUERY_KEYS
         if isinstance(query_values, dict):
-            names.update(key.lower() for key in query_values if isinstance(key, str))
+            names |= {key.lower() for key in query_values if isinstance(key, str)}
         if isinstance(data.get("auth_query_param_key"), str):
-            names.add(data["auth_query_param_key"].lower())
+            names |= {data["auth_query_param_key"].lower()}
         query = []
         query_changed = False
         for key, value in parse_qsl(url.query, keep_blank_values=True):

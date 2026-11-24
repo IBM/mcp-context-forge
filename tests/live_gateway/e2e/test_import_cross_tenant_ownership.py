@@ -353,3 +353,20 @@ def test_gateway_selection_discovers_tools_and_import_uses_their_destination_ids
     assert binding["original_name"] == "shared_lookup"
     assert binding["id"] != source_tool_id
     assert binding["gateway_id"] == gateway["id"] != source_gateway_id
+
+
+def test_import_reports_credential_blocked_gateway_dependents_as_skipped(isolated_gateway: _GatewayFixture) -> None:  # noqa: F811  pylint: disable=redefined-outer-name
+    """Keep imported resources and prompts deferred while a gateway needs credentials."""
+    admin, _, _, _ = isolated_gateway
+    config = _import_payload(_VICTIM_URL)["import_data"]
+    config["entities"] = {
+        "gateways": [{"id": "source", "name": "credential-blocked", "url": "https://example.com/mcp", "credentials_required": True}],
+        "resources": [{"name": "report", "uri": "test://report", "gateway_id": "source"}],
+        "prompts": [{"name": "summary", "template": "Fixture", "gateway_id": "source"}],
+    }
+    result = _api(admin, "POST", "/v1/import", json={"import_data": config})
+    assert result["progress"] == {"total": 3, "processed": 3, "created": 1, "updated": 0, "skipped": 2, "failed": 0}
+    assert result["credentials_required"] == [{"type": "gateways", "identifier": "credential-blocked"}]
+    assert sum("skipped until the destination gateway has credentials" in warning for warning in result["warnings"]) == 2
+    preview = _api(admin, "POST", "/v1/import", json={"import_data": config, "dry_run": True})
+    assert preview["progress"] == {"total": 3, "processed": 3, "created": 0, "updated": 1, "skipped": 2, "failed": 0}

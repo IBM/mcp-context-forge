@@ -8,6 +8,7 @@ Exercise import transaction, matching, and portable associations against SQLite.
 
 # Standard
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 # Third-Party
 import httpx
@@ -216,6 +217,51 @@ async def test_fatal_conflict_restores_rows_and_roots(registry, importer, monkey
 
 
 @pytest.mark.asyncio
+async def test_resource_cache_invalidation_follows_outer_commit(registry, importer, monkeypatch):
+    """Invalidate only after a separate session can read the committed resource."""
+    resources_seen = []
+
+    async def invalidate_resources():
+        with Session(registry.get_bind()) as reader:
+            resources_seen.append(reader.scalars(select(Resource.uri)).all())
+
+    monkeypatch.setattr("mcpgateway.services.resource_service._get_registry_cache", lambda: SimpleNamespace(invalidate_resources=invalidate_resources))
+    await importer.import_configuration(registry, envelope(servers=[{"name": "existing"}]), imported_by=ACTOR)
+    uri = "test://deferred-cache"
+    resource = {"name": "deferred-cache", "uri": uri, "content": "fixture"}
+    with pytest.raises(ImportConflictError):
+        await importer.import_configuration(registry, envelope(resources=[resource], servers=[{"name": "existing"}]), imported_by=ACTOR, conflict_strategy=ConflictStrategy.FAIL)
+    assert registry.scalar(select(Resource.id)) is None
+    assert not resources_seen
+
+    result = await importer.import_configuration(registry, envelope(resources=[resource]), imported_by=ACTOR)
+    assert result.created_entities == 1
+    assert resources_seen == [[uri]]
+
+
+@pytest.mark.asyncio
+async def test_import_rechecks_server_owner_after_matching(registry, importer, monkeypatch):
+    """Reject an update if the row owner changes after the import matches it."""
+    scope = {"imported_by": ACTOR, "token_teams": ["personal"]}
+    original = envelope(servers=[{"name": "existing", "description": "original"}])
+    assert (await importer.import_configuration(registry, original, **scope)).created_entities == 1
+    build_index = importer._destination_index
+
+    def index_before_owner_changes(db, *args):
+        index = build_index(db, *args)
+        db.execute(update(Server).where(Server.name == "existing").values(owner_email="other@example.com").execution_options(synchronize_session=False))
+        return index
+
+    monkeypatch.setattr(importer, "_destination_index", index_before_owner_changes)
+    changed = envelope(servers=[{"name": "existing", "description": "must not apply"}])
+    result = await importer.import_configuration(registry, changed, **scope)
+    assert result.errors == ["servers item existing: PermissionError"]
+    assert result.updated_entities == 0
+    row = registry.scalars(select(Server).execution_options(populate_existing=True)).one()
+    assert (row.owner_email, row.description) == ("other@example.com", "original")
+
+
+@pytest.mark.asyncio
 async def test_dry_run_and_item_failure(registry, importer, caplog):
     """Report local outcomes without writes and retain successful items on completion."""
     config = envelope(tools=[tool("good"), tool("invalid", request_type="INVALID")])
@@ -414,16 +460,18 @@ async def test_full_and_selective_exports_apply_same_credential_policy(registry,
     assert (await importer.import_configuration(registry, config, imported_by=ACTOR)).created_entities == 5
     gateways = {row.name: row for row in registry.scalars(select(Gateway))}
     query_gateway = gateways["query-auth"]
-    query_gateway.url += "?first_configured=placeholder-one&second_configured=placeholder-two&region=eu"
-    query_gateway.auth_query_params = {"first_configured": "placeholder-one", "second_configured": "placeholder-two"}
+    query_gateway.url += "?first_configured=placeholder-one&second_configured=placeholder-two&code=placeholder-code&Signature=placeholder-signature&region=eu"
+    query_gateway.auth_query_params = {"first_configured": "placeholder-one", "second_configured": "placeholder-two", "code": "placeholder-code"}
     gateways["client-certificate"].client_cert = "placeholder-certificate"
     gateways["client-key"].client_key = "placeholder-key"
     for gateway in gateways.values():
         gateway.status = "active"
         gateway.status_message = None
     tools = {row.name: row for row in registry.scalars(select(Tool))}
-    tools["operational"].headers = _protect_tool_headers_for_storage({"Content-Type": "application/json", "Upgrade": "websocket", "X-Region": "eu"})
-    tools["authenticated"].headers = _protect_tool_headers_for_storage({"Authorization": "Bearer placeholder-header", "X-Region": "eu"})
+    tools["operational"].headers = _protect_tool_headers_for_storage({"Content-Type": "application/json", "Upgrade": "websocket", "X-Region": "eu", "X-Count": 5})
+    tools["authenticated"].headers = _protect_tool_headers_for_storage(
+        {"Authorization": "Bearer placeholder-header", "X-Amz-Security-Token": "placeholder-aws", "X-Vault-Token": "placeholder-vault", "X-Region": "eu"}
+    )
     registry.commit()
 
     exporter = ExportService()
@@ -439,6 +487,36 @@ async def test_full_and_selective_exports_apply_same_credential_policy(registry,
         assert {row["name"]: row["headers"] for row in entities["tools"]} == expected_headers
         assert [row["name"] for row in entities["tools"] if row.get("credentials_required")] == ["authenticated"]
         assert "placeholder-" not in str(entities)
+
+
+@pytest.mark.asyncio
+async def test_import_strips_provider_credentials_and_rejects_malformed_operational_headers(registry, importer):
+    """Distinguish invalid header data from missing credentials."""
+    names = (
+        "X-GitHub-Token",
+        "X-Vault-Token",
+        "Private-Token",
+        "X-Webhook-Secret",
+        "X-Auth",
+        "X-Custom-Auth",
+        "X-Amz-Security-Token",
+        "X-Goog-Api-Key",
+        "Ocp-Apim-Subscription-Key",
+    )
+    config = envelope(
+        tools=[
+            tool("valid", url="https://example.com/api?sig=test-value&X-Goog-Signature=test-value&code=region-code", headers={**dict.fromkeys(names, "test-value"), "X-Region": "eu"}),
+            tool("invalid", headers={"X-Count": 5}),
+        ]
+    )
+    for dry_run in (True, False):
+        result = await importer.import_configuration(registry, config, imported_by=ACTOR, dry_run=dry_run)
+        assert (result.created_entities, result.failed_entities) == (1, 1)
+        assert "InvalidPortableHeaders" in result.errors[0]
+        assert result.credentials_required == [{"type": "tools", "identifier": "valid"}]
+    stored = registry.scalars(select(Tool)).one()
+    assert stored.headers == {"X-Region": "eu"}
+    assert stored.url == "https://example.com/api?code=region-code"
 
 
 @pytest.mark.asyncio
@@ -719,6 +797,59 @@ async def test_new_gateway_federated_tool_preview_requires_discovery(registry, i
     assert discovery_calls == [url]
     assert (result.created_entities, result.updated_entities, result.failed_entities, result.unknown_entities) == (2, 1, 0, 0)
     assert registry.scalars(select(Server)).one().tools[0].original_name == "echo"
+
+
+@pytest.mark.asyncio
+async def test_credential_blocked_gateway_skips_dependents_until_discovery(registry, importer, monkeypatch):
+    """Protect bindings while credentials block discovery and resolve them after recovery."""
+    monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", False)
+    url = "https://example.com/mcp"
+    uri = "https://example.com/report.txt"
+    discovery_calls = []
+
+    async def initialize(url, *args, **kwargs):
+        discovery_calls.append(url)
+        discovered_tool = ToolCreate(name="echo", url=url, integration_type="REST", request_type="GET")
+        return {}, [discovered_tool], [ResourceCreate(name="report", uri=uri, content="fixture")], [PromptCreate(name="lookup", template="Fixture")], [], None
+
+    monkeypatch.setattr(importer.gateway_service, "_initialize_gateway", initialize)
+    initial = envelope(tools=[tool("unrelated", id="prior")], servers=[{"name": "server", "tool_ids": ["prior"]}])
+    await importer.import_configuration(registry, initial, imported_by=ACTOR)
+    unrelated_id = registry.scalar(select(Tool.id))
+    gateway_ref = {"gateway_id": "source-gateway"}
+    config = envelope(
+        gateways=[{"id": "source-gateway", "name": "blocked", "url": url, "transport": "STREAMABLEHTTP", "credentials_required": True}],
+        tools=[tool("echo", id=unrelated_id, **gateway_ref)],
+        resources=[{"name": "report", "uri": uri, **gateway_ref}],
+        prompts=[{"name": "lookup", "template": "Fixture", **gateway_ref}],
+        servers=[{"name": "server", "tool_ids": [unrelated_id]}],
+    )
+    fresh = await importer.preview_import(registry, config, imported_by=ACTOR)
+    assert fresh["outcomes"]["progress"]["unknown"] == 3
+    assert registry.scalar(select(Gateway.id)) is None
+    pending = await importer.import_configuration(registry, config, imported_by=ACTOR)
+    assert (pending.created_entities, pending.skipped_entities, pending.failed_entities) == (1, 3, 0)
+    assert pending.credentials_required == [{"type": "gateways", "identifier": "blocked"}]
+    for kind in ("tools", "resources", "prompts"):
+        assert pending.items[kind][0]["outcome"] == "skipped"
+        assert any(warning.startswith(f"{kind} item") and "gateway has credentials" in warning for warning in pending.warnings)
+    assert any("Unresolved tool references" in warning for warning in pending.warnings)
+    assert [binding.id for binding in registry.scalars(select(Server)).one().tools] == [unrelated_id]
+    preview = await importer.preview_import(registry, config, imported_by=ACTOR)
+    assert preview["outcomes"]["progress"]["skipped"] == 3
+    assert preview["outcomes"]["progress"]["failed"] == 0
+    invalid = envelope(gateways=config["entities"]["gateways"], resources=[{"name": "invalid", "uri": "", **gateway_ref}])
+    preview = await importer.preview_import(registry, invalid, imported_by=ACTOR)
+    assert preview["items"]["resources"][0]["outcome"] == "failed"
+    assert not discovery_calls
+
+    gateway_id = registry.scalar(select(Gateway.id))
+    await importer.gateway_service.update_gateway(registry, gateway_id, GatewayUpdate(auth_type="bearer", auth_token="example-test-token"), user_email=ACTOR)
+    result = await importer.import_configuration(registry, config, imported_by=ACTOR)
+    assert (result.updated_entities, result.skipped_entities, result.failed_entities) == (5, 0, 0)
+    assert not result.warnings
+    [binding] = registry.scalars(select(Server)).one().tools
+    assert (binding.original_name, binding.gateway_id) == ("echo", gateway_id)
 
 
 @pytest.mark.asyncio

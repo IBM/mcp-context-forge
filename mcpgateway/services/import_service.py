@@ -628,7 +628,7 @@ class ImportService:
         status.items[kind].append(item)
         local_warnings: list[str] = []
         try:
-            clean, ignored = without_file_credentials(row) if kind in {"tools", "gateways"} else (dict(row), ())
+            clean, ignored = without_file_credentials(row, validate_headers=True) if kind in {"tools", "gateways"} else (dict(row), ())
             if clean.get("visibility") is None:
                 clean.pop("visibility", None)
             if ignored:
@@ -659,16 +659,24 @@ class ImportService:
                 if federated and strategy == ConflictStrategy.RENAME:
                     raise ImportValidationError("Federated file items do not support rename")
                 if federated and not candidates:
-                    if dry_run and isinstance(mapped_gateway, SimpleNamespace):
-                        if strategy == ConflictStrategy.UPDATE:
-                            self._catalog_import_schema(kind, clean, create=False)
+                    planned_gateway = dry_run and isinstance(mapped_gateway, SimpleNamespace)
+                    blocked_gateway = isinstance(mapped_gateway, Gateway) and gateway_requires_credentials(mapped_gateway)
+                    if not (planned_gateway or blocked_gateway):
+                        raise ImportValidationError("Federated file item does not match a discovered entity")
+                    if kind == "resources":
+                        ResourceCreate.validate_uri(key)
+                    self._catalog_import_schema(kind, clean, create=False)
+                    self._record_mapping(mappings, kind, source_identity, None)
+                    if planned_gateway:
                         item["outcome"] = "unknown"
                         item["upstream_check"] = "unknown"
                         status.unknown_entities += 1
-                        self._record_mapping(mappings, kind, source_identity, None)
                         local_warnings.append(f"{kind} item {identifier}: match depends on upstream discovery")
-                        return
-                    raise ImportValidationError("Federated file item does not match a discovered entity")
+                    else:
+                        item["outcome"] = "skipped"
+                        status.skipped_entities += 1
+                        local_warnings.append(f"{kind} item {identifier}: skipped until the destination gateway has credentials")
+                    return
                 if not admin and (not federated or strategy == ConflictStrategy.UPDATE):
                     eligible = [candidate for candidate in candidates if self._can_update_import_candidate(candidate, actor, token_teams)]
                     if federated and not eligible:
