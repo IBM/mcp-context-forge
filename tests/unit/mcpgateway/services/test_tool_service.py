@@ -5700,7 +5700,7 @@ class TestToolService:
         with (
             patch("mcpgateway.services.tool_service.mcp_proxy_client", mcp_proxy_client_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
-            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+            patch("mcpgateway.services.tool_service.apply_response_filter", side_effect=lambda data, _filt: data),
             # The real compute_passthrough_headers_cached runs; only its configuration is pinned.
             patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=["X-Tenant-Id"]),
             patch.object(passthrough_headers_module.settings, "enable_header_passthrough", True),
