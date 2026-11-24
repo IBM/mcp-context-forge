@@ -10,6 +10,7 @@ Locust runner and never touch the network.
 """
 
 # Standard
+from types import SimpleNamespace
 import os
 
 # Belt and braces: conftest.py in this package sets the same variable, but this
@@ -412,3 +413,27 @@ def test_rest_baseline_uses_module_level_pool(monkeypatch):
     monkeypatch.setattr(lf, "MCP_TOOL_POOL_SIZE", 0)
     monkeypatch.setattr(lf, "_tool_names", SEVEN_TOOLS + ["fast-time-verify-protocol"])
     assert "fast-time-verify-protocol" in lf._limit_pool(lf._tool_names)
+
+
+def test_decode_mcp_body_json():
+    """_decode_mcp_body handles plain JSON responses."""
+    resp = SimpleNamespace(text='{"result": {"ok": true}}')
+    assert lf._decode_mcp_body(resp) == {"result": {"ok": True}}
+
+
+def test_decode_mcp_body_sse():
+    """_decode_mcp_body handles SSE data: frames."""
+    resp = SimpleNamespace(text='data: {"result": {"count": 42}}\n\n')
+    assert lf._decode_mcp_body(resp) == {"result": {"count": 42}}
+
+
+def test_tool_bench_tools_use_fast_time_prefix():
+    """TOOL_BENCH_TOOLS uses fast-time- prefixed names so both runs resolve tools the same way."""
+    tool_names = [tool for tool, _ in lf.TOOL_BENCH_TOOLS]
+    assert all(name.startswith("fast-time-") for name in tool_names)
+    assert set(tool_names) == {
+        "fast-time-get-system-time",
+        "fast-time-convert-time",
+        "fast-time-echo",
+        "fast-time-get-stats",
+    }

@@ -147,6 +147,16 @@ If agents are on different ContextForge instances:
   "uaid": "agent://other-gateway.example.com/my-agent"
 }
 
+6. LLM Chat MCP Server Connections
+What Breaks
+
+Scenario: The MCP server URL entered in LLM Chat (`POST /llmchat/connect`) returns a redirect, for example `/mcp` → `/mcp/`.
+
+New Behavior: LLM Chat does not follow the redirect, so tool listing and tool calls fail.
+Mitigation
+
+Enter the final MCP server URL in the LLM Chat connection settings.
+
 Testing Your Integration After Upgrade
 1. Test Tool Invocations
 

@@ -48,7 +48,7 @@ The middleware stack in `mcpgateway/main.py` (lines ~3265–3501) includes ~26 m
 | 13 | `DocsAuthMiddleware` | Restricts `/docs` and `/redoc` to authenticated users | Always |
 | 14 | `AdminAuthMiddleware` | Requires admin privilege for `/admin/*` routes | Always |
 | 15 | `ForwardedHostMiddleware` | Rewrites `Host` from `X-Forwarded-Host` (proxy support) | Always |
-| 16 | `ProxyHeadersMiddleware` | Trusts `X-Forwarded-*` headers (scheme, IP) | Always |
+| 16 | `ProxyHeadersMiddleware` | Applies `X-Forwarded-For`/`X-Forwarded-Proto` (IP, scheme) from peers in `FORWARDED_ALLOW_IPS` | Always |
 | 17 | `CorrelationIDMiddleware` | Attaches request correlation ID for tracing | `correlation_id_enabled` |
 | 18 | `CSRFMiddleware` | CSRF token validation (state-changing requests) | `csrf_enabled` |
 | 19 | `PasswordChangeEnforcementMiddleware` | Redirects users requiring password change (admin-only) | `password_change_enforcement_enabled` |

@@ -163,7 +163,7 @@ find . \
 !!! tip "Dry-run the requirements updater first"
     Use `--dry-run` to preview changes before applying:
     ```bash
-    uv run python .github/tools/update_dependencies.py --file docs/requirements.txt --dry-run
+    uv run python .github/tools/update_dependencies.py --file pyproject.toml --dry-run
     ```
 
 ### 2.3 Reinstall and verify

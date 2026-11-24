@@ -257,6 +257,7 @@ mcpContextForge:
     APP_NAME: ContextForge            # public-facing name of the gateway
     HOST: 0.0.0.0                    # address the server binds to
     PORT: "4444"                     # internal container port
+    FORWARDED_ALLOW_IPS: "127.0.0.1,::1"  # proxies allowed to set X-Forwarded-For/Proto; set to your ingress/proxy CIDR to keep client IPs
     APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
     CLIENT_MODE: "false"             # gateway-as-client mode (true/false)
 
@@ -290,6 +291,7 @@ mcpContextForge:
     REDIS_RETRY_ON_TIMEOUT: "true"   # Retry commands on timeout
     REDIS_HEALTH_CHECK_INTERVAL: "30"  # Health check interval (seconds, 0=disabled)
     REDIS_DECODE_RESPONSES: "true"   # Return strings instead of bytes
+    REDIS_CLUSTER_MODE: "false"      # Use RedisCluster client for cluster deployments (handles MOVED/ASK redirects)
 
     # ─ Redis leader election (multi-node) ─
     REDIS_LEADER_TTL: "15"           # Leader TTL (seconds)
@@ -443,8 +445,7 @@ mcpContextForge:
     IDENTITY_PROPAGATION_MODE: "both"          # headers, meta, or both
     IDENTITY_PROPAGATION_HEADERS_PREFIX: "X-Forwarded-User" # prefix for identity HTTP headers
     # IDENTITY_SENSITIVE_ATTRIBUTES: '["password_hash","internal_id","ssn"]' # attributes to strip
-    # IDENTITY_SIGN_CLAIMS: "false"            # HMAC-sign propagated claims for upstream verification
-    # IDENTITY_CLAIMS_SECRET: ""               # signing secret (uses JWT_SECRET_KEY if unset)
+    # IDENTITY_SIGN_CLAIMS: "false"            # sign propagated claims as a short-lived JWS for upstream verification
 
     # ─ SSRF Protection (Server-Side Request Forgery) ─
     # Prevents gateway from accessing internal resources or cloud metadata services.
@@ -660,7 +661,7 @@ mcpContextForge:
     # OTEL_EMIT_LANGFUSE_ATTRIBUTES: ""     # empty = auto-enable only for Langfuse OTLP endpoints
     # OTEL_CAPTURE_IDENTITY_ATTRIBUTES: ""  # empty = follow Langfuse attribute policy
     # OTEL_COPY_RESOURCE_ATTRS_TO_SPANS: "false"
-    # OTEL_REDACT_FIELDS: "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key"
+    # OTEL_REDACT_FIELDS: "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_token,secret_access_key,x-amz-security-token,x-amz-signature,x-amz-credential"
     # OTEL_MAX_TRACE_PAYLOAD_SIZE: "32768"
     # OTEL_CAPTURE_INPUT_SPANS: ""          # comma-separated allowlist, e.g. tool.invoke,prompt.render
     # OTEL_CAPTURE_OUTPUT_SPANS: ""         # comma-separated allowlist, leave empty to disable output capture
@@ -727,6 +728,8 @@ mcpContextForge:
     CEL_EXECUTION: "subprocess" # where tool validation policies (CEL) run: subprocess (forked sandbox) or inprocess
     CEL_TIMEOUT_SECONDS: "1.0" # wall-clock limit for one policy evaluation (seconds, at most 1.0)
     CEL_WORKERS: "2" # policy sandbox worker processes per gateway process
+    CEL_FILTER_TIMEOUT_SECONDS: "2.0" # wall-clock limit for one tool response filter (seconds, at most 60)
+    CEL_FILTER_WORKERS: "2" # response-filter sandbox worker processes per gateway process
     DANGEROUS_PATTERNS: '["[;&|`$(){}\\[\\]<>]", "\\.\\.[\\\\/]", "[\\x00-\\x1f\\x7f-\\x9f]"]' # dangerous input patterns (JSON array)
     ALLOWED_MIME_TYPES: '["text/plain","text/markdown","text/html","application/json","application/xml","image/png","image/jpeg","image/gif"]' # allowed MIME types (JSON array)
 
@@ -856,6 +859,7 @@ mcpContextForge:
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
+    # IDENTITY_CLAIMS_SECRET: ""             # required when signing identity claims; must differ from JWT_SECRET_KEY
     TOKEN_EXPIRY: "1440"                   # JWT validity (minutes); max allowed: 1440 = 24 hours
     REQUIRE_TOKEN_EXPIRATION: "true"       # require all JWT tokens to have expiration claims
     REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
@@ -930,6 +934,8 @@ mcpContextForge:
     # ─ OAuth Configuration ─
     OAUTH_REQUEST_TIMEOUT: "30"            # OAuth request timeout in seconds
     OAUTH_MAX_RETRIES: "3"                 # maximum retries for OAuth token requests
+    OAUTH_TOKEN_RETRIEVAL_ENABLED: "false" # allow callers to retrieve their OAuth access token
+    OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS: "600" # refresh tokens within this window
 
     # ─ OAuth Dynamic Client Registration (DCR) & PKCE ─
     DCR_ENABLED: "true"                    # enable Dynamic Client Registration (RFC 7591)

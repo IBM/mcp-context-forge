@@ -31,7 +31,7 @@ def _trusted_internal_runtime_headers() -> dict[str, str]:
     secret = settings.auth_encryption_secret.get_secret_value()
     expected = hashlib.sha256(f"{secret}:contextforge-internal-mcp-runtime-v1".encode("utf-8")).hexdigest()
     return {
-        "x-contextforge-mcp-runtime": "rust",
+        "x-contextforge-mcp-runtime": "affinity",
         "x-contextforge-mcp-runtime-auth": expected,
         "x-contextforge-auth-context": "trusted-payload",
     }
@@ -156,7 +156,7 @@ class TestTokenScopingMiddleware:
 
     @pytest.mark.asyncio
     async def test_trusted_internal_mcp_runtime_request_bypasses_token_scoping(self, middleware, mock_request):
-        """Trusted loopback Rust sidecar hops should bypass token-scoping path checks."""
+        """Trusted loopback Python affinity hops should bypass token-scoping path checks."""
         mock_request.url.path = "/_internal/mcp/rpc"
         mock_request.scope["path"] = "/_internal/mcp/rpc"
         mock_request.method = "POST"
@@ -222,7 +222,7 @@ class TestTokenScopingMiddleware:
         mock_request.method = "POST"
         mock_request.headers = {
             "Authorization": "Bearer scoped-token",
-            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-mcp-runtime": "affinity",
             "x-contextforge-mcp-runtime-auth": _trusted_internal_runtime_headers()["x-contextforge-mcp-runtime-auth"],
         }
 
@@ -250,6 +250,53 @@ class TestTokenScopingMiddleware:
         # Test that old non-canonical permissions would not work
         result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
+
+    @pytest.mark.parametrize(
+        ("method", "path", "allowed"),
+        [
+            ("GET", "/export", Permissions.ADMIN_EXPORT),
+            ("POST", "/export/selective", Permissions.ADMIN_EXPORT),
+            ("POST", "/import", Permissions.ADMIN_IMPORT),
+            ("GET", "/import/status", Permissions.ADMIN_IMPORT),
+            ("GET", "/import/status/abc", Permissions.ADMIN_IMPORT),
+            ("POST", "/import/cleanup", Permissions.ADMIN_IMPORT),
+        ],
+    )
+    def test_export_import_routes_map_to_handler_permissions(self, middleware, method, path, allowed):
+        """Scoped tokens must reach the export/import routes their handlers allow (#7436)."""
+        denied = Permissions.ADMIN_IMPORT if allowed == Permissions.ADMIN_EXPORT else Permissions.ADMIN_EXPORT
+
+        assert middleware._check_permission_restrictions(path, method, [allowed]) is True
+        assert middleware._check_permission_restrictions(path, method, [denied]) is False
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("DELETE", "/export"),
+            ("PUT", "/import"),
+            ("GET", "/import/cleanup"),
+        ],
+    )
+    def test_export_import_routes_stay_default_deny_without_a_mapping(self, middleware, method, path):
+        assert middleware._check_permission_restrictions(path, method, [Permissions.ADMIN_EXPORT, Permissions.ADMIN_IMPORT]) is False
+
+    def test_extended_card_route_denied_for_read_only_token(self, middleware):
+        """A token with only a2a.read cannot reach the stored extended card. a2a.update can."""
+        path = "/a2a/agent-1/stored-card/extended"
+        assert middleware._check_permission_restrictions(path, "GET", [Permissions.A2A_READ]) is False
+        assert middleware._check_permission_restrictions(path, "GET", [Permissions.A2A_UPDATE]) is True
+        assert middleware._check_permission_restrictions(path + "/", "GET", [Permissions.A2A_UPDATE]) is True
+
+    def test_stored_card_route_still_requires_read(self, middleware):
+        """The public stored card keeps the a2a.read mapping."""
+        path = "/a2a/agent-1/stored-card"
+        assert middleware._check_permission_restrictions(path, "GET", [Permissions.A2A_READ]) is True
+        assert middleware._check_permission_restrictions(path, "GET", [Permissions.A2A_UPDATE]) is False
+
+    def test_extended_route_pattern_rejects_a_suffix(self, middleware):
+        """A path that only starts like the extended route needs no a2a.update, so it is not the extended mapping."""
+        assert middleware._check_permission_restrictions("/a2a/agent-1/stored-card/extendedfoo", "GET", [Permissions.A2A_UPDATE]) is False
+        assert middleware._check_permission_restrictions("/a2a/agent-1/stored-card/extendedfoo", "GET", [Permissions.A2A_READ]) is True
 
     def test_tools_preview_precedes_tools_update_catchall(self, middleware):
         """POST /tools/preview/{name} must map to tools.preview, not the /tools/[^/]+/
@@ -429,6 +476,18 @@ class TestTokenScopingMiddleware:
 
         assert middleware._check_permission_restrictions("/oauth/status/gw1", "GET", [Permissions.TOOLS_READ]) is False
         assert middleware._check_permission_restrictions("/oauth/status", "GET", [Permissions.TOOLS_READ]) is False
+
+    @pytest.mark.asyncio
+    async def test_oauth_token_path_requires_gateway_token_read(self, middleware):
+        """Scoped API tokens require gateways.token_read to retrieve an OAuth access token."""
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", ["gateways.token_read"]) is True
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", ["*"]) is True
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", ["gateways.*"]) is True
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.TOKENS_CREATE]) is False
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.GATEWAYS_READ]) is False
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.GATEWAYS_UPDATE]) is False
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "GET", [Permissions.TOOLS_READ]) is False
+        assert middleware._check_permission_restrictions("/oauth/token/gw1", "POST", [Permissions.TOKENS_CREATE]) is False
 
     @pytest.mark.asyncio
     async def test_other_oauth_paths_still_default_deny(self, middleware):
@@ -2765,3 +2824,64 @@ class TestUnifiedSearchPathScoping:
 
         assert client.get("/v1/search", headers=headers).status_code == 200  # middleware lets it through
         assert client.get("/v1/other", headers=headers).status_code == 403  # control: default-deny still enforced
+
+
+class TestUserIdKeyedTeamResolution:
+    """Team resolution keys on the canonical user_id (#5890).
+
+    Duplicates the session-token truth-table cases with user_id-keyed
+    payloads: the identity passed to the DB layer comes from
+    ``get_user_id(payload)``, with the e-mail argument as fallback.
+    """
+
+    @pytest.mark.asyncio
+    async def test_resolve_session_teams_uses_canonical_user_id(self):
+        """An explicit user_id claim wins over sub/e-mail for DB team resolution."""
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+        payload = {"user_id": "u-1", "sub": "e@x.test", "token_use": "session"}
+        with patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=["t1"])) as spy:
+            result = await resolve_session_teams(payload, "e@x.test", {"is_admin": False})
+
+        spy.assert_awaited_once_with("u-1", {"is_admin": False})
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_revoked_membership_fails_closed(self):
+        """Revoked membership (empty DB teams) yields public-only, never admin bypass."""
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+        payload = {"user_id": "u-1", "sub": "e@x.test", "token_use": "session"}
+        with patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=[])) as spy:
+            result = await resolve_session_teams(payload, "e@x.test", {"is_admin": False})
+
+        spy.assert_awaited_once_with("u-1", {"is_admin": False})
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_jwt_teams_intersect(self):
+        """A JWT teams claim narrows the user_id-keyed DB teams to the intersection."""
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+        payload = {"user_id": "u-1", "sub": "e@x.test", "token_use": "session", "teams": ["t1"]}
+        with patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=["t1", "t2"])) as spy:
+            result = await resolve_session_teams(payload, "e@x.test", {"is_admin": False})
+
+        spy.assert_awaited_once_with("u-1", {"is_admin": False})
+        assert result == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_missing_identity_falls_back_to_email_param(self):
+        """A payload without user_id/email/sub uses the e-mail argument (unchanged behavior)."""
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+        payload = {"token_use": "session"}
+        with patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=["t1"])) as spy:
+            result = await resolve_session_teams(payload, "e@x.test", {"is_admin": False})
+
+        spy.assert_awaited_once_with("e@x.test", {"is_admin": False})
+        assert result == ["t1"]

@@ -80,6 +80,35 @@ afterEach(() => {
 // viewServer
 // ---------------------------------------------------------------------------
 describe("viewServer", () => {
+  test("approves only reviewed OAuth settings through administrator controls", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = '<div id="server-details"></div><input id="server-oauth-approval-controls">';
+    const server = {
+      id: "s1", name: "pending", version: 7, oauthEnabled: true,
+      oauthConfigApproved: false,
+      oauthConfig: { authorization_servers: ["https://issuer.example.com"], audience: "reviewed-audience" },
+    };
+    fetchWithTimeout.mockResolvedValue({ ok: true, json: async () => server });
+    await viewServer("s1");
+    expect(document.body.textContent).toContain("pending administrator approval");
+    expect(document.querySelector("pre").textContent).toContain("reviewed-audience");
+    const approve = Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "Approve reviewed OAuth configuration");
+    expect(approve).toBeDefined();
+    approve.click();
+    await vi.waitFor(() => expect(fetchWithTimeout).toHaveBeenCalledWith(
+      "/admin/servers/s1/oauth/approve", expect.objectContaining({ method: "POST", body: expect.any(FormData) })
+    ));
+    expect(fetchWithTimeout.mock.calls[1][1].body.get("version")).toBe("7");
+  });
+
+  test("omits approval actions without administrator controls", async () => {
+    document.body.innerHTML = '<div id="server-details"></div>';
+    fetchWithTimeout.mockResolvedValue({ ok: true, json: async () => ({ id: "s1", name: "pending", oauthEnabled: true, oauthConfig: { authorization_servers: ["https://issuer.example.com"] } }) });
+    await viewServer("s1");
+    expect(document.body.textContent).toContain("pending administrator approval");
+    expect(document.body.textContent).not.toContain("Approve reviewed OAuth configuration");
+  });
+
   test("fetches and displays server details", async () => {
     window.ROOT_PATH = "";
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -289,6 +318,9 @@ describe("editServer", () => {
     const tokenEndpointInput = document.createElement("input");
     tokenEndpointInput.id = "edit-server-oauth-token-endpoint";
     form.appendChild(tokenEndpointInput);
+    const audienceInput = document.createElement("input");
+    audienceInput.id = "edit-server-oauth-audience";
+    form.appendChild(audienceInput);
 
     fetchWithTimeout.mockResolvedValue({
       ok: true,
@@ -301,6 +333,7 @@ describe("editServer", () => {
             authorization_servers: ["https://auth.example.com"],
             scopes_supported: ["read", "write"],
             token_endpoint: "https://auth.example.com/token",
+            audience: "reviewed-audience",
           },
         }),
     });
@@ -312,6 +345,11 @@ describe("editServer", () => {
     expect(authServerInput.value).toBe("https://auth.example.com");
     expect(scopesInput.value).toBe("read write");
     expect(tokenEndpointInput.value).toBe("https://auth.example.com/token");
+    expect(audienceInput.value).toBe("reviewed-audience");
+
+    fetchWithTimeout.mockResolvedValue({ ok: true, json: async () => ({ id: "s2", name: "no-oauth" }) });
+    await editServer("s2");
+    expect(audienceInput.value).toBe("");
 
     consoleSpy.mockRestore();
   });

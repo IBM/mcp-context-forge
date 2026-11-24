@@ -180,6 +180,7 @@ endef
 # help: activate             - Activate the virtual environment in the current shell
 # help: install              - Install project into the venv
 # help: install-dev          - Install project (incl. dev deps) into the venv
+# help: install-docs         - Install only the docs dependency group (mkdocs etc.) into the venv
 # help: ensure-secrets       - Seed .env from .env.example if absent, then patch placeholder secrets (GHSA-8pcq-mx48-hjvj)
 # help: install-db           - Install project (incl. postgres and redis) into venv
 # help: update               - Update all installed deps inside the venv
@@ -313,6 +314,10 @@ ensure-secrets:
 	@if [ -f .env ]; then \
 		$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env; \
 	fi
+
+.PHONY: install-docs
+install-docs: venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group docs"
 
 .PHONY: install-dev
 install-dev: venv
@@ -883,7 +888,7 @@ clean:
 
 .PHONY: smoketest test-e2e test-mcp-cli test-mcp-protocol-e2e test-mcp-rbac test-mcp-plugin-parity \
 	test-mcp-session-isolation-load test-e2e-sso test-oauth-status-live \
-	test-private-key-jwt-live \
+	test-private-key-jwt-live test-sigv4-live \
 	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
 	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
@@ -920,6 +925,12 @@ bats: ## Run all bats shell tests (tests/**/*.bats; requires bats-core)
 	echo "$$files" | sed 's/^/   /'; \
 	bats $$files || { echo "❌ bats tests failed!"; exit 1; }
 	@echo "✅ bats tests passed!"
+
+.PHONY: test-oauth-browser-binding
+test-oauth-browser-binding: uv  ## Test OAuth binding with isolated HTTPS servers and Chromium
+	@$(UV_BIN) run rstest -n 0 -c pyproject.toml -o addopts='' -p playwright \
+		tests/live_gateway/e2e/test_oauth_browser_binding.py \
+		tests/playwright/test_oauth_browser_binding.py --browser chromium -v --tb=short
 
 test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -976,6 +987,14 @@ test-private-key-jwt-live: uv  ## Black-box test for RFC 7523 private_key_jwt to
 	@LIVE_GATEWAY_REQUIRED=1 $(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_private_key_jwt_e2e.py -v -s --tb=short \
 		|| { echo "❌ private_key_jwt live tests failed!"; exit 1; }
 	@echo "✅ private_key_jwt live tests passed!"
+
+test-sigv4-live: uv  ## Black-box test for AWS SigV4 (auth_type=sigv4) gateways and REST tools against a running gateway
+	@echo "🧪 Running SigV4 live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack; the stub upstream runs on host.docker.internal"
+	@echo "   LIVE_GATEWAY_REQUIRED=1: an unreachable gateway fails here instead of skipping."
+	@LIVE_GATEWAY_REQUIRED=1 $(UV_BIN) run rstest -n 0 tests/live_gateway/mcp/test_sigv4_gateway_e2e.py -v -s --tb=short \
+		|| { echo "❌ SigV4 live tests failed!"; exit 1; }
+	@echo "✅ SigV4 live tests passed!"
 
 test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -2659,24 +2678,24 @@ MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
 MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
 MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
 MODE ?= legacy
-# modern = the Rust dataplane behind nginx, reached through the /contextforge-rs
-# proxy prefix. legacy = the Python gateway. Both serve the same virtual server.
-HOST ?= $(MCP_BENCHMARK_HOST)$(if $(filter modern,$(MODE)),/contextforge-rs)
+# modern = MCP 2026-07-28 stateless protocol. legacy = MCP 2024-11-05 with initialize handshake.
+# Both serve the same virtual server on the Python gateway.
+HOST ?= $(MCP_BENCHMARK_HOST)
 SERVER_ID ?= $(MCP_BENCHMARK_SERVER_ID)
 USERS ?= 125
 SPAWN_RATE ?= 30
 # Locust exits 1 when any request failed. Set 0 to report numbers regardless.
 EXIT_ON_ERROR ?= 1
 TIME ?= 1800s
+TOOL_BENCH_PROTOCOL_VERSION ?= 2026-07-28
 
 # TOKEN wins, from the command line or the environment, then MCPGATEWAY_BEARER_TOKEN.
-# With both empty, legacy mode mints a fresh token from the running gateway; modern
-# mode cannot mint, because the Rust dataplane verifies RS256 against its JWKS.
+# With both empty, a fresh token is minted from the running gateway with JWT_SECRET_KEY.
 # A token that went stale on a stack restart stops at the 401 preflight below.
 JWT_USER ?= admin@example.com
 # Reports carry the commit they measured, so a rerun of the same commit overwrites
 # its own report instead of clobbering another commit's numbers.
-HTML_REPORT ?= reports/perf_benchmark_tools_$(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit).html
+HTML_REPORT ?= reports/perf_benchmark_tools_$(or $(shell git rev-parse --short HEAD 2>/dev/null),nogit)_$(MODE).html
 # Compose project label of the running stack; its containers carry the resource table.
 PROJECT ?= $(or $(COMPOSE_PROJECT_NAME),$(notdir $(CURDIR)))
 # Locust writes its stats CSV to a temp dir inside the recipe: it only feeds the HTML
@@ -2780,23 +2799,36 @@ perf-benchmark-tools:                  ## Fixed-tool-list MCP benchmark against 
 	@echo "   Host: $(HOST)"
 	@echo "   Server: $(SERVER_ID)"
 	@echo "   Users: $(USERS), Spawn: $(SPAWN_RATE)/s, Duration: $(TIME)"
-	@$(if $(filter modern,$(MODE)),echo "   Auth: dataplane verifies RS256 against its JWKS - export MCPGATEWAY_BEARER_TOKEN or every call is 401",true) # pragma: allowlist secret
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		TMP_DIR=$$(mktemp -d); trap "rm -rf $$TMP_DIR" EXIT; \
 		GW_SECRET="$(gateway_jwt_secret)" && \
 		BENCH_TOKEN="$(or $(TOKEN),$(MCPGATEWAY_BEARER_TOKEN))" && \
 		if [ -z "$$BENCH_TOKEN" ] && [ -n "$$GW_SECRET" ]; then \
 			BENCH_TOKEN=$$(JWT_SECRET_KEY=$$GW_SECRET python -m mcpgateway.utils.create_jwt_token -u $(JWT_USER) --exp 10080 2>/dev/null); \
 		fi; \
+		printf "Authorization: Bearer %s\n" "$$BENCH_TOKEN" > "$$TMP_DIR/auth.hdr" && \
+		HEADERS=(-H "@$$TMP_DIR/auth.hdr" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream") && \
+		if [ "$(MODE)" = "modern" ]; then \
+			HEADERS+=(-H "MCP-Protocol-Version: $(TOOL_BENCH_PROTOCOL_VERSION)" -H "Mcp-Method: tools/list"); \
+			BODY="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"$(TOOL_BENCH_PROTOCOL_VERSION)\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"; \
+		else \
+			BODY="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}"; \
+		fi; \
 		CODE=$$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$(HOST)/servers/$(SERVER_ID)/mcp" \
-			-H "Authorization: Bearer $$BENCH_TOKEN" -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
-			-d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"preflight\",\"version\":\"1\"}}}") || CODE=000; \
+			"$${HEADERS[@]}" -d "$$BODY") || CODE=000; \
 		case "$$CODE" in \
 			2*) ;; \
 			401) \
 				echo "Auth preflight failed (HTTP 401): the bearer token is not signed with the gateway JWT_SECRET_KEY."; \
-				echo "Fix: run \`export TOKEN=\$$(make create-token)\`, or unset TOKEN MCPGATEWAY_BEARER_TOKEN so legacy mode mints its own."; \
+				echo "Fix: run \`export TOKEN=\$$(make create-token)\`, or unset TOKEN / MCPGATEWAY_BEARER_TOKEN so a fresh token is minted."; \
+				exit 1 ;; \
+			400|404) \
+				echo "Preflight failed (HTTP $$CODE) from $(HOST)/servers/$(SERVER_ID)/mcp"; \
+				if [ "$(MODE)" = "modern" ]; then \
+					echo "Hint: check that the gateway has MCP_INBOUND_PROTOCOL_MODE=auto enabled."; \
+				fi; \
 				exit 1 ;; \
 			000) \
 				echo "Preflight failed: no HTTP response from $(HOST). Start the stack with: make perf-up"; \
@@ -2805,11 +2837,11 @@ perf-benchmark-tools:                  ## Fixed-tool-list MCP benchmark against 
 				echo "Preflight failed (HTTP $$CODE) from $(HOST)/servers/$(SERVER_ID)/mcp"; \
 				exit 1 ;; \
 		esac; \
-		STATS_DIR=$$(mktemp -d); trap "rm -rf $$STATS_DIR" EXIT; \
 		STATUS=0; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
 		MCP_SERVER_ID=$(SERVER_ID) \
 		TOOL_BENCH_MODE=$(MODE) \
+		TOOL_BENCH_PROTOCOL_VERSION=$(TOOL_BENCH_PROTOCOL_VERSION) \
 		JWT_SECRET_KEY=$${GW_SECRET:-$${JWT_SECRET_KEY:-}} \
 		MCPGATEWAY_BEARER_TOKEN=$$BENCH_TOKEN \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
@@ -2820,10 +2852,10 @@ perf-benchmark-tools:                  ## Fixed-tool-list MCP benchmark against 
 			--headless \
 			--exit-code-on-error=$(EXIT_ON_ERROR) \
 			--html=$(HTML_REPORT) \
-			--csv="$$STATS_DIR/stats" \
+			--csv="$$TMP_DIR/stats" \
 			--only-summary \
 			ToolUser || STATUS=$$?; \
-		$(VENV_DIR)/bin/python tests/loadtest/summarize_benchmark.py "$(HTML_REPORT)" "$$STATS_DIR/stats_stats.csv" \
+		$(VENV_DIR)/bin/python tests/loadtest/summarize_benchmark.py "$(HTML_REPORT)" "$$TMP_DIR/stats_stats.csv" \
 			--mode "$(MODE)" --host "$(HOST)" --server "$(SERVER_ID)" --project "$(PROJECT)" \
 			--history "$(HISTORY_CSV)"; \
 		echo ""; \
@@ -3181,7 +3213,7 @@ mutmut-clean:
 # =============================================================================
 # help: 📊 METRICS
 # help: pip-licenses         - Produce dependency license inventory (markdown)
-# help: license-check         - Check repo licenses with policy file (`pyproject`, pip, Go).
+# help: license-check         - Check repo licenses with policy file (`pyproject`, pip).
 # help:                      - Set LICENSE_CHECK_INCLUDE_DEV_GROUPS=true to include dev groups.
 # help:                      - Set LICENSE_CHECK_SUMMARY_ONLY=true for compact output.
 # help: scc                  - Quick LoC/complexity snapshot with scc
@@ -3237,7 +3269,7 @@ scc-report:
 # help: 📚 DOCUMENTATION & SBOM
 # help: docs                 - Build docs (graphviz + handsdown + images + SBOM)
 # help: docs-assets           - Sync logo/icon SVGs from mcpgateway/static to docs
-# help: docs-serve            - Sync assets and serve docs locally with mkdocs
+# help: docs-serve            - Sync assets and serve docs locally with mkdocs (activates the venv, installs docs deps if missing)
 # help: images               - Generate architecture & dependency diagrams
 
 # Pick the right "in-place" flag for sed (BSD vs GNU)
@@ -3263,10 +3295,11 @@ docs-assets:
 
 .PHONY: docs-serve
 docs-serve: docs-assets
+	@test -x "$(VENV_DIR)/bin/mkdocs" || $(MAKE) install-docs
 ifeq ($(shell uname),Darwin)
-	@cd $(DOCS_DIR) && DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib mkdocs serve
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && cd $(DOCS_DIR) && DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib mkdocs serve"
 else
-	@cd $(DOCS_DIR) && mkdocs serve
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && cd $(DOCS_DIR) && mkdocs serve"
 endif
 
 .PHONY: docs
@@ -3538,6 +3571,7 @@ lint-smart:
 
 # Temporary roots for ad-hoc linting tools
 LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
+# Go builds external linters: actionlint, reviewdog, chart-testing, and kube-linter.
 LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
@@ -3839,9 +3873,6 @@ _prek:
 			'$(CURDIR)/.cache/xdg-cache' \
 			'$(CURDIR)/.cache/xdg-data' \
 			'$(CURDIR)/.cache/virtualenv-app-data' \
-			'$(CURDIR)/.cache/go-cache' \
-			'$(CURDIR)/.cache/go-mod' \
-			'$(CURDIR)/.cache/go-build' \
 			'$(CURDIR)/.cache/pip-cache' \
 			'$(CURDIR)/.cache/tmp'; \
 		export PREK_HOME='$(CURDIR)/.cache/prek-home' \
@@ -3851,28 +3882,38 @@ _prek:
 			TMPDIR='$(CURDIR)/.cache/tmp' \
 			PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
 			PIP_USE_PEP517='0' \
-			PIP_NO_BUILD_ISOLATION='1' \
-			GOPATH='$(CURDIR)/.cache/go-cache' \
-			GOMODCACHE='$(CURDIR)/.cache/go-mod' \
-			GOCACHE='$(CURDIR)/.cache/go-build'; \
+			PIP_NO_BUILD_ISOLATION='1'; \
 		$(PREK_RUN) $(PREK_SCOPE)"
 
 RUFF_MODE   ?= check
 
 .PHONY: install-pre-commit-hooks
-install-pre-commit-hooks: uv          ## 🪝  Install pre-commit hooks
-	@echo "🪝  Installing pre-commit hooks..."
-	@# pre-commit refuses to install when core.hooksPath is set (e.g. an
-	@# MDM-managed global hook such as vault-radar in ~/.gitconfig). Shadow
-	@# the global git config for this invocation only — nothing is modified —
-	@# so the shim lands in <git-common-dir>/hooks, where the hooksPath hook's
-	@# own chain probe (vault-radar's probe_chain) detects and executes it.
+install-pre-commit-hooks: uv          ## 🪝  Install pre-commit hooks with prek
+	@echo "🪝  Installing pre-commit hooks (prek $(PREK_VERSION))..."
+	@# prek is the only supported hook installer. It is installed as a uv tool
+	@# (its own venv, outside the repository) so the hook shim points at a
+	@# stable binary instead of a throwaway uv cache entry or a checkout's .venv.
+	@# A hook generated by the pre-commit framework is removed first: prek would
+	@# otherwise keep it as pre-commit.legacy and run every check twice.
+	@# prek refuses to install when core.hooksPath is set (e.g. an MDM-managed
+	@# global hook such as vault-radar in ~/.gitconfig). Shadow the global git
+	@# config for this invocation only — nothing is modified — so the shim
+	@# lands in <git-common-dir>/hooks, where the hooksPath hook's own chain
+	@# probe (vault-radar's probe_chain) detects and executes it.
 	@# Only the global scope is shadowed; a repo-local hooksPath still refuses.
-	@if git config --global core.hooksPath >/dev/null 2>&1; then \
+	@set -eu; \
+	$(UV_BIN) tool install --quiet "prek==$(PREK_VERSION)"; \
+	prek_bin="$$($(UV_BIN) tool dir --bin)/prek"; \
+	hook="$$(cd "$$(git rev-parse --git-common-dir)" && pwd)/hooks/pre-commit"; \
+	if [ -f "$$hook" ] && grep -q '^# File generated by pre-commit:' "$$hook"; then \
+		rm -f "$$hook"; \
+		echo "🔄  Removed pre-commit framework hook (replaced by prek)"; \
+	fi; \
+	if git config --global core.hooksPath >/dev/null 2>&1; then \
 		echo "⚠️  Global core.hooksPath detected ($$(git config --global core.hooksPath)); installing shim into default hooks dir for chaining"; \
-		GIT_CONFIG_GLOBAL=/dev/null $(UV_BIN) run pre-commit install; \
+		GIT_CONFIG_GLOBAL=/dev/null "$$prek_bin" --no-progress install --config .pre-commit-config.yaml; \
 	else \
-		$(UV_BIN) run pre-commit install; \
+		"$$prek_bin" --no-progress install --config .pre-commit-config.yaml; \
 	fi
 	@echo "✅  Pre-commit hooks installed"
 
@@ -3914,32 +3955,84 @@ configure-secrets-merge-driver:    ## 🔀  Configure git merge driver for .secr
 	fi
 	@echo "✅  Git merge driver configured for .secrets.baseline"
 
+# POST_REWRITE_HOOK_MODE selects how the post-rewrite hook is installed:
+#   auto   - config hook on Git >= 2.54, hooks-directory file otherwise
+#   config - config-based hook (hook.<name>.command/event); requires Git >= 2.54
+#   file   - legacy <git-common-dir>/hooks/post-rewrite file
+POST_REWRITE_HOOK_MODE ?= auto
+POST_REWRITE_HOOK_NAME := contextforge-secrets-refresh
+
 .PHONY: install-post-rewrite-detect-secrets-hook
-install-post-rewrite-detect-secrets-hook:     ## 🪝  Install post-rewrite hook that refreshes .secrets.baseline after rebase
+install-post-rewrite-detect-secrets-hook:     ## 🪝  Install post-rewrite hook (config-based on Git >= 2.54, file-based otherwise) that refreshes .secrets.baseline after rebase and stages it
 	@echo "🪝  Installing post-rewrite secrets refresh hook..."
 	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
 		echo "❌  Not in a git repository"; \
 		exit 1; \
 	fi
-	@# Idempotent + non-destructive install:
+	@# Config mode (Git >= 2.54): the script is copied to <git-common-dir>/git-drivers/
+	@# (like the merge driver, so it outlives rebases over history that predates
+	@# it) and registered as hook.<name>.command/event in the repo-local config.
+	@# Git runs it alongside any other post-rewrite hooks, so nothing is chained.
+	@# Migration: a legacy hook file carrying our marker is removed, and a
+	@# post-rewrite.chain it was chaining is moved back to post-rewrite.
+	@#
+	@# File mode (older Git) is idempotent and non-destructive:
 	@#  - hook missing or already ours (marker comment) -> (over)write ours
 	@#  - foreign hook, no chain yet -> move it to post-rewrite.chain; our
 	@#    hook executes the chain after itself, so both still run
 	@#  - foreign hook AND chain present -> ambiguous; never clobber
-	@hooks_dir=$$(git rev-parse --git-common-dir)/hooks && \
-	target="$$hooks_dir/post-rewrite" && \
-	chain="$$hooks_dir/post-rewrite.chain" && \
-	if [ -f "$$target" ] && ! grep -q '^# contextforge: post-rewrite-secrets-refresh$$' "$$target"; then \
-		if [ -e "$$chain" ]; then \
-			echo "❌  Foreign post-rewrite hook and existing post-rewrite.chain both present; merge manually" >&2; \
-			exit 1; \
+	@set -eu; \
+	mode="$(POST_REWRITE_HOOK_MODE)"; \
+	name="$(POST_REWRITE_HOOK_NAME)"; \
+	marker='^# contextforge: post-rewrite-secrets-refresh$$'; \
+	common_dir=$$(cd "$$(git rev-parse --git-common-dir)" && pwd); \
+	target="$$common_dir/hooks/post-rewrite"; \
+	chain="$$common_dir/hooks/post-rewrite.chain"; \
+	gv=$$(git version | sed -n 's/^git version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p'); \
+	gmaj=$${gv% *}; gmin=$${gv#* }; gmaj=$${gmaj:-0}; gmin=$${gmin:-0}; \
+	if [ "$$gmaj" -gt 2 ] || { [ "$$gmaj" -eq 2 ] && [ "$$gmin" -ge 54 ]; }; then supports_config=1; else supports_config=0; fi; \
+	case "$$mode" in \
+		auto) if [ "$$supports_config" -eq 1 ]; then mode=config; else mode=file; fi ;; \
+		config) if [ "$$supports_config" -ne 1 ]; then \
+				echo "❌  Config-based hooks need Git >= 2.54 (found $$gmaj.$$gmin); use POST_REWRITE_HOOK_MODE=file" >&2; \
+				exit 1; \
+			fi ;; \
+		file) ;; \
+		*) echo "❌  POST_REWRITE_HOOK_MODE must be auto, config, or file (got '$$mode')" >&2; exit 1 ;; \
+	esac; \
+	if [ "$$mode" = config ]; then \
+		drivers_dir="$$common_dir/git-drivers"; \
+		script="$$drivers_dir/post-rewrite-secrets-refresh.sh"; \
+		mkdir -p "$$drivers_dir"; \
+		cp scripts/git/post-rewrite-secrets-refresh.sh "$$script"; \
+		chmod +x "$$script"; \
+		git config --local "hook.$$name.command" "'$$script'"; \
+		git config --local --replace-all "hook.$$name.event" post-rewrite; \
+		if [ -f "$$target" ] && grep -q "$$marker" "$$target"; then \
+			rm -f "$$target"; \
+			echo "🔄  Removed legacy post-rewrite hook file (replaced by config hook $$name)"; \
+			if [ -e "$$chain" ]; then \
+				mv "$$chain" "$$target"; \
+				echo "🔀  Moved post-rewrite.chain back to post-rewrite (Git now runs it after the config hook)"; \
+			fi; \
 		fi; \
-		mv "$$target" "$$chain" && chmod +x "$$chain" && \
-		echo "🔀  Moved existing post-rewrite hook to post-rewrite.chain (chained by our hook)"; \
-	fi && \
-	cp scripts/git/post-rewrite-secrets-refresh.sh "$$target" && \
-	chmod +x "$$target" && \
-	echo "✅  Installed $$target"
+		echo "✅  Installed config hook $$name -> $$script"; \
+	else \
+		git config --local --unset-all "hook.$$name.command" || true; \
+		git config --local --unset-all "hook.$$name.event" || true; \
+		if [ -f "$$target" ] && ! grep -q "$$marker" "$$target"; then \
+			if [ -e "$$chain" ]; then \
+				echo "❌  Foreign post-rewrite hook and existing post-rewrite.chain both present; merge manually" >&2; \
+				exit 1; \
+			fi; \
+			mv "$$target" "$$chain"; \
+			chmod +x "$$chain"; \
+			echo "🔀  Moved existing post-rewrite hook to post-rewrite.chain (chained by our hook)"; \
+		fi; \
+		cp scripts/git/post-rewrite-secrets-refresh.sh "$$target"; \
+		chmod +x "$$target"; \
+		echo "✅  Installed $$target"; \
+	fi
 
 .PHONY: configure-git
 configure-git: install-pre-commit-hooks configure-secrets-merge-driver install-post-rewrite-detect-secrets-hook  ## 🔧  Configure git hooks and merge drivers
@@ -4791,7 +4884,7 @@ hadolint:
 # 📦 DEPENDENCY MANAGEMENT
 # =============================================================================
 # help: 📦 DEPENDENCY MANAGEMENT
-# help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml and docs/requirements.txt
+# help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml
 
 .PHONY: deps-update
 
@@ -4799,8 +4892,7 @@ deps-update:
 	@echo "⬆️  Updating project dependencies via update_dependencies.py..."
 	@test -f ./.github/tools/update_dependencies.py || { echo "❌ update_dependencies.py not found in ./.github/tools."; exit 1; }
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --ignore-dependency starlette --file pyproject.toml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --file docs/requirements.txt"
-	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
+	@echo "✅ Dependencies updated in pyproject.toml"
 
 
 # =============================================================================
@@ -5517,7 +5609,7 @@ docker-shell:
 # 🛠️  COMPOSE STACK (Docker Compose v2, podman compose or podman-compose)
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
-# help: compose-up            - Bring the whole stack up (detached)
+# help: compose-up            - Bring the whole stack up (detached); REDIS=cluster uses a 3-master Redis Cluster
 # help: perf-up               - Start stack with pinned 4 CPU / 4 G benchmark resources (REPLICA=3)
 # help: perf-down             - Stop the pinned benchmark stack
 # help: compose-sso           - Start stack with Keycloak SSO profile enabled
@@ -5595,8 +5687,15 @@ ifeq ($(PLATFORM),linux/amd64)
     PROFILE = --profile with-fast-time
 endif
 
+# Redis backend: single `redis` (default) or `REDIS=cluster` for a 3-master Redis Cluster.
+# Pass the same value to compose-down.
+REDIS ?= $(redis)
+ifeq ($(REDIS),cluster)
+  REDIS_COMPOSE_FILES := -f docker-compose.redis-cluster.yml
+endif
+
 define COMPOSE
-$(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
+$(COMPOSE_CMD) -f $(COMPOSE_FILE) $(REDIS_COMPOSE_FILES) $(PROFILE)
 endef
 
 .PHONY: compose-up compose-sso compose-sso-monitoring compose-sso-testing compose-sso-down compose-sso-clean sso-test-login compose-sso-seed-audience \
@@ -5662,7 +5761,7 @@ compose-up: compose-validate
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
 
 PERF_COMPOSE_FILE := docker-compose.perf.yml
-PERF_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PERF_COMPOSE_FILE) $(PROFILE)
+PERF_COMPOSE := $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f $(PERF_COMPOSE_FILE) $(REDIS_COMPOSE_FILES) $(PROFILE)
 REPLICA ?= 3
 
 perf-up: compose-validate                  ## Start stack with pinned benchmark resource overrides (REPLICA=3)
@@ -5774,8 +5873,7 @@ compose-sso-seed-audience:
 	@command -v jq >/dev/null 2>&1 || { echo "❌ jq is required"; exit 1; }
 	@set -eu; \
 	TOKEN=$$($(COMPOSE_CMD) $(SSO_SEED_COMPOSE_FILES) --profile sso exec -T gateway sh -c \
-		'for v in $$(env | sed -n "s/^\(EXPERIMENTAL_RUST_MCP_[A-Z_]*\)=$$/\1/p"); do unset $$v; done; \
-		python -m mcpgateway.utils.create_jwt_token --username "$${PLATFORM_ADMIN_EMAIL:-admin@example.com}" --admin --exp 10' | tail -n 1); \
+		'python -m mcpgateway.utils.create_jwt_token --username "$${PLATFORM_ADMIN_EMAIL:-admin@example.com}" --admin --exp 10' | tail -n 1); \
 	case "$$TOKEN" in *.*.*) ;; *) echo "❌ Could not mint an admin JWT in the gateway container (is 'make compose-sso' up?)"; exit 1;; esac; \
 	URL="$(SSO_SEED_GATEWAY_URL)/auth/sso/admin/providers/$(SSO_SEED_PROVIDER_ID)"; \
 	OUT=$$(mktemp); trap 'rm -f "$$OUT"' EXIT; \

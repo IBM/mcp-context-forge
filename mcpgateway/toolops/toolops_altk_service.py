@@ -19,7 +19,6 @@ Structure:
 """
 
 # Standard
-import os
 from typing import Any
 
 # Third-Party
@@ -47,6 +46,7 @@ except ImportError:
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config_sections import ToolOpsSettings
 from mcpgateway.schemas import ToolRead, ToolUpdate
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_client_chat_service import LLMConfig, MCPChatService, MCPClientConfig, MCPServerConfig
@@ -59,17 +59,16 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
-toolops_llm_provider = os.getenv("LLM_PROVIDER")
+provider_settings = ToolOpsSettings()
 toolops_llm, toolops_llm_provider_config = get_llm_instance()
 if toolops_llm is not None and toolops_llm_provider_config is not None:
-    TOOLOPS_LLM_CONFIG = LLMConfig(provider=toolops_llm_provider, config=toolops_llm_provider_config)
+    TOOLOPS_LLM_CONFIG = LLMConfig(provider=provider_settings.llm_provider, config=toolops_llm_provider_config)
 else:
     logger.error("Error in obtaining LLM instance for Toolops services")
     TOOLOPS_LLM_CONFIG = None
 
-LLM_MODEL_ID = os.getenv("OPENAI_MODEL", "")
-provider = os.getenv("OPENAI_BASE_URL", "")
-LLM_PLATFORM = "OpenAIProvider - " + provider
+LLM_MODEL_ID = provider_settings.openai_model
+LLM_PLATFORM = "OpenAIProvider - " + provider_settings.openai_base_url
 
 
 # ---------------

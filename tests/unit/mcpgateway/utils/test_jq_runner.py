@@ -503,10 +503,14 @@ def test_a_full_pool_fails_fast_instead_of_queueing(monkeypatch):
         # The occupier's worker was never touched by the second call.
         assert all(p.is_alive() for p in processes_before)
     finally:
-        occupier.join(timeout=10.0)
+        # Shutdown kills the busy worker, so the occupier ends now instead of at the 5s timeout.
         shutdown_jq_pool()
+        occupier.join(timeout=10.0)
 
-    assert busy_thread_result and isinstance(busy_thread_result[0], JqFilterTimeout)
+    assert not occupier.is_alive()
+    assert busy_thread_result and isinstance(busy_thread_result[0], JqFilterError)
+    # JqFilterError is the base class: rule out the timeout and busy paths, so only the pool shutdown can have ended the occupier.
+    assert not isinstance(busy_thread_result[0], (JqFilterTimeout, JqFilterBusy))
 
 
 @linux_only

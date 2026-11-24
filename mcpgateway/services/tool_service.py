@@ -67,8 +67,7 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
-from mcpgateway.common.models import ToolAnnotations
-from mcpgateway.common.models import ToolResult
+from mcpgateway.common.models import ToolAnnotations, ToolResult
 from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -77,15 +76,29 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, Permissions, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
-from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
+from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error, set_span_ok, upstream_request_context
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import (
+    mask_sigv4_config,
+    AuthenticationValues,
+    RESPONSE_FILTER_VARIABLE,
+    ToolCreate,
+    ToolMetrics,
+    ToolPreviewResponse,
+    ToolPreviewTarget,
+    ToolPreviewWarning,
+    ToolRead,
+    ToolUpdate,
+    TopPerformer,
+)
+from mcpgateway.services.a2a_oauth import resolve_a2a_agent_oauth_headers
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
+from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
+from mcpgateway.services.encryption_service import protect_sigv4_config_sync
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -94,11 +107,11 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
-from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.services.token_exchange_actor import exchange_cache_variant, exchange_mode, invalidate_actor_token, resolve_actor_token
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.services.tool_validation_policy import admit_stored_tool, admit_tool, apply_refusal, check_policy_permission, policy_changed, policy_text, record_policy_change
@@ -108,11 +121,11 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
-from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
-from mcpgateway.utils.jq_guard import assert_safe_jq_filter
-from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
+from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta, IdentitySigningError
+from mcpgateway.utils.cel_runner import CelBusy, CelError, CelSyntaxError, CelTimeout, evaluate_value
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -121,16 +134,17 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, has_query_signature, sigv4_audit_values, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
+from mcpgateway.utils.streamable_http_compat import UpstreamSessionInfo
 from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -247,16 +261,52 @@ def _sync_meta_traceparent(
     return updated_meta
 
 
-def _build_pinned_rest_http_client() -> ResilientHttpClient:
-    """Build an isolated client for IP-pinned REST requests."""
-    return ResilientHttpClient(
-        client_args={
-            "timeout": settings.federation_timeout,
-            "verify": not settings.skip_ssl_verify,
-            "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
-            "cookies": {},
-        }
-    )
+def _upstream_call_meta(meta_data: Optional[Dict[str, Any]], carrier: Mapping[str, str]) -> Optional[Dict[str, Any]]:
+    """Copy metadata and replace propagation fields with this call's context.
+
+    A caller field is removed only when the carrier supplies its replacement.
+    Caller ``baggage`` is always removed, because it bypasses the ``OTEL_BAGGAGE_*`` policy.
+    A carrier ``traceparent`` also replaces the caller ``tracestate`` that belongs to it.
+
+    Args:
+        meta_data: Caller metadata to preserve without mutation.
+        carrier: Current outbound propagation fields.
+
+    Returns:
+        Metadata with current trace context and policy-filtered baggage.
+    """
+    propagation_fields = {"traceparent", "tracestate", "baggage"}
+    normalized = {key.lower(): value for key, value in carrier.items() if key.lower() in propagation_fields}
+    replaced = {"baggage", *normalized}
+    if "traceparent" in normalized:
+        replaced.add("tracestate")
+    metadata = {key: value for key, value in (meta_data or {}).items() if key.lower() not in replaced}
+    metadata = _sync_meta_traceparent(metadata, normalized) or {}
+    if "traceparent" in metadata:
+        metadata.update(normalized)
+    return metadata or None
+
+
+def _build_pinned_rest_http_client(auth: Optional[httpx.Auth] = None) -> ResilientHttpClient:
+    """Build an isolated client for one REST invocation.
+
+    The client reuses the cached default SSL context, so a call does not reload the trust store.
+
+    Args:
+        auth: Optional httpx auth attached to the client, such as the SigV4 signer.
+
+    Returns:
+        ResilientHttpClient: A single-connection client the caller must close.
+    """
+    client_args: Dict[str, Any] = {
+        "timeout": settings.federation_timeout,
+        "verify": False if settings.skip_ssl_verify else get_cached_ssl_context(None),
+        "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        "cookies": {},
+    }
+    if auth is not None:
+        client_args["auth"] = auth
+    return ResilientHttpClient(client_args=client_args)
 
 
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
@@ -264,6 +314,8 @@ perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
+
+SYSTEM_ACTOR = "system"
 
 _ENCRYPTED_TOOL_HEADER_VALUE_KEY = "_mcpgateway_encrypted_header_value_v1"
 _TOOL_HEADER_DATA_KEY = "data"
@@ -359,6 +411,20 @@ def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_hea
             logger.debug("tool_pre_invoke diagnostic logging failed", exc_info=False)
         except Exception:  # noqa: BLE001  # nosec B110
             pass
+
+
+def _identity_signing_failure(audience: Any, exc: IdentitySigningError) -> "ToolInvocationError":
+    """Log an identity signing failure and map it to a tool invocation error.
+
+    Args:
+        audience: Gateway or tool identifier the claims were signed for.
+        exc: The signing failure.
+
+    Returns:
+        The error to raise.
+    """
+    logger.error("Identity claim signing is misconfigured for %s: %s", audience, exc)
+    return ToolInvocationError("Identity claim signing is misconfigured for the tool gateway")
 
 
 def _is_sensitive_tool_header_name(name: str) -> bool:
@@ -627,7 +693,7 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     ``ToolResult.content`` with ``is_error=True``. On the 2xx success path that only
     happens when the tool declares an ``outputSchema``; otherwise the raw text is
     passed through as a successful result. Never pass the result to
-    ``extract_using_jq``: ``TextContent`` is not JSON-serializable, so the filter
+    ``apply_response_filter``: ``TextContent`` is not JSON-serializable, so the filter
     fails and replaces this message with a generic jsonpath error.
 
     Args:
@@ -821,105 +887,115 @@ def _validate_tool_input_arguments(arguments: Dict[str, Any], input_schema: Opti
     return None
 
 
-def extract_using_jq(data, jq_filter=""):
-    """
-    Extracts data from a given input (string, dict, or list) using a jq filter string.
+class ResponseFilterError(Exception):
+    """A tool's response filter produced no result.
 
-    The filter is refused if it uses a restricted jq built-in, then delegated to
-    the sandboxed runner in :mod:`mcpgateway.utils.jq_runner`, which owns program
-    compilation, caching, and the worker pool. A refusal, a timeout, or an
-    execution failure comes back as a single ``TextContent`` in a list, which
-    callers must treat as an error result rather than as tool output.
+    ``str(exc)`` is the message to return to the caller. ``detail`` is the engine's
+    reason, for the log only. ``warning`` marks the retryable cases, a timeout and a
+    busy sandbox, which are logged at WARNING rather than ERROR.
+    """
+
+    def __init__(self, message: str, detail: str = "", warning: bool = False) -> None:
+        """Record the caller-facing message and the log-only detail.
+
+        Args:
+            message: Text safe to return to the caller.
+            detail: The engine's reason, kept out of the response.
+            warning: True when the failure is transient and worth retrying.
+        """
+        super().__init__(message)
+        self.detail = detail
+        self.warning = warning
+
+
+def apply_response_filter(data, expression=""):
+    """Apply a tool's response filter, a CEL expression, to its response.
+
+    The expression sees the response as ``response`` and may return any JSON
+    value. It runs in the sandboxed CEL runner, which owns compilation, caching
+    and the worker pool.
 
     Args:
-        data (str, dict, list): The input JSON data. Can be a string, dict, or list.
-        jq_filter (str): The jq filter string to extract the desired data.
+        data (str, dict, list): The response. A string is parsed as JSON first.
+        expression (str): The CEL expression.
 
     Returns:
-        The result of applying the jq filter to the input data.
+        The value the expression produced, or ``data`` unchanged when there is no filter.
+
+    Raises:
+        ResponseFilterError: If the response is not JSON data, or the filter times out,
+            does not compile, or fails to evaluate.
 
     Examples:
-        >>> extract_using_jq('{"a": 1, "b": 2}', '.a')
-        [1]
-        >>> extract_using_jq({'a': 1, 'b': 2}, '.b')
-        [2]
-        >>> extract_using_jq('[{"a": 1}, {"a": 2}]', '.[].a')
+        >>> apply_response_filter('{"a": 1, "b": 2}', 'response.a')
+        1
+        >>> apply_response_filter({'a': 1, 'b': 2}, 'response.b')
+        2
+        >>> apply_response_filter('[{"a": 1}, {"a": 2}]', 'response.map(x, x.a)')
         [1, 2]
-        >>> extract_using_jq('not a json', '.a')
-        ['Invalid JSON string provided.']
-        >>> extract_using_jq({'a': 1}, '')
+        >>> apply_response_filter('not a json', 'response.a')
+        Traceback (most recent call last):
+        ...
+        mcpgateway.services.tool_service.ResponseFilterError: Invalid JSON string provided.
+        >>> apply_response_filter({'a': 1}, '')
         {'a': 1}
     """
-    if not jq_filter or jq_filter == "":
+    expression = str(expression or "").strip()
+    if not expression:
         return data
-
-    # Validate that jq_filter looks like a valid jq expression
-    jq_filter_str = str(jq_filter).strip()
-    if not jq_filter_str:
-        return data
-
-    # Check if it looks like an email address (common mistake when jsonpath_filter
-    # field contains corrupted data). Intentionally simple regex to avoid false
-    # positives with valid jq expressions like .foo|.bar
-    if re.match(r"^[^.\[\]|]+@[^.\[\]|]+\.[^.\[\]|]+$", jq_filter_str):
-        logger.warning("Invalid jq filter (email address): %s. Treating as empty filter.", jq_filter_str)
-        return data
-
-    # Track if input was originally a string (for error handling)
-    was_string = isinstance(data, str)
-
-    if was_string:
-        # If the input is a string, parse it as JSON
+    if isinstance(data, str):
         try:
             data = orjson.loads(data)
-        except orjson.JSONDecodeError:
-            return ["Invalid JSON string provided."]
+        except orjson.JSONDecodeError as exc:
+            raise ResponseFilterError("Invalid JSON string provided.") from exc
     elif not isinstance(data, (dict, list)):
-        # If the input is not a string, dict, or list, raise an error
-        return ["Input data must be a JSON string, dictionary, or list."]
-
-    # Refuse restricted built-ins before execution. This covers rows written
-    # before the schema validator existed, and any writer that bypasses it.
+        raise ResponseFilterError("Input data must be a JSON string, dictionary, or list.")
     try:
-        assert_safe_jq_filter(jq_filter_str)
-    except ValueError as exc:
-        logger.warning("Refused jq filter: %s", exc)
-        return [TextContent(type="text", text="jsonpath filter uses a restricted jq builtin")]
-
-    try:
-        result = run_jq_filter(jq_filter_str, data)
-        if result == [None]:
-            return [TextContent(type="text", text="Error applying jsonpath filter")]
-    except JqFilterTimeout:
-        logger.warning("jq filter exceeded its time limit and was terminated")
-        return [TextContent(type="text", text="jsonpath filter exceeded the execution time limit")]
-    except JqFilterBusy:
-        logger.warning("jq filter sandbox had no free worker")
-        return [TextContent(type="text", text="jsonpath filter sandbox is busy, try again")]
-    except JqFilterError as exc:
-        logger.warning("jq filter failed: %s", exc)
-        return [TextContent(type="text", text="Error applying jsonpath filter")]
-
-    return result
+        return evaluate_value(expression, {RESPONSE_FILTER_VARIABLE: data})
+    except CelTimeout as exc:
+        raise ResponseFilterError("jsonpath filter exceeded the execution time limit", detail=str(exc), warning=True) from exc
+    except CelBusy as exc:
+        raise ResponseFilterError("jsonpath filter sandbox is busy, try again", detail=str(exc), warning=True) from exc
+    except CelSyntaxError as exc:
+        raise ResponseFilterError("jsonpath filter is not a valid CEL expression", detail=str(exc)) from exc
+    except CelError as exc:
+        raise ResponseFilterError("Error applying jsonpath filter", detail=str(exc)) from exc
 
 
-def _is_jq_filter_error(filtered_response) -> bool:
-    """Report whether ``extract_using_jq`` returned an error rather than data.
-
-    Refusals, timeouts, and execution failures come back as a list holding a
-    single ``TextContent``. Filter output never contains ``TextContent``
-    instances on either sink: the REST sink filters ``response.json()`` and the
-    MCP passthrough sink filters a ``model_dump(mode="json")`` payload, both of
-    which are plain JSON data by the time the filter runs.
+def _filter_error_content(exc: ResponseFilterError, tool_name: str) -> list:
+    """Log a failed response filter against its tool and return the error content for the caller.
 
     Args:
-        filtered_response: Whatever ``extract_using_jq`` returned.
+        exc: The failure raised by ``apply_response_filter``.
+        tool_name: The tool whose filter failed.
 
     Returns:
-        True when the value is an error result that must not be reported as a
-        successful invocation.
+        A single ``TextContent`` holding the caller-safe message.
     """
-    return isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent)
+    log = logger.warning if exc.warning else logger.error
+    log("Response filter of tool %s failed: %s. %s", sanitize_for_log(tool_name), exc, sanitize_for_log(exc.detail))
+    return [TextContent(type="text", text=str(exc))]
+
+
+def _as_content_blocks(value: Any) -> list:
+    """Turn a filter result into MCP content blocks.
+
+    ``ToolResult.content`` must be a list of content blocks. A result that
+    already is a list is returned as is. Any other value becomes one text block
+    holding the value as JSON.
+
+    Args:
+        value: The value the filter returned.
+
+    Returns:
+        A list of content blocks.
+    """
+    if isinstance(value, list) and value:
+        try:
+            return ToolResult(content=value).content
+        except ValidationError:
+            pass
+    return [TextContent(type="text", text=orjson.dumps(value).decode())]
 
 
 _VALID_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$")
@@ -1284,15 +1360,16 @@ async def _call_upstream_tool(
 ) -> Any:
     """Invoke a tool on an upstream SDK session with x-mcp-header mirroring in place"""
     session._x_mcp_header_maps[tool_name] = x_mcp_header_map(input_schema or {})  # pylint: disable=protected-access
-    return await session.call_tool(
-        tool_name,
-        arguments,
-        meta=meta,
-        progress_callback=progress_callback,
-        allow_input_required=True,
-        input_responses=input_responses,
-        request_state=request_state,
-    )
+    with upstream_request_context():
+        return await session.call_tool(
+            tool_name,
+            arguments,
+            meta=meta,
+            progress_callback=progress_callback,
+            allow_input_required=True,
+            input_responses=input_responses,
+            request_state=request_state,
+        )
 
 
 class ToolService(BaseService):
@@ -1749,6 +1826,7 @@ class ToolService(BaseService):
         #   1. It determines whether to decode auth (used later)
         #   2. It forces the tool object to lazily evaluate (required before copy)
         has_encrypted_auth = tool.auth_type and tool.auth_value
+        has_sigv4_auth = tool.auth_type == "sigv4"
 
         # Copy the dict from the tool
         tool_dict = tool.__dict__.copy()
@@ -1767,8 +1845,13 @@ class ToolService(BaseService):
         tool_dict["annotations"] = tool.annotations or {}
         tool_dict["extension_metadata"] = optional_extension_metadata(getattr(tool, "extension_metadata", None))
 
+        # SigV4 credentials live in sigv4_config, never in auth_value; reads always mask the secrets.
+        tool_dict["sigv4_config"] = mask_sigv4_config(tool_dict.get("sigv4_config")) if has_sigv4_auth else None
+
         # Only decode auth if include_auth=True AND we have encrypted credentials
-        if include_auth and has_encrypted_auth:
+        if has_sigv4_auth:
+            tool_dict["auth"] = {"auth_type": "sigv4"}
+        elif include_auth and has_encrypted_auth:
             decoded_auth_value = decode_auth(tool.auth_value)
             if tool.auth_type == "basic":
                 decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
@@ -2344,6 +2427,45 @@ class ToolService(BaseService):
         policy = db.execute(select(DbGateway.tool_validation_policy).where(DbGateway.id == gateway_id)).scalar_one_or_none()
         return policy if isinstance(policy, str) else None
 
+    async def _require_inherited_gateway_access(
+        self,
+        db: Session,
+        gateway_id: Optional[str],
+        requester_email: Optional[str],
+        token_teams: Optional[List[str]] = None,
+    ) -> None:
+        """Reject a tool that would inherit the SigV4 credential of a gateway the requester cannot use.
+
+        The gateway credential signs requests to any URL the tool names. Visibility of the
+        gateway is not enough: the requester must also own the gateway, hold the team owner
+        role for it, or be a platform admin. The token narrowing of the requester applies as well.
+        An unknown gateway and a hidden gateway return the same error.
+
+        Args:
+            db: Database session.
+            gateway_id: Gateway the tool belongs to. Without one, the tool inherits nothing and the check passes.
+            requester_email: Identity that creates or changes the tool. Without one, the check fails closed.
+            token_teams: Token team scope of the requester. None means admin bypass, [] means public-only.
+
+        Raises:
+            ToolError: If the gateway does not use SigV4.
+            PermissionError: If the requester is unknown, cannot access the gateway, or does not own it.
+        """
+        if not gateway_id:
+            return
+        if not requester_email:
+            raise PermissionError("A requester identity is required to use the SigV4 credential of a gateway")
+        gateway = db.get(DbGateway, gateway_id)
+        if gateway is None or not await check_gateway_access(db, gateway, requester_email, token_teams):
+            raise PermissionError("No access to the gateway whose SigV4 credential the tool would use")
+        if gateway.auth_type != "sigv4":
+            raise ToolError("The gateway does not use SigV4 authentication")
+        # First-Party
+        from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+        if not await PermissionService(db).check_resource_ownership(requester_email, gateway):
+            raise PermissionError("Only the owner of the gateway can use its SigV4 credential")
+
     async def register_tool(
         self,
         db: Session,
@@ -2357,6 +2479,8 @@ class ToolService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: str = None,
+        user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -2372,6 +2496,8 @@ class ToolService(BaseService):
             team_id: Optional team ID to assign tool to.
             owner_email: Optional owner email for tool ownership.
             visibility: Tool visibility (private, team, public).
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            token_teams: Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
 
         Returns:
             Created tool information.
@@ -2412,6 +2538,9 @@ class ToolService(BaseService):
             else:
                 auth_type = tool.auth.auth_type
                 auth_value = tool.auth.auth_value
+            tool_sigv4_config = protect_sigv4_config_sync(tool.sigv4_config) if auth_type == "sigv4" and tool.sigv4_config else None
+            if auth_type == "sigv4" and not tool_sigv4_config:
+                await self._require_inherited_gateway_access(db, tool.gateway_id, owner_email or created_by, token_teams)
 
             if visibility is None:
                 visibility = tool.visibility or "public"
@@ -2497,6 +2626,7 @@ class ToolService(BaseService):
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
                 auth_value=auth_value,
+                sigv4_config=tool_sigv4_config,
                 gateway_id=tool.gateway_id,
                 tags=tool.tags or [],
                 # Metadata fields
@@ -2540,7 +2670,7 @@ class ToolService(BaseService):
 
             # Structured logging: Audit trail for tool creation
             audit_trail.log_action(
-                user_id=created_by or "system",
+                user_id=user_id or created_by or SYSTEM_ACTOR,
                 action="create_tool",
                 resource_type="tool",
                 resource_id=db_tool.id,
@@ -2554,6 +2684,7 @@ class ToolService(BaseService):
                     "display_name": db_tool.display_name,
                     "visibility": visibility,
                     "integration_type": db_tool.integration_type,
+                    **sigv4_audit_values(getattr(db_tool, "sigv4_config", None), registration=True),
                 },
                 context={
                     "created_via": created_via,
@@ -2667,6 +2798,8 @@ class ToolService(BaseService):
         visibility: Optional[str] = "public",
         conflict_strategy: str = "skip",
         user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Register multiple tools in bulk with a single commit.
 
@@ -2693,6 +2826,8 @@ class ToolService(BaseService):
             user_email: Email of the authenticated caller. The "update" strategy modifies
                 an existing tool only when this caller owns it. Without it, no existing
                 tool is modified.
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            token_teams: Token team scope of the requester, used when a tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
 
         Returns:
             Dict with statistics:
@@ -2734,7 +2869,11 @@ class ToolService(BaseService):
         chunk_size = 500
 
         for chunk_start in range(0, len(tools), chunk_size):
-            chunk = tools[chunk_start : chunk_start + chunk_size]
+            chunk, denied_errors = await self._drop_unauthorized_sigv4_inheritance(db, tools[chunk_start : chunk_start + chunk_size], user_email or owner_email or created_by, token_teams)
+            stats["failed"] += len(denied_errors)
+            stats["errors"].extend(denied_errors)
+            if not chunk:
+                continue
             existing_tools_map, unowned_names = await self._load_authorized_tool_conflicts(db, chunk, conflict_strategy, visibility, team_id, owner_email, created_by, user_email)
             chunk_stats = self._process_tool_chunk(
                 db,
@@ -2752,6 +2891,7 @@ class ToolService(BaseService):
                 unowned_names=unowned_names,
                 existing_tools_map=existing_tools_map,
                 may_set_policy=may_set_policy,
+                user_id=user_id,
             )
 
             # Aggregate stats
@@ -2782,6 +2922,40 @@ class ToolService(BaseService):
                 await admin_stats_cache.invalidate_tags()
 
         return stats
+
+    async def _drop_unauthorized_sigv4_inheritance(
+        self,
+        db: Session,
+        chunk: List[ToolCreate],
+        requester_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> tuple:
+        """Split a bulk chunk into tools the requester may register and error messages for the rest.
+
+        A tool with ``auth_type`` sigv4, a ``gateway_id`` and no ``sigv4_config`` inherits the gateway credential.
+
+        Args:
+            db: Database session.
+            chunk: Tools to register.
+            requester_email: Identity of the requester. Without one, every inheriting tool is dropped.
+            token_teams: Token team scope of the requester.
+
+        Returns:
+            Tuple of the tools that may be registered and the error messages of the dropped tools.
+        """
+        allowed: List[ToolCreate] = []
+        errors: List[str] = []
+        for tool in chunk:
+            inherits = tool.auth is not None and tool.auth.auth_type == "sigv4" and not tool.sigv4_config and bool(tool.gateway_id)
+            if not inherits:
+                allowed.append(tool)
+                continue
+            try:
+                await self._require_inherited_gateway_access(db, tool.gateway_id, requester_email, token_teams)
+                allowed.append(tool)
+            except (PermissionError, ToolError) as exc:
+                errors.append(f"Tool {tool.name!r}: {exc}")
+        return allowed, errors
 
     @staticmethod
     def _existing_tools_query(tool_names: List[str], visibility: str, team_id: Optional[str], owner_email: Optional[str], created_by: Optional[str]):
@@ -2865,6 +3039,7 @@ class ToolService(BaseService):
         unowned_names: frozenset = frozenset(),
         existing_tools_map: Optional[dict] = None,
         may_set_policy: bool = False,
+        user_id: Optional[str] = None,
     ) -> dict:
         """Process a chunk of tools for bulk import.
 
@@ -2885,6 +3060,7 @@ class ToolService(BaseService):
             existing_tools_map: Conflicting tools already loaded and authorized by the caller. When
                 given, no second conflict query runs, so only checked rows can be modified.
             may_set_policy: Whether the caller holds the permission to set a tool validation policy.
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             dict: Statistics dictionary with keys "created", "updated", "skipped", "failed", and "errors".
@@ -2901,6 +3077,7 @@ class ToolService(BaseService):
 
             tools_to_add = []
             tools_to_update = []
+            previous_sigv4_configs: dict[int, Any] = {}
             gateway_policies = self._gateway_tool_validation_policies(db, (tool.gateway_id for tool in chunk))
 
             for tool in chunk:
@@ -2927,6 +3104,7 @@ class ToolService(BaseService):
                     stats["created"] += 1
                 elif result["status"] == "update":
                     tools_to_update.append(result["tool"])
+                    previous_sigv4_configs[id(result["tool"])] = result.get("previous_sigv4_config")
                     stats["updated"] += 1
                 elif result["status"] == "skip":
                     stats["skipped"] += 1
@@ -2950,10 +3128,22 @@ class ToolService(BaseService):
                 db.add_all(tools_to_add)
 
             audit_counts: dict[str | None, dict[str, int]] = {}
+            audit_sigv4_fingerprints: dict[str | None, set[str]] = {}
+            audit_sigv4_changes: list[tuple[Any, dict[str, Any]]] = []
             for operation, tools in (("created", tools_to_add), ("updated", tools_to_update)):
                 for db_tool in tools:
                     counts = audit_counts.setdefault(db_tool.team_id, {"created": 0, "updated": 0})
                     counts[operation] += 1
+                    current_sigv4_config = getattr(db_tool, "sigv4_config", None)
+                    fingerprint = sigv4_audit_values(current_sigv4_config, registration=True).get("sigv4_key_fingerprint")
+                    if fingerprint:
+                        audit_sigv4_fingerprints.setdefault(db_tool.team_id, set()).add(fingerprint)
+                    if operation == "created":
+                        change = sigv4_audit_values(current_sigv4_config, registration=True)
+                    else:
+                        change = sigv4_audit_values(current_sigv4_config, previous_sigv4_configs.get(id(db_tool)))
+                    if change:
+                        audit_sigv4_changes.append((db_tool, change))
 
             # Commit the chunk
             db.commit()
@@ -2964,14 +3154,23 @@ class ToolService(BaseService):
                 db.refresh(db_tool)
                 # Notify subscribers (sync call in async context handled by caller)
 
+            audit_sigv4_tools: dict[str | None, list[dict[str, Any]]] = {}
+            for db_tool, change in audit_sigv4_changes:
+                audit_sigv4_tools.setdefault(db_tool.team_id, []).append({"tool_id": getattr(db_tool, "id", None), "name": getattr(db_tool, "name", None), **change})
+
             for audit_team_id, counts in audit_counts.items():
                 audit_trail.log_action(
-                    user_id=created_by or "system",
+                    user_id=user_id or created_by or SYSTEM_ACTOR,
                     action="bulk_create_tools" if counts["created"] else "bulk_update_tools",
                     resource_type="tool",
                     resource_id=None,
                     team_id=audit_team_id,
-                    details={"count": sum(counts.values()), "import_batch_id": import_batch_id},
+                    details={
+                        "count": sum(counts.values()),
+                        "import_batch_id": import_batch_id,
+                        **({"sigv4_key_fingerprints": sorted(audit_sigv4_fingerprints[audit_team_id])} if audit_team_id in audit_sigv4_fingerprints else {}),
+                        **({"sigv4_tools": audit_sigv4_tools[audit_team_id]} if audit_team_id in audit_sigv4_tools else {}),
+                    },
                 )
 
         except Exception as e:
@@ -3021,7 +3220,8 @@ class ToolService(BaseService):
 
         Returns:
             dict: Result dictionary with "status" key ("add", "update", "skip", or "fail")
-                and either "tool" (DbTool object) or "error" (error message).
+                and either "tool" (DbTool object) or "error" (error message). An "update" result also carries
+                "previous_sigv4_config", the stored SigV4 configuration before the overwrite.
         """
         try:
             # Same three US-3 malicious-pattern scans that register_tool() runs.
@@ -3088,6 +3288,7 @@ class ToolService(BaseService):
                 if conflict_strategy == "update":
                     if tool.name in unowned_names:
                         return {"status": "fail", "error": f"Permission denied: cannot update tool {tool.name}"}
+                    previous_sigv4_config = getattr(existing_tool, "sigv4_config", None)
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
                     existing_tool.title = tool.title
@@ -3104,6 +3305,7 @@ class ToolService(BaseService):
                     existing_tool.jsonpath_filter = tool.jsonpath_filter
                     existing_tool.auth_type = auth_type
                     existing_tool.auth_value = auth_value
+                    existing_tool.sigv4_config = protect_sigv4_config_sync(tool.sigv4_config, existing_tool.sigv4_config) if auth_type == "sigv4" else None
                     existing_tool.tags = tool.tags or []
                     existing_tool.modified_by = created_by
                     existing_tool.modified_from_ip = created_from_ip
@@ -3124,7 +3326,7 @@ class ToolService(BaseService):
                         existing_tool.plugin_chain_pre = tool.plugin_chain_pre
                         existing_tool.plugin_chain_post = tool.plugin_chain_post
 
-                    return {"status": "update", "tool": existing_tool}
+                    return {"status": "update", "tool": existing_tool, "previous_sigv4_config": previous_sigv4_config}
 
                 if conflict_strategy == "rename":
                     # Create with renamed tool
@@ -3228,6 +3430,7 @@ class ToolService(BaseService):
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=auth_type,
             auth_value=auth_value,
+            sigv4_config=protect_sigv4_config_sync(tool.sigv4_config) if auth_type == "sigv4" else None,
             gateway_id=tool.gateway_id,
             tags=tool.tags or [],
             created_by=created_by,
@@ -3914,7 +4117,7 @@ class ToolService(BaseService):
 
         return tool_read
 
-    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
+    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, purge_metrics: bool = False, user_id: Optional[str] = None) -> None:
         """
         Delete a tool by its ID.
 
@@ -3923,6 +4126,7 @@ class ToolService(BaseService):
             tool_id (str): The unique identifier of the tool.
             user_email (Optional[str]): Email of user performing delete (for ownership check).
             purge_metrics (bool): If True, delete raw + rollup metrics for this tool.
+            user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Raises:
             ToolNotFoundError: If the tool is not found.
@@ -3986,7 +4190,7 @@ class ToolService(BaseService):
 
             # Structured logging: Audit trail for tool deletion
             audit_trail.log_action(
-                user_id=user_email or "system",
+                user_id=user_id or user_email or SYSTEM_ACTOR,
                 action="delete_tool",
                 resource_type="tool",
                 resource_id=tool_info["id"],
@@ -4061,7 +4265,9 @@ class ToolService(BaseService):
             )
             raise ToolError(f"Failed to delete tool: {unexpected_error_detail(e)}")
 
-    async def set_tool_state(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
+    async def set_tool_state(
+        self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False, user_id: Optional[str] = None
+    ) -> ToolRead:
         """
         Set the activation status of a tool.
 
@@ -4072,6 +4278,7 @@ class ToolService(BaseService):
             reachable (bool): True if the tool is reachable.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
             skip_cache_invalidation: If True, skip cache invalidation (used for batch operations).
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             ToolRead: The updated tool object.
@@ -4166,7 +4373,7 @@ class ToolService(BaseService):
 
                 # Structured logging: Audit trail for tool state change
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=user_id or user_email or SYSTEM_ACTOR,
                     action="set_tool_state",
                     resource_type="tool",
                     resource_id=tool.id,
@@ -4330,10 +4537,23 @@ class ToolService(BaseService):
 
             # Inject identity propagation headers
             if user_context:
-                headers.update(build_identity_headers(user_context, gateway))
-                meta_data = build_identity_meta(user_context, meta_data, gateway)
+                try:
+                    headers.update(build_identity_headers(user_context, gateway))
+                    meta_data = build_identity_meta(user_context, meta_data, gateway)
+                except IdentitySigningError as signing_exc:
+                    raise _identity_signing_failure(gateway_id, signing_exc) from signing_exc
 
             gateway_url = gateway.url
+
+            # SigV4 gateways sign every upstream request; build the signer while the ORM row is loaded.
+            direct_proxy_sigv4_auth = None
+            if getattr(gateway, "auth_type", None) == "sigv4":
+                try:
+                    direct_proxy_sigv4_auth = build_stored_sigv4_auth(getattr(gateway, "sigv4_config", None))
+                except SigV4ConfigError as sigv4_exc:
+                    raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
+                if direct_proxy_sigv4_auth is None:
+                    raise ToolInvocationError("SigV4 gateway has no stored credentials")
 
             # Snapshot auth_query_params while the ORM session is still open so
             # sanitize_exception_message can redact secrets if the downstream call fails.
@@ -4407,6 +4627,7 @@ class ToolService(BaseService):
                     ),
                 )
 
+            session_info = UpstreamSessionInfo()
             with create_span(
                 "mcp.client.call",
                 {
@@ -4420,17 +4641,16 @@ class ToolService(BaseService):
                     "url.path": urlparse(gateway_url).path or "/",
                     "url.full": sanitize_url_for_logging(gateway_url, {}),
                 },
-            ):
+            ) as call_span:
                 traced_headers = inject_trace_context_headers(headers)
                 async with mcp_proxy_client(
                     url=gateway_url,
                     headers=traced_headers,
                     timeout=settings.mcpgateway_direct_proxy_timeout,
-                    httpx_client_factory=get_httpx_client_factory,
+                    httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, direct_proxy_sigv4_auth),
+                    session_info=session_info,
                 ) as client:
-                    with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
-                        pass  # Client auto-initializes on first RPC call
-
+                    session_info.annotate(call_span)
                     with create_span(
                         "mcp.client.request",
                         {
@@ -4438,14 +4658,19 @@ class ToolService(BaseService):
                             "contextforge.gateway_id": str(gateway.id),
                             "contextforge.runtime": "python",
                         },
-                    ):
-                        request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)  # noqa: F841 -- used in call_tool below
-                        # Call tool with meta if provided
-                        if request_meta_data:
-                            logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data, progress_callback=progress_callback)
-                        else:
-                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, progress_callback=progress_callback)
+                    ) as request_span:
+                        session_info.annotate(request_span)
+                        request_meta_data = _upstream_call_meta(meta_data, traced_headers)
+                        with upstream_request_context():
+                            if request_meta_data:
+                                logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
+                                tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data, progress_callback=progress_callback)
+                            else:
+                                tool_result = await client.call_tool(name=remote_name, arguments=arguments, progress_callback=progress_callback)
+                        failed = bool(getattr(tool_result, "is_error", False) or getattr(tool_result, "isError", False))
+                        if failed:
+                            set_span_error(call_span, "Upstream tool returned an error")
+                            set_span_error(request_span, "Upstream tool returned an error")
                     with create_span(
                         "mcp.client.response",
                         {
@@ -4454,8 +4679,10 @@ class ToolService(BaseService):
                             "contextforge.runtime": "python",
                             "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),
                         },
-                    ):
-                        pass
+                    ) as response_span:
+                        session_info.annotate(call_span, response_span)
+                        if failed:
+                            set_span_error(response_span, "Upstream tool returned an error")
 
                     logger.info(
                         "[INVOKE TOOL] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
@@ -4772,6 +4999,28 @@ class ToolService(BaseService):
         )
         return await send({**headers, **fresh})  # single retry; no loop -- preserve original headers, only Authorization changes
 
+    @staticmethod
+    async def _send_with_resign_retry(send: Callable[[dict], Awaitable[Any]], headers: dict, tool_id: Optional[str] = None) -> Any:
+        """Send a SigV4 request, retrying exactly once on a 401.
+
+        The signing auth object runs on every send and replaces the earlier signature
+        headers, so the retry carries a fresh ``x-amz-date`` and a new signature. A 403 is
+        not retried. The caller bounds the total time of both sends.
+
+        Args:
+            send: Async callable taking a headers dict and returning a response with ``.status_code``.
+            headers: The headers to send. They never carry a signature.
+            tool_id: Tool ID for the debug log of a re-sign.
+
+        Returns:
+            The response of the first attempt, or of the single retry after a 401.
+        """
+        resp = await send(headers)
+        if getattr(resp, "status_code", None) != 401:
+            return resp
+        logger.debug("SigV4 request of tool %s returned 401; signing again once", tool_id)
+        return await send(headers)
+
     # pylint: enable=duplicate-code
 
     async def _resolve_vault_auth_headers(
@@ -4804,6 +5053,7 @@ class ToolService(BaseService):
         if not app_user_email or settings.oauth_token_backend != "vault":  # nosec B105 - config discriminator, not a password
             return None
         try:
+            # First-Party
             from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
             with fresh_db_session() as token_db:
@@ -5238,6 +5488,7 @@ class ToolService(BaseService):
                     "auth_value": encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
                     "auth_query_params": gateway.auth_query_params,
                     "oauth_config": gateway.oauth_config,
+                    "sigv4_config": getattr(gateway, "sigv4_config", None),
                     "ca_certificate": gateway.ca_certificate,
                     "ca_certificate_sig": gateway.ca_certificate_sig,
                     "passthrough_headers": gateway.passthrough_headers,
@@ -5425,7 +5676,7 @@ class ToolService(BaseService):
         request_state: Optional[str] = None,
     ) -> ToolResult:
         """
-        Invoke a registered tool and record execution metrics.
+        Invoke a registered tool and record execution metrics, except for a call cancelled before a failure is known.
 
         Args:
             db: Database session.
@@ -5469,6 +5720,8 @@ class ToolService(BaseService):
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin.
+            asyncio.CancelledError: Propagated unchanged. A call cancelled before a failure is
+                known logs at INFO and records no execution metric.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
@@ -5540,6 +5793,11 @@ class ToolService(BaseService):
             runtime_tool_oauth_config = getattr(tool, "oauth_config", None)
             if isinstance(runtime_tool_oauth_config, dict):
                 tool_oauth_config = runtime_tool_oauth_config
+        tool_sigv4_config = None
+        if tool is not None:
+            runtime_tool_sigv4_config = getattr(tool, "sigv4_config", None)
+            if isinstance(runtime_tool_sigv4_config, dict):
+                tool_sigv4_config = runtime_tool_sigv4_config
         tool_gateway_id = tool_payload.get("gateway_id")
         tool_grpc_service_id = tool_payload.get("grpc_service_id")
         tool_query_mapping = tool_payload.get("query_mapping") if isinstance(tool_payload.get("query_mapping"), dict) else None
@@ -5563,6 +5821,7 @@ class ToolService(BaseService):
         gateway_auth_value = gateway_payload.get("auth_value") if has_gateway and isinstance(gateway_payload.get("auth_value"), str) else None
         gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway and isinstance(gateway_payload.get("auth_query_params"), dict) else None
         gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway and isinstance(gateway_payload.get("oauth_config"), dict) else None
+        gateway_sigv4_config = gateway_payload.get("sigv4_config") if has_gateway and isinstance(gateway_payload.get("sigv4_config"), dict) else None
         if has_gateway and gateway is not None:
             runtime_gateway_auth_value = getattr(gateway, "auth_value", None)
             if isinstance(runtime_gateway_auth_value, dict):
@@ -5575,6 +5834,9 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+            runtime_gateway_sigv4_config = getattr(gateway, "sigv4_config", None)
+            if isinstance(runtime_gateway_sigv4_config, dict):
+                gateway_sigv4_config = runtime_gateway_sigv4_config
         # MCP invoke path: cert params come from the serialized gateway_payload dict
         # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
@@ -5588,8 +5850,8 @@ class ToolService(BaseService):
         # Cache payload intentionally excludes sensitive auth material. For cache hits
         # (tool is None), hydrate auth-related fields from DB only when needed.
         if tool is None:
-            requires_tool_auth_hydration = tool_auth_type in {"basic", "bearer", "authheaders", "oauth"}
-            requires_gateway_auth_hydration = has_gateway and gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param"}
+            requires_tool_auth_hydration = tool_auth_type in {"basic", "bearer", "authheaders", "oauth", "sigv4"}
+            requires_gateway_auth_hydration = has_gateway and gateway_auth_type in {"basic", "bearer", "authheaders", "oauth", "query_param", "sigv4"}
             if requires_tool_auth_hydration or requires_gateway_auth_hydration:
                 tool_id_for_hydration = tool_payload.get("id")
                 if tool_id_for_hydration:
@@ -5601,6 +5863,9 @@ class ToolService(BaseService):
                         hydrated_tool_oauth_config = getattr(tool_auth_row, "oauth_config", None)
                         if isinstance(hydrated_tool_oauth_config, dict):
                             tool_oauth_config = hydrated_tool_oauth_config
+                        hydrated_tool_sigv4_config = getattr(tool_auth_row, "sigv4_config", None)
+                        if isinstance(hydrated_tool_sigv4_config, dict):
+                            tool_sigv4_config = hydrated_tool_sigv4_config
                         if has_gateway and tool_auth_row.gateway:
                             hydrated_gateway_auth_value = getattr(tool_auth_row.gateway, "auth_value", None)
                             if isinstance(hydrated_gateway_auth_value, dict):
@@ -5613,6 +5878,9 @@ class ToolService(BaseService):
                             hydrated_gateway_oauth_config = getattr(tool_auth_row.gateway, "oauth_config", None)
                             if isinstance(hydrated_gateway_oauth_config, dict):
                                 gateway_oauth_config = hydrated_gateway_oauth_config
+                            hydrated_gateway_sigv4_config = getattr(tool_auth_row.gateway, "sigv4_config", None)
+                            if isinstance(hydrated_gateway_sigv4_config, dict):
+                                gateway_sigv4_config = hydrated_gateway_sigv4_config
 
         # Decrypt and apply query param auth to URL if applicable
         gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -5630,6 +5898,29 @@ class ToolService(BaseService):
             # Apply query params to gateway URL
             if gateway_auth_query_params_decrypted and gateway_url:
                 gateway_url = apply_query_param_auth(gateway_url, gateway_auth_query_params_decrypted)
+
+        # SigV4 gateways sign each upstream request; the signer lives for this invocation only.
+        gateway_sigv4_auth = None
+        if has_gateway and gateway_auth_type == "sigv4" and tool_integration_type != "REST":
+            try:
+                gateway_sigv4_auth = build_stored_sigv4_auth(gateway_sigv4_config)
+            except SigV4ConfigError as sigv4_exc:
+                raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
+            if gateway_sigv4_auth is None:
+                raise ToolInvocationError("SigV4 gateway has no stored credentials")
+
+        # Only a REST tool with auth_type "sigv4" signs. It uses its own sigv4_config first, then the gateway sigv4_config.
+        rest_sigv4_auth = None
+        if tool_integration_type == "REST" and tool_auth_type == "sigv4":
+            rest_sigv4_config = tool_sigv4_config or (gateway_sigv4_config if has_gateway and gateway_auth_type == "sigv4" else None)
+            if not rest_sigv4_config:
+                logger.warning("SigV4 REST tool %s has no stored credentials", SecurityValidator.sanitize_log_message(tool_id))
+                raise ToolInvocationError("SigV4 tool has no stored credentials")
+            try:
+                rest_sigv4_auth = build_stored_sigv4_httpx_auth(rest_sigv4_config)
+            except SigV4ConfigError as sigv4_exc:
+                logger.warning("SigV4 REST tool %s credentials could not be loaded: %s", SecurityValidator.sanitize_log_message(tool_id), type(sigv4_exc).__name__)
+                raise ToolInvocationError("Stored SigV4 credentials could not be loaded") from sigv4_exc
 
         # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
         # This prevents lazy loading during HTTP calls
@@ -5659,10 +5950,13 @@ class ToolService(BaseService):
         a2a_agent_name: Optional[str] = None
         a2a_agent_endpoint_url: Optional[str] = None
         a2a_agent_type: Optional[str] = None
+        a2a_agent_protocol_binding: Optional[str] = None
         a2a_agent_protocol_version: Optional[str] = None
         a2a_agent_auth_type: Optional[str] = None
         a2a_agent_auth_value: Optional[str] = None
         a2a_agent_auth_query_params: Optional[Dict[str, str]] = None
+        a2a_agent_id_value: Optional[str] = None
+        a2a_agent_oauth_config: Optional[Dict[str, Any]] = None
         a2a_agent_passthrough_headers: Optional[List[str]] = None
 
         if tool_integration_type == "A2A" and "a2a_agent_id" in tool_annotations:
@@ -5684,10 +5978,13 @@ class ToolService(BaseService):
             a2a_agent_name = a2a_agent.name
             a2a_agent_endpoint_url = a2a_agent.endpoint_url
             a2a_agent_type = a2a_agent.agent_type
+            a2a_agent_protocol_binding = getattr(a2a_agent, "protocol_binding", None)
             a2a_agent_protocol_version = a2a_agent.protocol_version
             a2a_agent_auth_type = a2a_agent.auth_type
             a2a_agent_auth_value = a2a_agent.auth_value
             a2a_agent_auth_query_params = a2a_agent.auth_query_params
+            a2a_agent_id_value = a2a_agent_id
+            a2a_agent_oauth_config = getattr(a2a_agent, "oauth_config", None)
             a2a_agent_passthrough_headers = a2a_agent.passthrough_headers
 
         # ═══════════════════════════════════════════════════════════════════════════
@@ -5751,6 +6048,10 @@ class ToolService(BaseService):
 
         start_time = time.monotonic()
         success = False
+        cancelled = False
+        # Every upstream path that observes a failure must set this before its next await,
+        # or a later cancel records that failure as a cancellation.
+        upstream_failed = False
         error_message = None
         tool_result: Optional[ToolResult] = None
         tool_team_scope = format_trace_team_scope(token_teams)
@@ -5836,7 +6137,7 @@ class ToolService(BaseService):
                         except Exception as e:
                             logger.error("Failed to obtain OAuth access token for tool %s: %s", tool_name_computed, e)
                             raise ToolInvocationError(f"OAuth authentication failed: {unexpected_error_detail(e)}")
-                    else:
+                    elif rest_sigv4_auth is None:
                         credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
                         # Strip invisible Unicode format characters left over in a credential
                         # stored before this validation existed, so tool invocation self-heals
@@ -5854,7 +6155,7 @@ class ToolService(BaseService):
                             request_headers,
                             headers,
                             passthrough_allowed,
-                            gateway_auth_type=tool_auth_type,
+                            gateway_auth_type="sigv4" if rest_sigv4_auth is not None else tool_auth_type,
                             gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
@@ -5872,7 +6173,10 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers for REST tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
+                        try:
+                            headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str or tool_id))
+                        except IdentitySigningError as signing_exc:
+                            raise _identity_signing_failure(gateway_id_str or tool_id, signing_exc) from signing_exc
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -5996,7 +6300,9 @@ class ToolService(BaseService):
                         headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
                         headers["Host"] = original_authority
                         rest_request_extensions["sni_hostname"] = original_hostname
-                        pinned_rest_http_client = _build_pinned_rest_http_client()
+                    if (resolved_ip and original_hostname and original_authority) or rest_sigv4_auth is not None:
+                        # Pinned and SigV4 calls never use the shared client; the signer belongs to this invocation.
+                        pinned_rest_http_client = _build_pinned_rest_http_client(auth=rest_sigv4_auth) if rest_sigv4_auth is not None else _build_pinned_rest_http_client()
                         rest_http_client = pinned_rest_http_client
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
@@ -6079,22 +6385,26 @@ class ToolService(BaseService):
                             # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
 
                             try:
-                                response = await self._send_with_token_exchange_retry(
-                                    _send,
-                                    headers,
-                                    gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
-                                    gateway_id_str,
-                                    gateway_name,
-                                    app_user_email,
-                                    request_headers or {},
-                                    ca_certificate=gateway_ca_cert,
-                                    client_cert=gateway_client_cert,
-                                    client_key=gateway_client_key,
-                                )
+                                if rest_sigv4_auth is not None:
+                                    response = await asyncio.wait_for(self._send_with_resign_retry(_send, headers, tool_id), timeout=effective_timeout)
+                                else:
+                                    response = await self._send_with_token_exchange_retry(
+                                        _send,
+                                        headers,
+                                        gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                                        gateway_id_str,
+                                        gateway_name,
+                                        app_user_email,
+                                        request_headers or {},
+                                        ca_certificate=gateway_ca_cert,
+                                        client_cert=gateway_client_cert,
+                                        client_key=gateway_client_key,
+                                    )
                             finally:
                                 if pinned_rest_http_client is not None:
                                     await pinned_rest_http_client.aclose()
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6185,15 +6495,14 @@ class ToolService(BaseService):
                                 result = {"response_text": response.text[: settings.rest_response_text_max_length]} if response.text else {"error": "Empty response body"}
                             if parse_error is not None and tool_output_schema:
                                 # A non-JSON body cannot satisfy outputSchema, so report the parse error.
-                                # Skip jq here: TextContent is not JSON-serializable.
+                                # Skip the filter here: TextContent is not JSON-serializable.
                                 tool_result = ToolResult(content=parse_error, is_error=True)
                             else:
                                 logger.debug("REST API tool response: %s", result)
-                                filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
-                                # Check if extract_using_jq returned an error (list of TextContent objects)
-                                if _is_jq_filter_error(filtered_response):
-                                    # Error case - use the TextContent directly
-                                    tool_result = ToolResult(content=filtered_response, is_error=True)
+                                try:
+                                    filtered_response = await asyncio.to_thread(apply_response_filter, result, tool_jsonpath_filter)
+                                except ResponseFilterError as exc:
+                                    tool_result = ToolResult(content=_filter_error_content(exc, name), is_error=True)
                                     success = False
                                 else:
                                     tool_result = self._coerce_to_tool_result(filtered_response)
@@ -6340,8 +6649,11 @@ class ToolService(BaseService):
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation)
+                        try:
+                            headers.update(build_identity_headers(global_context.user_context, identity_propagation=gateway_identity_propagation, audience=gateway_id_str))
+                            meta_data = build_identity_meta(global_context.user_context, meta_data, identity_propagation=gateway_identity_propagation, audience=gateway_id_str)
+                        except IdentitySigningError as signing_exc:
+                            raise _identity_signing_failure(gateway_id_str, signing_exc) from signing_exc
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None
@@ -6462,6 +6774,106 @@ class ToolService(BaseService):
                             ),
                         )
 
+                    async def invoke_mcp_transport(server_url: str, headers: Dict[str, str], transport_type: TransportType, correlation_id: Optional[str]) -> Any:
+                        """Invoke one MCP call with connection reuse and isolated trace metadata.
+
+                        Args:
+                            server_url: Upstream transport endpoint.
+                            headers: Prepared authentication and passthrough headers.
+                            transport_type: Upstream MCP transport.
+                            correlation_id: Current request correlation ID.
+
+                        Returns:
+                            The upstream tool result.
+                        """
+                        attributes = {
+                            "mcp.tool.name": tool_name_original,
+                            "contextforge.tool.id": tool_id,
+                            "contextforge.gateway_id": tool_gateway_id,
+                            "contextforge.runtime": "python",
+                            "contextforge.transport": transport_type.value,
+                            "network.protocol.name": "mcp",
+                            "server.address": urlparse(server_url).hostname,
+                            "server.port": urlparse(server_url).port,
+                            "url.path": urlparse(server_url).path or "/",
+                            "url.full": sanitize_url_for_logging(server_url, gateway_auth_query_params_decrypted),
+                        }
+                        downstream_session_id = _downstream_session_id_from_request()
+                        registry = None
+                        if downstream_session_id and gateway_id_str:
+                            try:
+                                registry = get_upstream_session_registry()
+                            except RegistryNotInitializedError:
+                                pass
+
+                        session_info = UpstreamSessionInfo()
+                        with create_span("mcp.client.call", attributes) as call_span:
+                            try:
+                                if registry is not None and downstream_session_id and gateway_id_str:
+                                    connection = registry.acquire(
+                                        downstream_session_id=downstream_session_id,
+                                        gateway_id=gateway_id_str,
+                                        url=server_url,
+                                        headers=headers,
+                                        transport_type=transport_type,
+                                        httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
+                                    )
+                                    request_headers = None
+                                else:
+                                    request_headers = inject_trace_context_headers(headers)
+                                    if correlation_id:
+                                        request_headers["X-Correlation-ID"] = correlation_id
+                                    connection = mcp_proxy_client(
+                                        url=server_url,
+                                        headers=request_headers,
+                                        timeout=effective_timeout,
+                                        httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, gateway_sigv4_auth),
+                                        transport="sse" if transport_type is TransportType.SSE else "streamablehttp",
+                                        session_info=session_info,
+                                    )
+                                async with connection as upstream:
+                                    if registry is not None:
+                                        session_info.session_id = getattr(upstream, "upstream_session_id", None)
+                                    session_info.annotate(span, call_span)
+                                    with create_span("mcp.client.request", attributes) as request_span:
+                                        try:
+                                            carrier = inject_trace_context_headers({}) if registry is not None else request_headers
+                                            request_meta = _upstream_call_meta(meta_data, carrier or {})
+                                            with anyio.fail_after(effective_timeout):
+                                                result = await _call_upstream_tool(
+                                                    upstream.session,
+                                                    tool_name_original,
+                                                    arguments,
+                                                    input_schema=tool_payload.get("input_schema"),
+                                                    meta=request_meta,
+                                                    progress_callback=progress_callback,
+                                                    input_responses=input_responses,
+                                                    request_state=request_state,
+                                                )
+                                            if isinstance(result, types.InputRequiredResult):
+                                                if allow_input_required:
+                                                    raise ToolInputRequired(result)
+                                                raise ToolInvocationError("Elicitation not supported")
+                                            failed = bool(getattr(result, "is_error", False) or getattr(result, "isError", False))
+                                            set_span_attribute(request_span, "upstream.response.success", not failed)
+                                            if failed:
+                                                for operation_span in (span, call_span, request_span):
+                                                    set_span_error(operation_span, "Upstream tool returned an error")
+                                        finally:
+                                            if registry is not None:
+                                                session_info.session_id = getattr(upstream, "upstream_session_id", None)
+                                            session_info.annotate(span, call_span, request_span)
+                                    with create_span("mcp.client.response", {**attributes, "upstream.response.success": not failed}) as response_span:
+                                        session_info.annotate(response_span)
+                                        if failed:
+                                            set_span_error(response_span, "Upstream tool returned an error")
+                                    return result
+                            except Exception:
+                                set_span_error(span, "Upstream MCP call failed")
+                                raise
+                            finally:
+                                session_info.annotate(span, call_span)
+
                     async def connect_to_sse_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with SSE transport.
 
@@ -6479,15 +6891,9 @@ class ToolService(BaseService):
                             SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
                         """
+                        nonlocal upstream_failed
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
-                        tracing_active = otel_context_active()
-
-                        # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
-                        # MCP SDK pins headers at transport creation, so adding per-request headers
-                        # would cause the first request's correlation ID to be reused for all
-                        # subsequent requests on the same pooled session. Correlation IDs are
-                        # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
                         # Sanitize server_url to redact sensitive query params from logs
@@ -6502,118 +6908,7 @@ class ToolService(BaseService):
                         )
 
                         try:
-                            # #4205: Reuse upstream MCP sessions 1:1 per downstream session.
-                            # Prefer the registry when we have a downstream Mcp-Session-Id and
-                            # we're not inside a distributed trace (reused transports carry
-                            # pinned headers, so per-request traceparent can't propagate).
-                            tool_call_result = None
-                            downstream_session_id = _downstream_session_id_from_request()
-                            use_registry = bool(downstream_session_id) and not tracing_active and bool(gateway_id_str)
-
-                            if use_registry:
-                                # Registry path: 1:1 binding means upstream state is private to
-                                # this downstream session. Connection reuse still amortizes the
-                                # initialize cost across multiple tool calls in the same session.
-                                try:
-                                    registry = get_upstream_session_registry()
-                                except RegistryNotInitializedError:
-                                    # Registry not initialized (tests, early startup) — fall through.
-                                    use_registry = False
-
-                            if use_registry:
-                                async with registry.acquire(
-                                    downstream_session_id=downstream_session_id,
-                                    gateway_id=gateway_id_str,
-                                    url=server_url,
-                                    headers=headers,
-                                    transport_type=TransportType.SSE,
-                                    httpx_client_factory=get_httpx_client_factory,
-                                ) as upstream:
-                                    with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await _call_upstream_tool(
-                                            upstream.session,
-                                            tool_name_original,
-                                            arguments,
-                                            input_schema=tool_payload.get("input_schema"),
-                                            meta=meta_data,
-                                            progress_callback=progress_callback,
-                                            input_responses=input_responses,
-                                            request_state=request_state,
-                                        )
-                                        if isinstance(tool_call_result, types.InputRequiredResult):
-                                            if allow_input_required:
-                                                raise ToolInputRequired(tool_call_result)
-                                            raise ToolInvocationError("Elicitation not supported")
-                            else:
-                                # Fallback: per-call session. Taken when no downstream session id
-                                # is available (admin UI test-invoke, internal /rpc callers), or
-                                # when a distributed trace needs per-request trace headers.
-                                with create_span(
-                                    "mcp.client.call",
-                                    {
-                                        "mcp.tool.name": tool_name_original,
-                                        "contextforge.tool.id": tool_id,
-                                        "contextforge.gateway_id": tool_gateway_id,
-                                        "contextforge.runtime": "python",
-                                        "contextforge.transport": "sse",
-                                        "network.protocol.name": "mcp",
-                                        "server.address": urlparse(server_url).hostname,
-                                        "server.port": urlparse(server_url).port,
-                                        "url.path": urlparse(server_url).path or "/",
-                                        "url.full": server_url_sanitized,
-                                    },
-                                ):
-                                    # Non-pooled path: safe to add per-request headers.
-                                    # Inject within the active client span so an upstream service
-                                    # can attach beneath this span when it extracts traceparent.
-                                    request_headers = inject_trace_context_headers(headers)
-                                    request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
-                                    if correlation_id and request_headers:
-                                        request_headers["X-Correlation-ID"] = correlation_id
-                                    async with mcp_proxy_client(
-                                        url=server_url,
-                                        headers=request_headers,
-                                        timeout=effective_timeout,
-                                        httpx_client_factory=get_httpx_client_factory,
-                                        transport="sse",
-                                    ) as client:
-                                        with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}):
-                                            pass  # Client auto-initializes on first RPC call
-                                        with create_span(
-                                            "mcp.client.request",
-                                            {
-                                                "mcp.tool.name": tool_name_original,
-                                                "contextforge.tool.id": tool_id,
-                                                "contextforge.gateway_id": tool_gateway_id,
-                                                "contextforge.runtime": "python",
-                                            },
-                                        ):
-                                            with anyio.fail_after(effective_timeout):
-                                                tool_call_result = await _call_upstream_tool(
-                                                    client.session,
-                                                    tool_name_original,
-                                                    arguments,
-                                                    input_schema=tool_payload.get("input_schema"),
-                                                    meta=request_meta_data,
-                                                    progress_callback=progress_callback,
-                                                    input_responses=input_responses,
-                                                    request_state=request_state,
-                                                )
-                                                if isinstance(tool_call_result, types.InputRequiredResult):
-                                                    if allow_input_required:
-                                                        raise ToolInputRequired(tool_call_result)
-                                                    raise ToolInvocationError("Elicitation not supported")
-                                        with create_span(
-                                            "mcp.client.response",
-                                            {
-                                                "mcp.tool.name": tool_name_original,
-                                                "contextforge.tool.id": tool_id,
-                                                "contextforge.gateway_id": tool_gateway_id,
-                                                "contextforge.runtime": "python",
-                                                "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
-                                            },
-                                        ):
-                                            pass
+                            tool_call_result = await invoke_mcp_transport(server_url, headers, TransportType.SSE, correlation_id)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -6628,6 +6923,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -6721,15 +7017,9 @@ class ToolService(BaseService):
                             SystemExit, GeneratorExit, KeyboardInterrupt: Propagated without wrapping.
 
                         """
+                        nonlocal upstream_failed
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
-                        tracing_active = otel_context_active()
-
-                        # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
-                        # MCP SDK pins headers at transport creation, so adding per-request headers
-                        # would cause the first request's correlation ID to be reused for all
-                        # subsequent requests on the same pooled session. Correlation IDs are
-                        # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
                         # Sanitize server_url to redact sensitive query params from logs
@@ -6744,113 +7034,7 @@ class ToolService(BaseService):
                         )
 
                         try:
-                            # #4205: Reuse upstream MCP sessions 1:1 per downstream session.
-                            # See the SSE branch above for the full rationale.
-                            tool_call_result = None
-                            downstream_session_id = _downstream_session_id_from_request()
-                            use_registry = bool(downstream_session_id) and not tracing_active and bool(gateway_id_str)
-
-                            if use_registry:
-                                try:
-                                    registry = get_upstream_session_registry()
-                                except RegistryNotInitializedError:
-                                    use_registry = False
-
-                            if use_registry:
-                                registry_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
-                                async with registry.acquire(
-                                    downstream_session_id=downstream_session_id,
-                                    gateway_id=gateway_id_str,
-                                    url=server_url,
-                                    headers=headers,
-                                    transport_type=registry_transport_type,
-                                    httpx_client_factory=get_httpx_client_factory,
-                                ) as upstream:
-                                    with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await _call_upstream_tool(
-                                            upstream.session,
-                                            tool_name_original,
-                                            arguments,
-                                            input_schema=tool_payload.get("input_schema"),
-                                            meta=meta_data,
-                                            progress_callback=progress_callback,
-                                            input_responses=input_responses,
-                                            request_state=request_state,
-                                        )
-                                        if isinstance(tool_call_result, types.InputRequiredResult):
-                                            if allow_input_required:
-                                                raise ToolInputRequired(tool_call_result)
-                                            raise ToolInvocationError("Elicitation not supported")
-                            else:
-                                # Fallback: per-call session. Taken when no downstream session id
-                                # is available (admin UI test-invoke, internal /rpc callers), when
-                                # a distributed trace needs per-request trace headers, or when the
-                                # registry singleton isn't initialised (tests, early startup).
-                                with create_span(
-                                    "mcp.client.call",
-                                    {
-                                        "mcp.tool.name": tool_name_original,
-                                        "contextforge.tool.id": tool_id,
-                                        "contextforge.gateway_id": tool_gateway_id,
-                                        "contextforge.runtime": "python",
-                                        "contextforge.transport": "streamablehttp",
-                                        "network.protocol.name": "mcp",
-                                        "server.address": urlparse(server_url).hostname,
-                                        "server.port": urlparse(server_url).port,
-                                        "url.path": urlparse(server_url).path or "/",
-                                        "url.full": server_url_sanitized,
-                                    },
-                                ):
-                                    # Non-pooled path: safe to add per-request headers.
-                                    # Inject within the active client span so an upstream service
-                                    # can attach beneath this span when it extracts traceparent.
-                                    request_headers = inject_trace_context_headers(headers)
-                                    request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
-                                    if correlation_id and request_headers:
-                                        request_headers["X-Correlation-ID"] = correlation_id
-                                    async with mcp_proxy_client(
-                                        url=server_url,
-                                        headers=request_headers,
-                                        timeout=effective_timeout,
-                                        httpx_client_factory=get_httpx_client_factory,
-                                    ) as client:
-                                        with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
-                                            pass  # Client auto-initializes on first RPC call
-                                        with create_span(
-                                            "mcp.client.request",
-                                            {
-                                                "mcp.tool.name": tool_name_original,
-                                                "contextforge.tool.id": tool_id,
-                                                "contextforge.gateway_id": tool_gateway_id,
-                                                "contextforge.runtime": "python",
-                                            },
-                                        ):
-                                            with anyio.fail_after(effective_timeout):
-                                                tool_call_result = await _call_upstream_tool(
-                                                    client.session,
-                                                    tool_name_original,
-                                                    arguments,
-                                                    input_schema=tool_payload.get("input_schema"),
-                                                    meta=request_meta_data,
-                                                    progress_callback=progress_callback,
-                                                    input_responses=input_responses,
-                                                    request_state=request_state,
-                                                )
-                                                if isinstance(tool_call_result, types.InputRequiredResult):
-                                                    if allow_input_required:
-                                                        raise ToolInputRequired(tool_call_result)
-                                                    raise ToolInvocationError("Elicitation not supported")
-                                        with create_span(
-                                            "mcp.client.response",
-                                            {
-                                                "mcp.tool.name": tool_name_original,
-                                                "contextforge.tool.id": tool_id,
-                                                "contextforge.gateway_id": tool_gateway_id,
-                                                "contextforge.runtime": "python",
-                                                "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
-                                            },
-                                        ):
-                                            pass
+                            tool_call_result = await invoke_mcp_transport(server_url, headers, TransportType.STREAMABLE_HTTP, correlation_id)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -6865,6 +7049,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -7017,17 +7202,22 @@ class ToolService(BaseService):
                             structured = dump.get("structuredContent")
                             if structured is None:
                                 structured = dump.get("structured_content")
-                            filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
-
                             is_err = getattr(tool_call_result, "is_error", None)
                             if is_err is None:
                                 is_err = getattr(tool_call_result, "isError", False)
-                            # A refused or timed-out filter must be reported as an error here
-                            # too. Without this the refusal string was recorded as a successful
-                            # invocation carrying it as if it were real tool output.
-                            if _is_jq_filter_error(filtered_response):
+                            upstream_failed = bool(is_err)
+                            try:
+                                filtered_response = await asyncio.to_thread(apply_response_filter, content, tool_jsonpath_filter)
+                            except ResponseFilterError as exc:
+                                # A failed filter is a failed invocation, never tool output.
+                                filtered_response = _filter_error_content(exc, name)
                                 is_err = True
                                 structured = None
+                            else:
+                                if tool_jsonpath_filter:
+                                    # The filter replaces the whole response, structured content included.
+                                    filtered_response = _as_content_blocks(filtered_response)
+                                    structured = None
                             tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                             success = not is_err
                             logger.debug("Final tool_result: %s", tool_result)
@@ -7088,6 +7278,8 @@ class ToolService(BaseService):
                     # errors in permissive mode, or the header is mistakenly in passthrough_allowed.
                     headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "x-vault-tokens"}
 
+                    a2a_oauth_headers = await resolve_a2a_agent_oauth_headers(a2a_agent_id_value, a2a_agent_name, a2a_agent_endpoint_url, a2a_agent_auth_type, a2a_agent_oauth_config)
+
                     prepared = prepare_a2a_invocation(
                         agent_type=a2a_agent_type,
                         endpoint_url=a2a_agent_endpoint_url,
@@ -7097,10 +7289,12 @@ class ToolService(BaseService):
                         auth_type=a2a_agent_auth_type,
                         auth_value=a2a_agent_auth_value,
                         auth_query_params=a2a_agent_auth_query_params,
+                        oauth_headers=a2a_oauth_headers,
                         base_headers=headers,
                         plugin_input_headers=plugin_headers,
                         plugin_output_headers=plugin_returned_headers,
                         correlation_id=get_correlation_id(),
+                        protocol_binding=a2a_agent_protocol_binding,
                     )
                     for existing_key in [hk for hk in prepared.headers if hk.lower() == "x-vault-tokens"]:
                         del prepared.headers[existing_key]
@@ -7139,6 +7333,7 @@ class ToolService(BaseService):
                             response_data = http_response.json() if status_code == 200 else None
                             response_text = http_response.text
                         except (asyncio.TimeoutError, httpx.TimeoutException):
+                            upstream_failed = True
                             a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -7199,6 +7394,7 @@ class ToolService(BaseService):
                         # PR #3202 review B7.
                         raise
                     except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
+                        upstream_failed = True
                         logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
                         if plugin_manager:
                             await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
@@ -7340,7 +7536,10 @@ class ToolService(BaseService):
                     )
                 raise
             except asyncio.CancelledError:
-                # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
+                # Never wrap a cancellation as a ToolInvocationError.
+                # A failure known before the cancel stays a failure; otherwise the call is a cancellation.
+                cancelled = not (upstream_failed or (tool_result is not None and tool_result.is_error))
+                success = False
                 raise
             except ToolInputRequired:
                 # 2026 MRTR control flow, not a failure - let the transport handle it.
@@ -7428,10 +7627,11 @@ class ToolService(BaseService):
                     try:
                         observability_service.end_span(
                             span_id=db_span_id,
-                            status="ok" if success else "error",
+                            status="cancelled" if cancelled else ("ok" if success else "error"),
                             status_message=error_message if error_message else None,
                             attributes={
                                 "success": success,
+                                "cancelled": cancelled,
                                 "duration_ms": duration_ms,
                             },
                         )
@@ -7443,6 +7643,9 @@ class ToolService(BaseService):
                 # Add final span attributes for OpenTelemetry
                 if span:
                     set_span_attribute(span, "success", success)
+                    set_span_attribute(span, "cancelled", cancelled)
+                    if cancelled:
+                        set_span_ok(span)
                     set_span_attribute(span, "duration.ms", duration_ms)
                     if success and tool_result and is_output_capture_enabled("tool.invoke"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(tool_result))
@@ -7450,8 +7653,9 @@ class ToolService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 # PHASE 4: Record metrics via buffered service (batches writes for performance)
                 # ═══════════════════════════════════════════════════════════════════════════
-                # Only record metrics if tool_id is valid (skip for direct_proxy mode)
-                if tool_id:
+                # Only record metrics if tool_id is valid (skip for direct_proxy mode).
+                # ToolMetric and ServerMetric have no cancelled outcome, so a cancellation records no metric.
+                if tool_id and not cancelled:
                     try:
                         metrics_buffer.record_tool_metric(
                             tool_id=tool_id,
@@ -7465,7 +7669,7 @@ class ToolService(BaseService):
                 # Record server metrics ONLY when invoked through a specific virtual server
                 # When server_id is provided, it means the tool was called via a virtual server endpoint
                 # Direct tool calls via /rpc should NOT populate server metrics
-                if tool_id and server_id:
+                if tool_id and server_id and not cancelled:
                     try:
                         # Record server metric only for the specific virtual server being accessed
                         metrics_buffer.record_server_metric(
@@ -7478,7 +7682,17 @@ class ToolService(BaseService):
                         logger.warning("Failed to record server metric: %s", metric_error)
 
                 # Log structured message with performance tracking (using local variables)
-                if success:
+                if cancelled:
+                    structured_logger.info(
+                        f"Tool '{name}' invocation cancelled",  # noqa: G004
+                        user_id=app_user_email,
+                        resource_type="tool",
+                        resource_id=tool_id,
+                        resource_action="invoke",
+                        duration_ms=duration_ms,
+                        custom_fields={"tool_name": name, "integration_type": tool_integration_type, "cancelled": True},
+                    )
+                elif success:
                     structured_logger.info(
                         f"Tool '{name}' invoked successfully",  # noqa: G004
                         user_id=app_user_email,
@@ -7820,6 +8034,8 @@ class ToolService(BaseService):
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -7833,6 +8049,8 @@ class ToolService(BaseService):
             modified_via (Optional[str]): Modification method (ui, api).
             modified_user_agent (Optional[str]): User agent of modification request.
             user_email (Optional[str]): Email of user performing update (for ownership check).
+            user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            token_teams (Optional[List[str]]): Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
 
         Returns:
             The updated ToolRead object.
@@ -7959,6 +8177,7 @@ class ToolService(BaseService):
                 tool.custom_name = tool_update.custom_name
             if tool_update.displayName is not None:
                 tool.display_name = tool_update.displayName
+            url_is_changing = tool_update.url is not None and str(tool_update.url) != tool.url
             if tool_update.url is not None:
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:
@@ -7994,11 +8213,27 @@ class ToolService(BaseService):
             if tool_update.visibility is not None:
                 tool.visibility = tool_update.visibility
 
+            original_sigv4_config = tool.sigv4_config
             if tool_update.auth is not None:
                 if tool_update.auth.auth_type is not None:
+                    if tool.auth_type == "sigv4" and tool_update.auth.auth_type != "sigv4":
+                        tool.sigv4_config = None
                     tool.auth_type = tool_update.auth.auth_type
                 if tool_update.auth.auth_value is not None:
                     tool.auth_value = tool_update.auth.auth_value
+                if tool.auth_type == "sigv4":
+                    tool.auth_value = None
+            update_sigv4_config = getattr(tool_update, "sigv4_config", None)
+            if isinstance(update_sigv4_config, dict):
+                if tool.auth_type != "sigv4":
+                    raise PublicValidationError("sigv4_config requires auth_type 'sigv4'")
+                tool.sigv4_config = protect_sigv4_config_sync(dict(update_sigv4_config), tool.sigv4_config)
+            elif tool.auth_type == "sigv4" and not tool.sigv4_config and not tool.gateway_id:
+                raise PublicValidationError("auth_type 'sigv4' requires sigv4_config when the tool has no gateway")
+            if tool.auth_type == "sigv4" and has_query_signature(tool.url):
+                raise PublicValidationError("A presigned URL cannot be combined with auth_type 'sigv4'")
+            if tool.auth_type == "sigv4" and not tool.sigv4_config and (tool_update.auth is not None or url_is_changing):
+                await self._require_inherited_gateway_access(db, tool.gateway_id, user_email or modified_by, token_teams)
 
             # Update tags if provided
             if tool_update.tags is not None:
@@ -8042,7 +8277,7 @@ class ToolService(BaseService):
                 changes.append("description updated")
 
             audit_trail.log_action(
-                user_id=user_email or modified_by or "system",
+                user_id=user_id or user_email or modified_by or SYSTEM_ACTOR,
                 action="update_tool",
                 resource_type="tool",
                 resource_id=tool.id,
@@ -8055,6 +8290,7 @@ class ToolService(BaseService):
                     "name": tool.name,
                     "display_name": tool.display_name,
                     "version": tool.version,
+                    **sigv4_audit_values(tool.sigv4_config, original_sigv4_config),
                 },
                 context={
                     "modified_via": modified_via,
@@ -8710,6 +8946,8 @@ class ToolService(BaseService):
         """
         logger.info("Calling A2A agent '%s' at %s with arguments: %s", agent.name, agent.endpoint_url, parameters)
 
+        oauth_headers = await resolve_a2a_agent_oauth_headers(agent.id, agent.name, agent.endpoint_url, agent.auth_type, agent.oauth_config)
+
         prepared = prepare_a2a_invocation(
             agent_type=agent.agent_type,
             endpoint_url=agent.endpoint_url,
@@ -8719,7 +8957,9 @@ class ToolService(BaseService):
             auth_type=agent.auth_type,
             auth_value=agent.auth_value,
             auth_query_params=agent.auth_query_params,
+            oauth_headers=oauth_headers,
             correlation_id=get_correlation_id(),
+            protocol_binding=getattr(agent, "protocol_binding", None),
         )
         logger.info("invoke tool request_data prepared: %s", prepared.request_data)
 

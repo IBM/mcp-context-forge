@@ -102,7 +102,7 @@ This diagram showcases the performance-optimized architecture of ContextForge, h
 │  │  │                              PERFORMANCE OPTIMIZATIONS                                        │  ││
 │  │  │  • Precompiled regex validators       • Lazy f-string logging                                 │  ││
 │  │  │  • Cached Jinja templates             • Cached JSONPath parsing                               │  ││
-│  │  │  • Cached jq filter compilation       • Cached JSON Schema validators                         │  ││
+│  │  │  • Cached CEL filter compilation      • Cached JSON Schema validators                         │  ││
 │  │  │  • has_hooks_for optimization         • Buffered metrics writes                               │  ││
 │  │  │  • Bulk UPDATE for token cleanup      • SQL-based metrics aggregation                         │  ││
 │  │  └───────────────────────────────────────────────────────────────────────────────────────────────┘  ││

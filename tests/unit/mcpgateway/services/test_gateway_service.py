@@ -453,6 +453,7 @@ def _make_gateway(**overrides):
         "auth_query_param_value": None,
         "auth_query_params": None,
         "oauth_config": None,
+        "sigv4_config": None,
         "one_time_auth": False,
         "ca_certificate": None,
         "ca_certificate_sig": None,
@@ -3068,6 +3069,38 @@ class TestGatewayService:
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("user_id", "expected_actor"),
+        [("u-1", "u-1"), (None, "caller@example.com")],
+        ids=["canonical-id-recorded", "falls-back-to-email"],
+    )
+    async def test_set_gateway_state_audit_actor(self, gateway_service, mock_gateway, test_db, mock_logging_services, user_id, expected_actor):
+        """The audit actor is the canonical user_id when given, otherwise the caller e-mail."""
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),
+                _make_execute_result(rowcount=1),
+                _make_execute_result(rowcount=1),
+                _make_execute_result(rowcount=1),
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        gateway_service._notify_gateway_deactivated = AsyncMock()
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with (
+            patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            await gateway_service.set_gateway_state(test_db, 1, activate=False, user_email="caller@example.com", user_id=user_id)
+
+        audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
+        assert audit_kwargs["action"] == "set_gateway_state"
+        assert audit_kwargs["user_id"] == expected_actor
+
+    @pytest.mark.asyncio
     async def test_set_gateway_state_invalidates_changed_kinds(self, gateway_service, mock_gateway, test_db, monkeypatch):
         """Disabling a gateway whose tools changed invalidates the tools cache."""
         test_db.execute = Mock(
@@ -5110,6 +5143,102 @@ class TestGatewayHealth:
                     gateway_service._refresh_gateway_tools_resources_prompts.assert_awaited_once()
                     args, kwargs = gateway_service._refresh_gateway_tools_resources_prompts.call_args
                     assert kwargs["created_via"] == "health_check"
+
+    @staticmethod
+    def _as_auth_code_gateway(gateway):
+        gateway.auth_type = "oauth"
+        gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid"}
+        return gateway
+
+    @staticmethod
+    async def _health_check_with_auto_refresh(gateway_service, gateway, mock_db_session, user_email=None, stored_token=None):
+        """Run one health check with auto-refresh due, returning the refresh mock."""
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        gateway_service.set_gateway_state = AsyncMock()
+        lock = MagicMock()
+        lock.locked.return_value = False
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        gateway_service._get_refresh_lock = MagicMock(return_value=lock)
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        token_storage = MagicMock()
+        token_storage.get_user_token = AsyncMock(return_value=stored_token)
+
+        with (
+            patch("mcpgateway.services.gateway_service.settings") as mock_settings,
+            patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client),
+            patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.token_storage_service.build_token_user_context", return_value=MagicMock()),
+        ):
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = 300
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+            session = mock_db_session.__enter__()
+            session.execute.return_value = _make_execute_result(scalar=gateway)
+
+            await gateway_service._check_single_gateway_health(gateway, user_email=user_email)
+
+        return gateway_service._refresh_gateway_tools_resources_prompts
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_email", [None, "admin@example.com"], ids=["no-user", "admin-without-token"])
+    async def test_health_skips_auto_refresh_for_auth_code_gateway_without_token(self, gateway_service, mock_gateway_health, mock_db_session, caplog, user_email):
+        """Issue #7015: no stored token means the refresh cannot authenticate, so it is skipped and reported once.
+
+        Production health checks pass an admin email; get_user_token() then returns None when that user never authorized.
+        """
+        gateway = self._as_auth_code_gateway(mock_gateway_health)
+
+        with caplog.at_level(logging.INFO, logger="mcpgateway.services.gateway_service"):
+            for _ in range(2):
+                refresh = await self._health_check_with_auto_refresh(gateway_service, gateway, mock_db_session, user_email=user_email, stored_token=None)
+                refresh.assert_not_awaited()
+
+        notices = [r for r in caplog.records if "Auto-refresh skipped for gateway" in r.getMessage()]
+        assert len(notices) == 1
+        assert "require a manual refresh" in notices[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_health_auto_refreshes_auth_code_gateway_with_stored_token(self, gateway_service, mock_gateway_health, mock_db_session):
+        """A stored token found by the health check still lets auto-refresh run, authenticated."""
+        gateway = self._as_auth_code_gateway(mock_gateway_health)
+
+        refresh = await self._health_check_with_auto_refresh(gateway_service, gateway, mock_db_session, user_email="admin@example.com", stored_token="stored-token")
+
+        refresh.assert_awaited_once()
+        assert refresh.call_args.kwargs["pre_auth_headers"] == {"Authorization": "Bearer stored-token"}
+
+    @pytest.mark.asyncio
+    async def test_health_rearms_manual_refresh_notice_after_token_is_available(self, gateway_service, mock_gateway_health, mock_db_session, caplog):
+        """Losing the token again after it was available is reported again."""
+        gateway = self._as_auth_code_gateway(mock_gateway_health)
+
+        with caplog.at_level(logging.INFO, logger="mcpgateway.services.gateway_service"):
+            await self._health_check_with_auto_refresh(gateway_service, gateway, mock_db_session)
+            await self._health_check_with_auto_refresh(gateway_service, gateway, mock_db_session, user_email="admin@example.com", stored_token="stored-token")
+            await self._health_check_with_auto_refresh(gateway_service, gateway, mock_db_session)
+
+        assert len([r for r in caplog.records if "Auto-refresh skipped for gateway" in r.getMessage()]) == 2
+
+    @pytest.mark.asyncio
+    async def test_health_auto_refresh_unchanged_for_client_credentials_gateway(self, gateway_service, mock_gateway_health, mock_db_session):
+        """Only authorization_code gateways are affected."""
+        gateway = mock_gateway_health
+        gateway.auth_type = "oauth"
+        gateway.oauth_config = {"grant_type": "client_credentials", "client_id": "cid"}
+        gateway_service.oauth_manager = MagicMock()
+        gateway_service.oauth_manager.get_access_token = AsyncMock(return_value="cc-token")
+
+        refresh = await self._health_check_with_auto_refresh(gateway_service, gateway, mock_db_session)
+
+        refresh.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_health_skips_refresh_disabled(self, gateway_service, mock_gateway_health, mock_db_session):

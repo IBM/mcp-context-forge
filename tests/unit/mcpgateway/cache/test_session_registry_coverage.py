@@ -7,8 +7,10 @@ Additional tests to improve coverage for session_registry.py.
 Targets specific uncovered lines and branches.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
 import json
 import logging
@@ -16,8 +18,10 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.cache.session_registry import SessionRegistry
 from mcpgateway.common.models import DEFAULT_SERVER_INSTRUCTIONS
 from mcpgateway.config import settings
@@ -2033,6 +2037,8 @@ class TestGetOauthExperimentalConfig:
         caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
         mock_server = Mock()
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_servers": ["https://auth.example.com"],
             "scopes_supported": ["read", "write"],
@@ -2060,6 +2066,8 @@ class TestGetOauthExperimentalConfig:
         """Lines 1722-1723: oauth_config with authorization_server (singular)."""
         mock_server = Mock()
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_server": "https://auth.example.com",
             "scopes": ["read"],
@@ -2085,6 +2093,8 @@ class TestGetOauthExperimentalConfig:
         """Lines 1733: No authorization_servers key - returns None."""
         mock_server = Mock()
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "scopes": ["read"],
         }
@@ -2518,6 +2528,8 @@ class TestOauthConfigScopesBranch:
         """Lines 1726-1728: No scopes_supported or scopes in config."""
         mock_server = Mock()
         mock_server.oauth_enabled = True
+        mock_server.oauth_config_approved = True
+        mock_server.oauth_config_generation = "approved-generation"
         mock_server.oauth_config = {
             "authorization_servers": ["https://auth.example.com"],
             # No scopes at all

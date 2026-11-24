@@ -238,6 +238,8 @@ the stored description and, when an operator has customised it, the upstream tex
 | `CEL_EXECUTION` | `subprocess` | `subprocess` evaluates policies in the forked sandbox; `inprocess` disables it |
 | `CEL_TIMEOUT_SECONDS` | `1.0` | Wall-clock limit for one evaluation, at most `1.0` |
 | `CEL_WORKERS` | `2` | Sandbox worker processes per gateway process |
+| `CEL_FILTER_TIMEOUT_SECONDS` | `2.0` | Wall-clock limit for one tool response filter, at most `60` |
+| `CEL_FILTER_WORKERS` | `2` | Response-filter sandbox worker processes per gateway process |
 
 Note: single pipes (`|`), semicolons (`;`), and backticks (`` ` ``) are not in the default list because they
 commonly appear in natural-language documentation and Markdown tables.

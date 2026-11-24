@@ -15,10 +15,11 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import RedirectResponse
-from pydantic import HttpUrl
+from pydantic import HttpUrl, ValidationError
 
 # First-Party
 from mcpgateway.routers import sso as sso_router
+from mcpgateway.services.oidc_tls import CaCertificateError
 
 _TEST_SIGNING_KEY = "unit-test-signing-key-0123456789abcdef"  # pragma: allowlist secret
 
@@ -802,6 +803,7 @@ async def test_get_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
         userinfo_url="https://userinfo",
         issuer="https://issuer",
         jwks_uri=None,
+        ca_certificate=None,
         scope="openid",
         trusted_domains=["example.com"],
         auto_create_users=True,
@@ -902,6 +904,96 @@ async def test_update_sso_provider_disallowed_issuer(monkeypatch: pytest.MonkeyP
 
     assert excinfo.value.status_code == 400
     assert "Invalid SSO provider configuration" in str(excinfo.value.detail)
+
+
+def _ca_service(monkeypatch: pytest.MonkeyPatch, error: Exception | None = None):
+    """Patch SSOService with a recorder that optionally raises ``error`` on create and update."""
+    calls: list = []
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        def get_provider(self, _provider_id):
+            return None
+
+        async def create_provider(self, data):
+            calls.append(data)
+            if error:
+                raise error
+            return SimpleNamespace(id="provider", name="Provider", display_name="Provider", provider_type="oidc", is_enabled=True, created_at="now")
+
+        async def update_provider(self, _provider_id, data):
+            calls.append(data)
+            if error:
+                raise error
+            return SimpleNamespace(id="provider", name="Provider", display_name="Provider", provider_type="oidc", is_enabled=True, updated_at="now")
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+    return calls
+
+
+def _create_payload(**extra):
+    return sso_router.SSOProviderCreateRequest(
+        id="provider",
+        name="Provider",
+        display_name="Provider",
+        provider_type="oidc",
+        client_id="cid",
+        client_secret="secret",  # pragma: allowlist secret
+        authorization_url="https://auth",
+        token_url="https://token",
+        userinfo_url="https://userinfo",
+        **extra,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_sso_provider_passes_ca_certificate(monkeypatch: pytest.MonkeyPatch):
+    calls = _ca_service(monkeypatch)
+    await sso_router.create_sso_provider(_create_payload(ca_certificate="PEM"), db=MagicMock(), user={"email": "admin@example.com"})
+    assert calls[0]["ca_certificate"] == "PEM"
+
+
+@pytest.mark.asyncio
+async def test_update_sso_provider_empty_ca_certificate_clears(monkeypatch: pytest.MonkeyPatch):
+    calls = _ca_service(monkeypatch)
+    await sso_router.update_sso_provider("provider", sso_router.SSOProviderUpdateRequest(ca_certificate=""), db=MagicMock(), user={"email": "admin@example.com"})
+    assert calls[0] == {"ca_certificate": ""}
+
+
+@pytest.mark.asyncio
+async def test_invalid_ca_certificate_returns_specific_400(monkeypatch: pytest.MonkeyPatch):
+    _ca_service(monkeypatch, CaCertificateError("ca_certificate is not a valid PEM CA bundle"))
+    user = {"email": "admin@example.com"}
+    with pytest.raises(HTTPException) as created:
+        await sso_router.create_sso_provider(_create_payload(ca_certificate="junk"), db=MagicMock(), user=user)
+    with pytest.raises(HTTPException) as updated:
+        await sso_router.update_sso_provider("provider", sso_router.SSOProviderUpdateRequest(ca_certificate="junk"), db=MagicMock(), user=user)
+    for excinfo in (created, updated):
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == "ca_certificate is not a valid PEM CA bundle"
+
+
+def test_ca_certificate_max_length():
+    too_long = "A" * 65537
+    with pytest.raises(ValidationError):
+        _create_payload(ca_certificate=too_long)
+    with pytest.raises(ValidationError):
+        sso_router.SSOProviderUpdateRequest(ca_certificate=too_long)
+
+
+@pytest.mark.asyncio
+async def test_ca_certificate_writes_denied_without_permission(monkeypatch: pytest.MonkeyPatch):
+    calls = _ca_service(monkeypatch)
+    user = {"email": "dev@example.com", "is_admin": False, "token_scopes": ["tools.read"]}
+    with pytest.raises(HTTPException) as created:
+        await sso_router.create_sso_provider(_create_payload(ca_certificate="PEM"), db=MagicMock(), user=user)
+    with pytest.raises(HTTPException) as updated:
+        await sso_router.update_sso_provider("provider", sso_router.SSOProviderUpdateRequest(ca_certificate="PEM"), db=MagicMock(), user=user)
+    assert created.value.status_code == 403
+    assert updated.value.status_code == 403
+    assert calls == []
 
 
 @pytest.mark.asyncio

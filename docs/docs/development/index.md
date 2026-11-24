@@ -102,7 +102,7 @@ make pre-commit
 Enable hooks with:
 
 ```bash
-pre-commit install
+make install-pre-commit-hooks   # installs the hook with prek
 ```
 
 ---

@@ -106,6 +106,9 @@ class TestAbstractTokenBackendGetOAuthCredentials:
             async def get_user_token(self, **kw):
                 return None
 
+            async def get_user_token_details(self, **kw):
+                return None
+
             async def get_token_info(self, **kw):
                 return None
 
@@ -789,7 +792,7 @@ class TestVaultRefreshAccessTokenNoPriorTTL:
             with patch("mcpgateway.services.token_backends.vault_backend.parse_expires_in", return_value=None):
                 with patch("mcpgateway.services.token_backends.vault_backend.compute_prior_ttl", return_value=None):
                     with patch("mcpgateway.services.token_backends.vault_backend.apply_omit_resource_and_normalize"):
-                        with patch.object(backend, "store_tokens", new_callable=AsyncMock):
+                        with patch.object(backend, "store_tokens", new_callable=AsyncMock, return_value=MagicMock(access_token="new_acc", expires_at=None, scopes=[])):
                             result = await backend._do_refresh_access_token(
                                 gateway_id="gw-1",
                                 team_id="t1",
@@ -934,12 +937,12 @@ class TestOAuthManagerTeamIdExtraction:
 
         stored_team_id = None
 
-        async def _capture_store(gw_id, state, code_verifier=None, app_user_email=None, redirect_uri=None, team_id=None):
+        async def _capture_store(gw_id, state, code_verifier=None, app_user_email=None, redirect_uri=None, team_id=None, browser_binding_hash=None):
             nonlocal stored_team_id
             stored_team_id = team_id
 
         with patch.object(mgr, "_store_authorization_state", side_effect=_capture_store):
-            await mgr.initiate_authorization_code_flow("gw-1", credentials, app_user_email="u@e.com")
+            await mgr.initiate_authorization_code_flow("gw-1", credentials, app_user_email="u@e.com", browser_binding="test-browser-binding")
 
         # teams[0] = "engineering" should be used
         assert stored_team_id == "engineering"

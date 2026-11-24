@@ -105,8 +105,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         allowlist = getattr(settings, "siem_export_url_allowlist", [])
         self._url_allowlist: List[str] = [str(item).strip() for item in allowlist if str(item).strip()]
 
-        redact_fields = getattr(settings, "siem_export_redact_fields", ["user_email", "authorization", "token", "password", "secret", "api_key"])
-        self._redact_fields: Set[str] = {str(item).strip() for item in redact_fields if str(item).strip()}
+        self._redact_fields: Set[str] = {str(item).strip().lower() for item in settings.siem_export_redact_fields if str(item).strip()}
 
         self._destinations: Dict[str, Dict[str, Any]] = {}
         self._destination_stats: Dict[str, DestinationStats] = {}
@@ -1100,7 +1099,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         destination_fields = destination.get("redact_fields")
         redaction_fields = set(self._redact_fields)
         if isinstance(destination_fields, list):
-            redaction_fields.update(str(item) for item in destination_fields)
+            redaction_fields.update(str(item).strip().lower() for item in destination_fields)
 
         redacted = deepcopy(event)
 
@@ -1109,7 +1108,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
             if isinstance(obj, dict):
                 redacted_dict: Dict[str, Any] = {}
                 for key, value in obj.items():
-                    if str(key) in redaction_fields:
+                    if str(key).lower() in redaction_fields:
                         redacted_dict[key] = "***REDACTED***"
                     else:
                         redacted_dict[key] = redact_obj(value)

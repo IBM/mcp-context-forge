@@ -218,6 +218,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.APP_NAME | string | `"ContextForge"` |  |
 | mcpContextForge.config.HOST | string | `"0.0.0.0"` |  |
 | mcpContextForge.config.PORT | string | `"4444"` |  |
+| mcpContextForge.config.FORWARDED_ALLOW_IPS | string | `"127.0.0.1,::1"` | Proxies allowed to set X-Forwarded-For/Proto. Set to the ingress or proxy CIDR to keep client IPs. |
 | mcpContextForge.config.APP_ROOT_PATH | string | `""` |  |
 | mcpContextForge.config.CLIENT_MODE | string | `"false"` |  |
 | mcpContextForge.config.TEMPLATES_DIR | string | `"/app/mcpgateway/templates"` |  |
@@ -243,6 +244,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.REDIS_RETRY_ON_TIMEOUT | string | `"true"` |  |
 | mcpContextForge.config.REDIS_HEALTH_CHECK_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.REDIS_DECODE_RESPONSES | string | `"true"` |  |
+| mcpContextForge.config.REDIS_CLUSTER_MODE | string | `"false"` |  |
 | mcpContextForge.config.REDIS_LEADER_TTL | string | `"15"` |  |
 | mcpContextForge.config.REDIS_LEADER_KEY | string | `"gateway_service_leader"` |  |
 | mcpContextForge.config.REDIS_LEADER_HEARTBEAT_INTERVAL | string | `"5"` |  |
@@ -396,6 +398,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.PROMPT_RENDER_TIMEOUT | string | `"10"` |  |
 | mcpContextForge.config.PROTOCOL_VERSION | string | `"2025-06-18"` |  |
 | mcpContextForge.config.REDIS_DECODE_RESPONSES | string | `"true"` |  |
+| mcpContextForge.config.REDIS_CLUSTER_MODE | string | `"false"` |  |
 | mcpContextForge.config.REDIS_HEALTH_CHECK_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.REDIS_LEADER_HEARTBEAT_INTERVAL | string | `"5"` |  |
 | mcpContextForge.config.REDIS_LEADER_KEY | string | `"gateway_service_leader"` |  |
@@ -653,6 +656,8 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.CEL_EXECUTION | string | `"subprocess"` | Where tool validation policies (CEL) run: subprocess (forked sandbox) or inprocess |
 | mcpContextForge.config.CEL_TIMEOUT_SECONDS | string | `"1.0"` | Wall-clock limit for one policy evaluation (seconds, at most 1.0) |
 | mcpContextForge.config.CEL_WORKERS | string | `"2"` | Policy sandbox worker processes per gateway process |
+| mcpContextForge.config.CEL_FILTER_TIMEOUT_SECONDS | string | `"2.0"` | Wall-clock limit for one tool response filter (seconds, at most 60) |
+| mcpContextForge.config.CEL_FILTER_WORKERS | string | `"2"` | Response-filter sandbox worker processes per gateway process |
 | mcpContextForge.config.JSON_SCHEMA_VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.SANITIZE_OUTPUT | string | `"true"` |  |
 | mcpContextForge.config.ALLOWED_ROOTS | string | `"[]"` |  |

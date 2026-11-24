@@ -42,7 +42,7 @@ from mcpgateway.services.tool_service import (
     _get_registry_cache,
     _get_tool_lookup_cache,
     _get_validator_class_and_check,
-    extract_using_jq,
+    apply_response_filter,
     ToolError,
     ToolInvocationError,
     ToolLockConflictError,
@@ -2970,6 +2970,26 @@ class TestCallA2AAgent:
     """Tests for _call_a2a_agent method."""
 
     @pytest.mark.asyncio
+    async def test_call_a2a_agent_passes_protocol_binding(self, tool_service):
+        """The stored protocol_binding is handed to prepare_a2a_invocation."""
+        agent = MagicMock()
+        agent.name = "binding-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.protocol_binding = "http_json"
+
+        prepare = MagicMock(side_effect=RuntimeError("stop here"))
+        with patch("mcpgateway.services.tool_service.prepare_a2a_invocation", prepare):
+            with pytest.raises(RuntimeError, match="stop here"):
+                await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert prepare.call_args.kwargs["protocol_binding"] == "http_json"
+
+    @pytest.mark.asyncio
     async def test_call_a2a_jsonrpc_agent_with_query(self, tool_service):
         """Should build JSONRPC request for generic agent."""
         agent = MagicMock()
@@ -2991,6 +3011,65 @@ class TestCallA2AAgent:
         with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
             result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
         assert result == {"result": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_call_a2a_oauth_agent_sends_resolved_token(self, tool_service):
+        """Should resolve the agent-level OAuth token and send it as Authorization."""
+        agent = MagicMock()
+        agent.id = "agent-1"
+        agent.name = "oauth-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "jsonrpc"
+        agent.protocol_version = "1.0"
+        agent.auth_type = "oauth"
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.oauth_config = {"grant_type": "client_credentials"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        resolve = AsyncMock(return_value={"Authorization": "Bearer agent-token"})
+        with (
+            patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", resolve),
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+        ):
+            result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert result == {"result": "ok"}
+        resolve.assert_awaited_once_with("agent-1", "oauth-agent", "http://agent.example.com/", agent.oauth_config)
+        sent_headers = {key.lower(): value for key, value in mock_client.post.call_args.kwargs["headers"].items()}
+        assert sent_headers["authorization"] == "Bearer agent-token"
+
+    @pytest.mark.asyncio
+    async def test_call_a2a_oauth_agent_token_failure_raises_agent_error_without_calling_agent(self, tool_service):
+        """A token failure raises A2AAgentError and the agent receives no request."""
+        # First-Party
+        from mcpgateway.services.a2a_oauth import A2AOAuthError
+        from mcpgateway.services.a2a_service import A2AAgentError
+
+        agent = MagicMock()
+        agent.id = "agent-1"
+        agent.name = "oauth-agent"
+        agent.endpoint_url = "http://agent.example.com/"
+        agent.agent_type = "jsonrpc"
+        agent.protocol_version = "1.0"
+        agent.auth_type = "oauth"
+        agent.auth_value = None
+        agent.auth_query_params = None
+        agent.oauth_config = {"grant_type": "client_credentials"}
+
+        mock_client = AsyncMock()
+        with (
+            patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", AsyncMock(side_effect=A2AOAuthError("token refused"))),
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+        ):
+            with pytest.raises(A2AAgentError, match="token refused"):
+                await tool_service._call_a2a_agent(agent, {"query": "hello"})
+        mock_client.post.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_call_a2a_custom_agent(self, tool_service):
@@ -4396,36 +4475,31 @@ class TestConvertToolToReadMetrics:
 
 
 # ---------------------------------------------------------------------------
-# extract_using_jq — error paths (lines 286-289)
+# apply_response_filter — error paths
 # ---------------------------------------------------------------------------
 
 
-class TestExtractUsingJqErrors:
-    def test_jq_filter_returns_none_result(self):
-        """When jq filter produces [None], returns error TextContent in list."""
+class TestApplyResponseFilterErrors:
+    def test_filter_evaluation_error(self):
+        """When the expression fails at runtime, a fixed message is raised and the detail is kept aside."""
         # First-Party
         import mcpgateway.services.tool_service as ts
+        from mcpgateway.utils.cel_runner import CelEvaluationError
 
-        with patch.object(ts, "run_jq_filter", return_value=[None]):
-            result = extract_using_jq({"key": "value"}, ".x")
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == "Error applying jsonpath filter"
+        with patch.object(ts, "evaluate_value", side_effect=CelEvaluationError("KeyError: 'x'")):
+            with pytest.raises(ts.ResponseFilterError, match="^Error applying jsonpath filter$") as excinfo:
+                apply_response_filter({"key": "value"}, "response.x")
+        assert excinfo.value.detail == "KeyError: 'x'"
 
-    def test_jq_filter_exception(self):
-        """When the filter engine raises, a fixed error message is returned."""
+    def test_filter_syntax_error(self):
+        """When the expression does not compile, the message names the engine without the detail."""
         # First-Party
         import mcpgateway.services.tool_service as ts
-        from mcpgateway.utils.jq_runner import JqFilterError
+        from mcpgateway.utils.cel_runner import CelSyntaxError
 
-        with patch.object(ts, "run_jq_filter", side_effect=JqFilterError("bad filter")):
-            result = extract_using_jq({"data": 1}, "bad_filter")
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert isinstance(result[0], TextContent)
-        assert result[0].text == "Error applying jsonpath filter"
-        assert "bad filter" not in result[0].text
+        with patch.object(ts, "evaluate_value", side_effect=CelSyntaxError("bad filter")):
+            with pytest.raises(ts.ResponseFilterError, match="^jsonpath filter is not a valid CEL expression$"):
+                apply_response_filter({"data": 1}, "bad_filter")
 
 
 # ---------------------------------------------------------------------------

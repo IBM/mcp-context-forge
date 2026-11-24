@@ -78,6 +78,9 @@ async def test_store_oauth_credentials_default_returns_false():
         async def get_user_token(self, *a, **kw):
             """Stub."""
 
+        async def get_user_token_details(self, *a, **kw):
+            """Stub."""
+
         async def get_token_info(self, *a, **kw):
             """Stub."""
 
@@ -107,6 +110,9 @@ async def test_get_user_auth_headers_default_returns_none():
             """Stub."""
 
         async def get_user_token(self, *a, **kw):
+            """Stub."""
+
+        async def get_user_token_details(self, *a, **kw):
             """Stub."""
 
         async def get_token_info(self, *a, **kw):
@@ -140,6 +146,9 @@ class TestGetTokenInfoBulkDefault:
                 """Stub."""
 
             async def get_user_token(self, *a, **kw):
+                """Stub."""
+
+            async def get_user_token_details(self, *a, **kw):
                 """Stub."""
 
             async def get_token_info(self, *a, **kw):
@@ -189,3 +198,32 @@ class TestGetTokenInfoBulkDefault:
 
         assert result["gw-ok"] == {"status": "valid"}
         assert result["gw-fails"] is boom
+
+
+def test_backend_without_token_details_cannot_be_instantiated():
+    """A backend must implement get_user_token_details."""
+    from mcpgateway.services.token_backends.base import AbstractTokenBackend
+
+    class _Incomplete(AbstractTokenBackend):
+        """Backend that omits get_user_token_details."""
+
+        async def store_tokens(self, *a, **kw):
+            """Stub."""
+
+        async def get_user_token(self, *a, **kw):
+            """Stub."""
+
+        async def get_token_info(self, *a, **kw):
+            """Stub."""
+
+        async def revoke_user_tokens(self, *a, **kw):
+            """Stub."""
+
+        async def cleanup_expired_tokens(self, *a, **kw):
+            """Stub."""
+
+        async def get_user_learned_audience(self, *a, **kw):
+            """Stub."""
+
+    with pytest.raises(TypeError, match="get_user_token_details"):
+        _Incomplete()

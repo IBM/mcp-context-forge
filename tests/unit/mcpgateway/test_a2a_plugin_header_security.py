@@ -66,3 +66,38 @@ def test_prepare_header_flows_with_flag_enabled(monkeypatch):
     # Downstream DOES include sensitive when flag enabled (line 1966)
     assert downstream_headers.get("authorization") == "Bearer token"
     assert downstream_headers.get("x-custom-header") == "value"
+
+
+_AMZ_REQUEST_HEADERS = {
+    "x-amz-security-token": "SESSIONTOKENVALUE",
+    "x-amz-signature": "SIGNATUREVALUE",
+    "x-amz-credential": "AKIAEXAMPLE0000000/20260101/us-east-1/s3/aws4_request",  # pragma: allowlist secret
+    "x-amz-date": "20260101T000000Z",
+}
+_AMZ_WHITELIST = ["X-Amz-Security-Token", "X-Amz-Signature", "X-Amz-Credential", "X-Amz-Date"]
+
+
+def test_prepare_header_flows_drops_sigv4_headers_downstream_when_flag_disabled(monkeypatch):
+    """Whitelisted SigV4 headers never reach the plugin or the downstream A2A agent by default."""
+    from mcpgateway import config
+    from mcpgateway.services.a2a_service import A2AAgentService
+
+    monkeypatch.setattr(config.settings, "enable_sensitive_header_passthrough", False)
+
+    plugin_headers, downstream_headers = A2AAgentService._prepare_header_flows(request_headers=_AMZ_REQUEST_HEADERS, agent_passthrough_headers=_AMZ_WHITELIST)
+
+    for headers in (plugin_headers, downstream_headers):
+        assert headers == {"x-amz-date": "20260101T000000Z"}
+
+
+def test_prepare_header_flows_forwards_sigv4_headers_downstream_when_flag_enabled(monkeypatch):
+    """The passthrough flag restores the SigV4 headers downstream and still hides them from plugins."""
+    from mcpgateway import config
+    from mcpgateway.services.a2a_service import A2AAgentService
+
+    monkeypatch.setattr(config.settings, "enable_sensitive_header_passthrough", True)
+
+    plugin_headers, downstream_headers = A2AAgentService._prepare_header_flows(request_headers=_AMZ_REQUEST_HEADERS, agent_passthrough_headers=_AMZ_WHITELIST)
+
+    assert plugin_headers == {"x-amz-date": "20260101T000000Z"}
+    assert downstream_headers == _AMZ_REQUEST_HEADERS
