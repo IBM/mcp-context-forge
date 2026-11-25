@@ -4828,6 +4828,7 @@ class Gateway(Base):
     # Authorizations
     auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param", "sigv4" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    requires_user_credentials: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
         nullable=True,
