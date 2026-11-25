@@ -577,7 +577,7 @@ describe("processImportJSONFile", () => {
     );
   });
 
-  test("processes valid JSON file and enables buttons", () => {
+  test("processes valid JSON, enables actions, and previews the uploaded file", async () => {
     const previewBtn = document.createElement("button");
     previewBtn.id = "import-preview-btn";
     previewBtn.disabled = true;
@@ -633,6 +633,20 @@ describe("processImportJSONFile", () => {
       expect.stringContaining("Import file loaded"),
       "success"
     );
+
+    const preview = { summary: { total_items: 0 } };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ preview }),
+    });
+    try {
+      await previewImport();
+
+      expect(JSON.parse(fetchSpy.mock.calls[0][1].body).data).toEqual(window.Admin.currentImportData);
+      expect(displayImportPreview).toHaveBeenCalledWith(preview);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   test("shows error for invalid JSON format", () => {
@@ -760,13 +774,13 @@ describe("previewImport", () => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
     window.ROOT_PATH = "";
-    window.currentImportData = null;
+    window.Admin = { currentImportData: null };
   });
 
   afterEach(() => {
     document.body.innerHTML = "";
     delete window.ROOT_PATH;
-    delete window.currentImportData;
+    delete window.Admin;
   });
 
   test("shows error when no import data is loaded", async () => {
@@ -779,7 +793,7 @@ describe("previewImport", () => {
   });
 
   test("fetches and displays preview successfully", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin = { currentImportData: { version: "1.0", entities: {} } };
 
     const previewBtn = document.createElement("button");
     previewBtn.id = "import-preview-btn";
@@ -822,7 +836,7 @@ describe("previewImport", () => {
   });
 
   test("handles preview error", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin = { currentImportData: { version: "1.0", entities: {} } };
 
     const previewBtn = document.createElement("button");
     previewBtn.id = "import-preview-btn";
@@ -858,13 +872,13 @@ describe("handleImport", () => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
     window.ROOT_PATH = "";
-    window.currentImportData = null;
+    window.Admin = { currentImportData: null };
   });
 
   afterEach(() => {
     document.body.innerHTML = "";
     delete window.ROOT_PATH;
-    delete window.currentImportData;
+    delete window.Admin;
   });
 
   test("shows error when no import data is loaded", async () => {
@@ -877,7 +891,7 @@ describe("handleImport", () => {
   });
 
   test("performs dry run validation successfully", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin = { currentImportData: { version: "1.0", entities: {} } };
 
     const conflictStrategy = document.createElement("select");
     conflictStrategy.id = "import-conflict-strategy";
@@ -960,17 +974,17 @@ describe("handleImport", () => {
   });
 
   test("performs actual import and refreshes data", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin = { currentImportData: { version: "1.0", entities: {} } };
 
     const conflictStrategy = document.createElement("select");
     conflictStrategy.id = "import-conflict-strategy";
     conflictStrategy.value = "skip";
     document.body.appendChild(conflictStrategy);
 
-    const rekeySecret = document.createElement("input");
-    rekeySecret.id = "import-rekey-secret";
-    rekeySecret.value = "new-secret";
-    document.body.appendChild(rekeySecret);
+    const teamName = document.createElement("input");
+    teamName.id = "import-team-name";
+    teamName.value = "  Operations  ";
+    document.body.appendChild(teamName);
 
     const previewBtn = document.createElement("button");
     previewBtn.id = "import-preview-btn";
@@ -1039,6 +1053,7 @@ describe("handleImport", () => {
         body: expect.stringContaining('"dry_run":false'),
       })
     );
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body).team_name).toBe("Operations");
     expect(showNotification).toHaveBeenCalledWith(
       expect.stringContaining("import completed"),
       "success"
@@ -1048,7 +1063,7 @@ describe("handleImport", () => {
   });
 
   test("handles import error", async () => {
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin = { currentImportData: { version: "1.0", entities: {} } };
 
     const previewBtn = document.createElement("button");
     previewBtn.id = "import-preview-btn";
@@ -1479,7 +1494,7 @@ describe("import request headers", () => {
 
   beforeEach(() => {
     window.ROOT_PATH = "";
-    window.currentImportData = { version: "1.0", entities: {} };
+    window.Admin = { currentImportData: { version: "1.0", entities: {} } };
     // updateImportCounts() (fileTransfer.js:464-467) dereferences these four
     // elements WITHOUT a null guard, so handleImport's success path throws
     // into its own catch block without them. Every other DOM lookup on this
@@ -1508,7 +1523,7 @@ describe("import request headers", () => {
     fetchSpy.mockRestore();
     document.body.innerHTML = "";
     delete window.ROOT_PATH;
-    delete window.currentImportData;
+    delete window.Admin;
     vi.clearAllMocks();
   });
 

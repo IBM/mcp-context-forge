@@ -9,6 +9,23 @@
 
 ## [Unreleased]
 
+=======
+
+- **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.
+  Configure credentials again after restoring into an empty registry. A gateway that needs credentials stays pending.
+  The CLI removes `--rekey-secret`, and the import API rejects `rekey_secret` with HTTP 400.
+  Use `python -m mcpgateway.scripts.migrate_enc_secret` to [rotate the encryption secret](docs/docs/operations/auth-encryption-secret-rotation.md).
+- **Admin config endpoint masks all connection URLs** - `GET /admin/config/settings` now returns `settings.masked_auth_value` (`*****`) for any non-empty `database_url` or `redis_url`. Previously, URLs without credentials (such as default `sqlite:///./mcp.db` or `redis://localhost:6379/0`) appeared in cleartext. Clients and operators can no longer inspect backend hostnames or database types through this endpoint.
+- **Virtual-server OAuth requires administrator approval** - Only unrestricted platform administrators can submit
+  `oauth_enabled` or `oauth_config`. Non-admin clients must omit both fields, including unchanged values and defaults,
+  or receive HTTP 403. Migration `b7e291a4c630` marks existing configurations unapproved while retaining their settings.
+  Tokens from a pending server issuer receive HTTP 503. Protected-resource metadata excludes pending issuers.
+  Deploy the migration and application together. Restart all workers to stop existing authenticated streams.
+  Review each issuer with unrestricted administrator credentials, then approve the reviewed server version through
+  `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
+  See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
+
+
 ## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
 
 ### Overview
@@ -186,6 +203,8 @@ Release 1.1.2 adds **MCP subscriptions**, **A2A Agent Cards**, **AWS Signature V
 - **Outbound MCP connections in LLM Chat** ([#7658](https://github.com/IBM/mcp-context-forge/pull/7658)) - Apply outbound URL checks and DNS pinning to MCP connections from LLM Chat.
 
 ### Fixed
+
+- **An A2A agent on a virtual server exposes its tool** ([#7672](https://github.com/IBM/mcp-context-forge/issues/7672)) - Adding an A2A agent to a virtual server now also adds the tool derived from the agent (`a2a_{slug}`), so the server lists it and MCP clients can call it. Before, only `server_a2a_association` changed, and the server listed no tool for the agent. A `PUT` that replaces `associated_tools` without the derived tool no longer detaches it. This includes a client that sends back the `associated_tools` of a read, where a disabled derived tool is hidden. A `PUT` that removes an agent also removes its derived tool, even when the same request lists that tool in `associated_tools`. Another agent on the server that uses the same tool keeps it attached. A tool that an operator attached by hand and that belongs to a removed agent leaves with the agent. A `PUT` that changes `associated_tools` or `associated_a2a_agents` attaches the derived tool of each remaining agent again, including one that the Admin UI form cleared. A `PUT` that changes neither field leaves the tools unchanged. Each attach and detach logs one INFO line. A caller can attach only the agents that the caller can see. `POST /servers` and `PUT /servers/{id}` return 400 for an agent ID that is missing or not visible to the caller, with the same message for both. An agent that is already attached stays allowed. `A2AAgentRead` gains `tool_id`. It is empty when registration did not create a tool.
 
 - **Cancelled tool calls are no longer recorded as failures** ([#6646](https://github.com/IBM/mcp-context-forge/issues/6646), [#7530](https://github.com/IBM/mcp-context-forge/pull/7530)) - A tool call cancelled with no known failure, for example a client disconnect or `notifications/cancelled`, now logs `Tool '<name>' invocation cancelled` at INFO instead of an ERROR failure. Its `tool.invoke` database span ends with status `cancelled`, and it records no tool or server execution metric. Known failures, such as timeouts, upstream error results, and exceptions, keep the ERROR log, the `error` span status, and the failure metric, even when a cancel arrives later, for example during a plugin retry backoff or the timeout post-invoke hook. The OpenTelemetry `tool.invoke` span of a cancelled call ends with status OK, not ERROR, and gains a `cancelled` attribute. A cancel after a known failure keeps the ERROR status. A client disconnect cancels a running tool call only on `/rpc`, SSE `/message`, `/mcp` SSE streams (requests with a progress token), and stateful `/mcp` sessions (`notifications/cancelled`). On default `/mcp` (JSON responses, stateless), a disconnect does not cancel the call, so the call records its real outcome.
 

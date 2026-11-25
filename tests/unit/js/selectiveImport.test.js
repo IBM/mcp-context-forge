@@ -370,16 +370,16 @@ describe("handleSelectiveImport", () => {
     await handleSelectiveImport(false);
 
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    expect(body.selectedEntities.gateways).toContain("gw1");
+    expect(body.selected_entities).toEqual({ gateways: ["gw1"] });
   });
 
-  test("reads conflict strategy and rekey secret from DOM elements", async () => {
+  test("reads conflict strategy and destination team from DOM elements", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     window.Admin = { currentImportData: { tools: [] } };
 
     document.body.innerHTML += `
       <select id="import-conflict-strategy"><option value="skip" selected>Skip</option></select>
-      <input id="import-rekey-secret" value="mysecret" />
+      <input id="import-team-name" value="  Operations  " />
     `;
 
     const { item1 } = addCheckboxes();
@@ -394,7 +394,7 @@ describe("handleSelectiveImport", () => {
 
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
     expect(body.conflict_strategy).toBe("skip");
-    expect(body.rekey_secret).toBe("mysecret");
+    expect(body.team_name).toBe("Operations");
   });
 });
 

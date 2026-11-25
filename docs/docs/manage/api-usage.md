@@ -1768,8 +1768,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
           }
         ]
       }
-    },
-    "rekey_secret": null
+    }
   }' \
   "$BASE_URL/import" | jq '.'
 ```

@@ -7310,6 +7310,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     slug: Optional[str] = Field(None, description="Slug for a2a agent endpoint URL")
     description: Optional[str] = Field(None, description="a2a agent description")
     endpoint_url: str = Field(..., description="a2a agent endpoint URL")
+    tool_id: Optional[str] = Field(None, description="ID of the tool derived from this agent, or None when registration did not create one")
     agent_type: str
     protocol_binding: Optional[str] = Field(None, description="Wire binding used to invoke the agent")
     protocol_version: str

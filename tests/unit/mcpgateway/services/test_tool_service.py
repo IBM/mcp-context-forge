@@ -48,7 +48,6 @@ from mcpgateway.services.tool_service import (
     _decrypt_tool_headers_for_runtime,
     _encrypt_tool_header_value,
     _get_validator_class_and_check,
-    _is_sensitive_tool_header_name,
     _protect_tool_headers_for_storage,
     _sync_meta_traceparent,
     _validate_header_mapping_targets,
@@ -67,6 +66,7 @@ from mcpgateway.services.tool_service import (
     ToolTimeoutError,
     ToolValidationError,
 )
+from mcpgateway.utils.header_filtering import is_sensitive_tool_header_name
 from mcpgateway.utils.pagination import decode_cursor
 from mcpgateway.utils.services_auth import encode_auth
 
@@ -936,12 +936,12 @@ class TestToolService:
 
     def test_sensitive_tool_header_patterns_avoid_non_secret_token_noise(self):
         """Sensitive matcher should avoid tracing/idempotency token false positives."""
-        assert _is_sensitive_tool_header_name("Authorization") is True
-        assert _is_sensitive_tool_header_name("X-Auth-Token") is True
-        assert _is_sensitive_tool_header_name("client-secret") is True
-        assert _is_sensitive_tool_header_name("X-Correlation-Token") is False
-        assert _is_sensitive_tool_header_name("X-Request-Token") is False
-        assert _is_sensitive_tool_header_name("X-Idempotency-Key") is False
+        assert is_sensitive_tool_header_name("Authorization") is True
+        assert is_sensitive_tool_header_name("X-Auth-Token") is True
+        assert is_sensitive_tool_header_name("client-secret") is True
+        assert is_sensitive_tool_header_name("X-Correlation-Token") is False
+        assert is_sensitive_tool_header_name("X-Request-Token") is False
+        assert is_sensitive_tool_header_name("X-Idempotency-Key") is False
 
     def test_non_secret_observability_headers_stay_plaintext_at_rest(self):
         """Only sensitive headers should be encrypted when storing custom headers."""
