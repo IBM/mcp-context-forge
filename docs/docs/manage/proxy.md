@@ -458,7 +458,7 @@ The gateway renames `X-Upstream-Authorization` to `Authorization` when:
 1. The gateway does not store its own upstream credential (`auth_type` is `none`, unset, or `one_time_auth`)
 2. The header value passes security validation
 
-The gateway drops the header and logs a warning when the gateway manages the upstream credential (`auth_type` is `oauth`, `bearer`, `basic`, or `authheaders`, or the OAuth grant is `token-exchange`). A caller cannot replace a stored or exchanged credential.
+The gateway drops the header and logs a warning when the gateway manages the upstream credential (`auth_type` is `oauth`, `bearer`, `basic`, `authheaders`, or `sigv4`, or the OAuth grant is `token-exchange`). A caller cannot replace a stored or exchanged credential. See [AWS SigV4 Gateway Authentication](../using/sigv4-gateway-auth.md).
 
 **Note**: `X-Upstream-Authorization` processing is independent of the `ENABLE_HEADER_PASSTHROUGH` flag. This applies across all transports: REST (`/rpc`), SSE (`/servers/{id}/sse`), WebSocket (`/ws`), and Streamable HTTP (`/mcp`).
 
