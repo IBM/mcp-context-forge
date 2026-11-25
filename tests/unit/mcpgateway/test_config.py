@@ -2091,6 +2091,62 @@ def test_gateway_create_oauth_config_token_issuer_accepts_string_and_list():
         assert gateway.oauth_config["token_issuer"] == value
 
 
+@pytest.mark.parametrize("value", ["http://idp", "http://idp:8080/oidc", ["http://idp", "https://login.example.com"]])
+def test_gateway_create_oauth_config_token_issuer_accepts_unresolvable_internal_host(value, monkeypatch):
+    """token_issuer accepts an issuer on an internal host that does not resolve.
+
+    The gateway never fetches token_issuer; it only compares the value with
+    the token iss claim. SSRF and DNS checks must not reject it, even with
+    SSRF_DNS_FAIL_CLOSED enabled (issue #7665).
+
+    The unit conftest resolves every host to a public IP, so this test makes
+    the idp host unresolvable to reproduce the reporter's environment.
+    """
+    # Standard
+    import socket
+
+    def unresolvable_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        if host == "idp":
+            raise socket.gaierror("Name or service not known")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 443))]
+
+    monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", unresolvable_getaddrinfo)
+
+    gateway = GatewayCreate(
+        name="test-gateway",
+        url="https://example.com/sse",
+        auth_type="oauth",
+        oauth_config={"token_issuer": value, "client_id": "test-client", "client_secret": "test-secret"},  # pragma: allowlist secret
+    )
+    assert gateway.oauth_config["token_issuer"] == value
+
+
+@pytest.mark.parametrize("bad", ["idp", "http://", "ftp://idp.example.com", "//idp.example.com"])
+def test_gateway_create_oauth_config_token_issuer_rejects_malformed_url(bad):
+    """token_issuer skips SSRF and DNS checks only; the URL must stay well formed."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={"token_issuer": bad, "client_id": "test-client", "client_secret": "test-secret"},  # pragma: allowlist secret
+        )
+    assert "OAuth config token_issuer" in str(exc_info.value)
+
+
+def test_gateway_create_oauth_config_issuer_still_ssrf_checked():
+    """Fetched fields keep the full SSRF validation; only token_issuer skips it (issue #7665)."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={"issuer": "http://169.254.169.254/latest/meta-data/", "client_id": "test-client", "client_secret": "test-secret"},  # pragma: allowlist secret
+        )
+    assert "OAuth config issuer" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
 def test_oauth_manager_non_string_token_url_raises():
     """Test that OAuthManager raises error for non-string token_url."""
     from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
