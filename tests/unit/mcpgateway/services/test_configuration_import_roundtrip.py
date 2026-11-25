@@ -429,7 +429,7 @@ async def test_import_ignores_credentials_and_clears_saved_auth_on_origin_change
     assert "headers.Authorization" in caplog.text
     assert "example-credential" not in caplog.text and "credential-payload" not in caplog.text
     with pytest.raises(ImportValidationError, match="rekey_secret"):
-        await importer.import_configuration(registry, configuration, rekey_secret="obsolete")
+        await importer.import_configuration(registry, configuration, rekey_secret="obsolete")   # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
