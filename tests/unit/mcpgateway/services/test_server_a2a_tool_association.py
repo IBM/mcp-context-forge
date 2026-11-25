@@ -8,12 +8,15 @@ An A2A agent on a virtual server must bring its derived tool along (#7672).
 
 # Standard
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import uuid
+
+# Third-Party
+import pytest
 
 # First-Party
 from mcpgateway.schemas import ServerCreate, ServerUpdate
-from mcpgateway.services.server_service import _associate_server_entities, _sync_agent_tools, _update_server_associations
+from mcpgateway.services.server_service import _associate_server_entities, _require_visible_a2a_agents, _sync_agent_tools, _update_server_associations, ServerError
 from mcpgateway.db import A2AAgent as DbA2AAgent
 
 
@@ -182,3 +185,85 @@ class TestUpdateKeepsTools:
 def test_model_has_the_tool_relationship_the_fix_relies_on():
     """The agent model exposes the derived tool."""
     assert hasattr(DbA2AAgent, "tool") and hasattr(DbA2AAgent, "tool_id")
+
+
+def _scoped_agent(agent_id, visibility, team_id=None, owner_email=None):
+    """Build an agent stand-in with visibility fields."""
+    return SimpleNamespace(id=agent_id, name=agent_id, visibility=visibility, team_id=team_id, owner_email=owner_email, tool=None)
+
+
+@pytest.fixture(autouse=True)
+def _caller_is_not_admin():
+    """Treat every caller as a non-admin."""
+    with patch("mcpgateway.services.a2a_service.is_user_admin", return_value=False):
+        yield
+
+
+class TestAgentVisibility:
+    """A caller can attach only the agents it can see."""
+
+    def test_public_agent_is_allowed_for_a_public_only_token(self):
+        agent = _scoped_agent(A1, "public")
+
+        _require_visible_a2a_agents(_db_returning(agent), [A1], "user@example.com", [])
+
+    def test_team_agent_of_another_team_is_denied(self):
+        agent = _scoped_agent(A1, "team", team_id="team-b")
+
+        with pytest.raises(ServerError):
+            _require_visible_a2a_agents(_db_returning(agent), [A1], "user@example.com", ["team-a"])
+
+    def test_team_agent_of_the_caller_team_is_allowed(self):
+        agent = _scoped_agent(A1, "team", team_id="team-a")
+
+        _require_visible_a2a_agents(_db_returning(agent), [A1], "user@example.com", ["team-a"])
+
+    def test_team_agent_is_denied_for_a_public_only_token(self):
+        agent = _scoped_agent(A1, "team", team_id="team-a")
+
+        with pytest.raises(ServerError):
+            _require_visible_a2a_agents(_db_returning(agent), [A1], "user@example.com", [])
+
+    def test_private_agent_of_another_user_is_denied(self):
+        agent = _scoped_agent(A1, "private", owner_email="owner@example.com")
+
+        with pytest.raises(ServerError):
+            _require_visible_a2a_agents(_db_returning(agent), [A1], "user@example.com", ["team-a"])
+
+    def test_private_agent_of_the_caller_is_allowed(self):
+        agent = _scoped_agent(A1, "private", owner_email="user@example.com")
+
+        _require_visible_a2a_agents(_db_returning(agent), [A1], "user@example.com", ["team-a"])
+
+    def test_unknown_agent_is_denied(self):
+        with pytest.raises(ServerError):
+            _require_visible_a2a_agents(_db_returning(), [A1], "user@example.com", ["team-a"])
+
+    def test_missing_and_invisible_agents_return_the_same_error(self):
+        hidden = _scoped_agent(A1, "private", owner_email="owner@example.com")
+
+        with pytest.raises(ServerError) as missing:
+            _require_visible_a2a_agents(_db_returning(), [A1], "user@example.com", ["team-a"])
+        with pytest.raises(ServerError) as invisible:
+            _require_visible_a2a_agents(_db_returning(hidden), [A1], "user@example.com", ["team-a"])
+
+        assert str(missing.value) == str(invisible.value)
+
+    def test_one_invisible_agent_denies_the_whole_request(self):
+        visible, hidden = _scoped_agent(A1, "public"), _scoped_agent(A2, "team", team_id="team-b")
+
+        with pytest.raises(ServerError):
+            _require_visible_a2a_agents(_db_returning(visible, hidden), [A1, A2], "user@example.com", ["team-a"])
+
+    def test_agent_already_on_the_server_needs_no_new_check(self):
+        attached = _scoped_agent(A1, "team", team_id="team-b")
+
+        _require_visible_a2a_agents(_db_returning(), [A1], "user@example.com", ["team-a"], attached=[attached])
+
+    def test_no_agent_ids_runs_no_query(self):
+        db = _db_returning()
+
+        _require_visible_a2a_agents(db, None, "user@example.com", [])
+        _require_visible_a2a_agents(db, [], "user@example.com", [])
+
+        db.execute.assert_not_called()

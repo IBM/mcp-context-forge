@@ -43,6 +43,7 @@ from mcpgateway.db import ServerInterface as DbServerInterface
 from mcpgateway.db import ServerMetric, ServerMetricsHourly, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import interface_identity, ServerCreate, ServerInterfaceInput, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
+from mcpgateway.services.a2a_service import agent_visible_to
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
@@ -271,6 +272,33 @@ def _sync_agent_tools(server: DbServer, dropped_agents: Optional[List[DbA2AAgent
             server.tools.remove(tool)
             current.discard(tool.id)
             logger.info("A2A agent %s tool %s detached from server %s", agent.name, tool.id, server.name)
+
+
+def _require_visible_a2a_agents(db: Session, agent_ids: Optional[Sequence[str]], user_email: Optional[str], token_teams: Optional[List[str]], attached: Sequence[DbA2AAgent] = ()) -> None:
+    """Reject agent IDs that the caller cannot see.
+
+    A missing agent and an invisible agent raise the same error, so the error does not reveal
+    whether an ID exists. Agents already attached to the server stay allowed.
+
+    Args:
+        db: Database session.
+        agent_ids: Agent IDs the request attaches to the server.
+        user_email: Email of the caller, for owner matching.
+        token_teams: Teams of the caller token. ``None`` is the admin bypass, ``[]`` is public-only.
+        attached: Agents already attached to the server. They need no new check.
+
+    Raises:
+        ServerError: If any requested agent is missing or not visible to the caller.
+    """
+    already_attached = {agent.id for agent in attached}
+    requested = {id_.strip() for id_ in agent_ids or [] if id_ and id_.strip()} - already_attached
+    if not requested:
+        return
+    agents = db.execute(select(DbA2AAgent).where(DbA2AAgent.id.in_(requested))).scalars().all()
+    visible = {agent.id for agent in agents if agent_visible_to(db, agent, user_email, token_teams)}
+    unavailable = requested - visible
+    if unavailable:
+        raise ServerError(f"A2A Agents with ids {sorted(unavailable)} do not exist.")
 
 
 def _associate_server_entities(db: Session, db_server: DbServer, server_in: ServerCreate) -> None:
@@ -635,6 +663,7 @@ class ServerService(BaseService):
         visibility: Optional[str] = "public",
         *,
         oauth_authorized: bool = False,
+        token_teams: Optional[List[str]] = None,
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
@@ -661,6 +690,7 @@ class ServerService(BaseService):
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
             oauth_authorized: Whether the route authorizes explicit OAuth configuration.
+            token_teams: Teams of the caller token. Limits which A2A agents the caller can attach.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -743,6 +773,7 @@ class ServerService(BaseService):
             logger.info("Adding server to DB session: %s", db_server.name)
             db.add(db_server)
 
+            _require_visible_a2a_agents(db, server_in.associated_a2a_agents, owner_email, token_teams)
             _associate_server_entities(db, db_server, server_in)
             _apply_server_interfaces(db_server, getattr(server_in, "interfaces", None))
 
@@ -1366,6 +1397,7 @@ class ServerService(BaseService):
         modified_user_agent: Optional[str] = None,
         *,
         oauth_authorized: bool = False,
+        token_teams: Optional[List[str]] = None,
     ) -> ServerRead:
         """Update an existing server.
 
@@ -1379,6 +1411,7 @@ class ServerService(BaseService):
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
             oauth_authorized: Whether the route authorizes explicit OAuth configuration.
+            token_teams: Teams of the caller token. Limits which A2A agents the caller can attach.
 
         Returns:
             The updated ServerRead object.
@@ -1502,6 +1535,7 @@ class ServerService(BaseService):
             if server_update.team_id is not None:
                 server.team_id = server_update.team_id
 
+            _require_visible_a2a_agents(db, getattr(server_update, "associated_a2a_agents", None), user_email, token_teams, attached=server.a2a_agents)
             _update_server_associations(db, server, server_update)
             _apply_server_interfaces(server, server_update.interfaces)
 

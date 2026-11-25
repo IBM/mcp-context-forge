@@ -4232,6 +4232,7 @@ async def create_server(
             return ORJSONResponse(content={"message": str(exc)}, status_code=status.HTTP_403_FORBIDDEN)
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new server for team {team_id}")
+        _, token_teams = get_scoped_resource_access_context(request, user)
         result = await server_service.register_server(
             db,
             server,
@@ -4243,6 +4244,7 @@ async def create_server(
             owner_email=user_email,
             visibility=visibility,
             oauth_authorized=oauth_authorized,
+            token_teams=token_teams,
         )
         db.commit()
         db.close()
@@ -4292,6 +4294,7 @@ async def update_server(
 
         user_email: str = get_user_email(user)
 
+        _, token_teams = get_scoped_resource_access_context(request, user)
         result = await server_service.update_server(
             db,
             server_id,
@@ -4302,6 +4305,7 @@ async def update_server(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             oauth_authorized=oauth_authorized,
+            token_teams=token_teams,
         )
         db.commit()
         db.close()
