@@ -2165,7 +2165,7 @@ class TestToolServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.tool_service.create_span", return_value=mock_span),
             patch("mcpgateway.services.tool_service.create_child_span", return_value=mock_span),
             patch("mcpgateway.services.tool_service.is_input_capture_enabled", return_value=False),
-            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"ok": True}),
+            patch("mcpgateway.services.tool_service.apply_response_filter", return_value={"ok": True}),
             patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
         ):
             await service.invoke_tool(

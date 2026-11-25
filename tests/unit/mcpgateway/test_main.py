@@ -7162,13 +7162,13 @@ def _record_sandbox_pool_hooks(monkeypatch, main_mod, calls, *, failing=None):
 
         return hook
 
-    for name in ("start_jq_pool", "start_validation_pool", "start_cel_pool", "shutdown_jq_pool", "shutdown_validation_pool", "shutdown_cel_pool"):
+    for name in ("start_validation_pool", "start_cel_pool", "shutdown_validation_pool", "shutdown_cel_pool"):
         monkeypatch.setattr(main_mod, name, make_hook(name))
 
 
 @pytest.mark.asyncio
 async def test_lifespan_starts_sandbox_pools_in_order_and_shuts_them_down(monkeypatch):
-    """The lifespan starts the jq, validation and CEL pools before bootstrap, and stops them in the same order on exit."""
+    """The lifespan starts the validation and CEL pools before bootstrap, and stops them in the same order on exit."""
     # First-Party
     import mcpgateway.main as main_mod
 
@@ -7178,9 +7178,9 @@ async def test_lifespan_starts_sandbox_pools_in_order_and_shuts_them_down(monkey
     monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock(side_effect=lambda: calls.append("bootstrap_db")))
 
     async with main_mod.lifespan(main_mod.app):
-        assert calls == ["start_jq_pool", "start_validation_pool", "start_cel_pool", "bootstrap_db"]
+        assert calls == ["start_validation_pool", "start_cel_pool", "bootstrap_db"]
 
-    assert calls[4:] == ["shutdown_jq_pool", "shutdown_validation_pool", "shutdown_cel_pool"]
+    assert calls[3:] == ["shutdown_validation_pool", "shutdown_cel_pool"]
 
 
 @pytest.mark.asyncio
@@ -7191,15 +7191,15 @@ async def test_lifespan_aborts_boot_when_a_sandbox_pool_fails_to_start(monkeypat
 
     _stub_lifespan_dependencies(monkeypatch, main_mod)
     calls = []
-    _record_sandbox_pool_hooks(monkeypatch, main_mod, calls, failing="start_jq_pool")
+    _record_sandbox_pool_hooks(monkeypatch, main_mod, calls, failing="start_validation_pool")
     bootstrap = AsyncMock()
     monkeypatch.setattr("mcpgateway.bootstrap_db.main", bootstrap)
 
-    with pytest.raises(RuntimeError, match="start_jq_pool failed"):
+    with pytest.raises(RuntimeError, match="start_validation_pool failed"):
         async with main_mod.lifespan(main_mod.app):
             pytest.fail("lifespan must not yield when a sandbox pool fails to start")
 
-    assert calls == ["start_jq_pool"]
+    assert calls == ["start_validation_pool"]
     bootstrap.assert_not_awaited()
 
 

@@ -32,7 +32,7 @@ cpex-sql-sanitizer = "2026-11-20T23:59:59Z"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.1.1"
+version = "1.1.2"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -318,11 +318,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.1.1",
+    "mcp-contextforge-gateway[redis]>=1.1.2",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.1.1",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.1.2",
 ]
 
 # --------------------------------------------------------------------
@@ -749,7 +749,7 @@ markers = [
     "mcp_utilities: marks ping/cancel/progress/pagination checks",
     "mcp_tasks: marks tasks capability checks",
     "mcp_auth: marks authorization discovery checks", # pragma: allowlist secret
-    "real_sandbox_pools: keeps the real jq, validation and CEL worker pools in main.lifespan (unit tests stub them by default)",
+    "real_sandbox_pools: keeps the real validation and CEL worker pools in main.lifespan (unit tests stub them by default)",
     "regression: marks regression tests for previously-fixed bugs",
     "proxy: marks tests that run through a simulated proxy prefix",
     "iframe: marks tests that run inside an iframe host page",

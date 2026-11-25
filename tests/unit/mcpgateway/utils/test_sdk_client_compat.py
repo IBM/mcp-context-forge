@@ -102,6 +102,19 @@ async def test_compat_shim_yields_2tuple() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compat_shim_default_client_does_not_follow_redirects() -> None:
+    """The default client refuses redirects so a redirect cannot bypass outbound URL validation."""
+    mock_acm = AsyncMock()
+    mock_acm.__aenter__.return_value = (MagicMock(), MagicMock())
+
+    with patch("mcpgateway.utils.streamable_http_compat._sdk_streamable_http_client", return_value=mock_acm) as sdk_client:
+        async with compat_streamable_http_client("http://localhost:9000/mcp"):
+            pass
+
+    assert sdk_client.call_args.kwargs["http_client"].follow_redirects is False
+
+
+@pytest.mark.asyncio
 async def test_client_accepts_compat_shim_as_transport() -> None:
     """``Client(transport=<ACM yielding 2-tuple>)`` resolves without TypeError.
 

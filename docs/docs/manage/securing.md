@@ -698,78 +698,114 @@ Before connecting any MCP server:
 - [ ] Monitor server behavior for anomalies
 - [ ] Implement rate limiting for untrusted servers
 
-### 13. jq Filter Sandbox
+### 13. Response Filter Sandbox
 
-Tool `jsonpath_filter` values are jq programs. They are validated when a tool is
-written and again when it is invoked, and — on Linux — they execute in a forked
-worker whose environment has been cleared, under `JQ_FILTER_TIMEOUT_SECONDS`.
+Tool `jsonpath_filter` values are CEL expressions written by whoever registers the
+tool. A filter sees the tool's response as `response` and returns any JSON value,
+which replaces the response, structured content included. It is compiled when
+the tool is written, and — on Linux — it runs in a forked worker whose
+environment has been cleared, under `CEL_FILTER_TIMEOUT_SECONDS`, in a pool of
+`CEL_FILTER_WORKERS` processes reserved for filters. Validation policies
+(section 14) have a pool of their own, so a filter written by a tool registrant
+cannot stall or kill a check written by an administrator.
 
-Filters that reference `env`, `$ENV`, `input`, `inputs`, `input_filename`,
-`input_line_number`, `$__loc__`, `debug`, `stderr`, `include`, `import`,
-`modulemeta`, `halt`, `halt_error`, `builtins`, `while`, `until`, `recurse`,
-`recurse_down`, `foreach`, or `repeat` are rejected. Field access such as `.env`
-is unaffected.
+| Filter | Result |
+|--------|--------|
+| `response.data` | The `data` field. |
+| `response.items.map(i, i.name)` | The `name` of every item. |
+| `response.items.filter(i, i.size > 1)` | The items larger than one. |
+| `{"count": response.total, "names": response.items.map(i, i.name)}` | A new object. |
 
-Object-construction keys are read as code, so an unquoted key named after a
-restricted built-in is refused. Quote it instead — write `{"env": .region}`
-rather than `{env: .region}`.
+A filter that starts with `.` or `$` is rejected when the tool is written as a
+jq or JSONPath filter, with the advice to write a CEL expression over
+`response`. A filter that does not compile, or names anything other than
+`response`, is rejected the same way. That check only parses the expression,
+in the gateway process; nothing runs until the tool is called. A stored filter
+that cannot run is never skipped: the call returns an error result reading
+`jsonpath filter is not a valid CEL expression`, `Error applying jsonpath
+filter`, `jsonpath filter exceeded the execution time limit`, or `jsonpath
+filter sandbox is busy, try again`. The detail behind the first two goes to
+the gateway log only, at `ERROR` level, with the tool's name; the last two are
+logged at `WARNING`. For an MCP tool, a result that is not a list of content
+blocks is delivered as one text block holding its JSON.
 
-| Setting | Default | Purpose |
-|---------|---------|---------|
-| `JQ_FILTER_EXECUTION` | `subprocess` | `subprocess` runs filters in the sandbox; `inprocess` disables it. |
-| `JQ_FILTER_TIMEOUT_SECONDS` | `2.0` | Wall-clock limit for a single filter. |
-| `JQ_FILTER_WORKERS` | `2` | Worker processes per gateway process. Raise it if filtered tools are called concurrently enough that a single slow filter queues others. |
+**Upgrading from jq.** Earlier releases evaluated this field as a jq program
+and returned its results wrapped in a list. Migration `f2c3d4e5a6b7` rewrites
+the common jq shapes in place and keeps that wrapping, so a migrated tool
+answers exactly as before: `.` becomes `[response]`, `.a.b` becomes
+`[response.a.b]`, `.[0]` becomes `[response[0]]`, `.items[]` becomes
+`response.items`, and `.items[].name` becomes `response.items.map(x, x.name)`,
+which are already lists. A filter written by
+hand returns whatever its expression produces, with no wrapping. Any other
+stored filter, including a path through a field named `true`, `false`, `null`
+or `in`, is left as stored and listed in a migration warning; its tool returns
+an error result on every call until the filter is rewritten. Two jq behaviours
+are not carried over, and both fail loudly rather than silently: a missing
+field answered `[null]` under jq and is now an error, and `.[]` over an object
+walked its values under jq while CEL `map` walks its keys, so such a call is an
+error. jq programs that parse JSON held inside a text block, such as
+`.[0].text | fromjson | .a`, have no CEL equivalent, because CEL has no JSON
+parser; such a tool needs its upstream to return structured content instead.
+Downgrading reverses the rewritten shapes. Audit existing tools before
+upgrading, since any filter the migration cannot translate fails at write and
+invoke time until it is rewritten:
 
-!!! warning "The sandbox is Linux-only"
-    The forked worker requires the `fork` start method, which is unsafe on
-    Darwin, so `subprocess` mode is silently inactive on any non-Linux platform
-    **regardless of `JQ_FILTER_EXECUTION`**. There, filters run in-process with
-    no environment scrub and no time limit, and the static denylist above is the
-    only protection. This is announced by a `WARNING` at startup — check for it
-    if you run the gateway outside a Linux container. The shipped container
-    images are Linux, so production deployments get the sandbox.
-
-`JQ_FILTER_EXECUTION=inprocess` likewise disables both the environment scrub and
-the time limit. It exists only for platforms without a usable `fork`, and must
-not be set in production.
+```sql
+SELECT id, name, jsonpath_filter FROM tools
+WHERE jsonpath_filter <> ''
+  AND jsonpath_filter NOT LIKE 'response%'
+  AND jsonpath_filter NOT LIKE '[response%';
+```
 
 **Blast radius of a timeout.** A filter that overruns its limit causes the whole
-worker pool to be killed and rebuilt, because `ProcessPoolExecutor` cannot
+filter worker pool to be killed and rebuilt, because `ProcessPoolExecutor` cannot
 cancel a task that is already running and offers no way to target one worker.
 Other filters in flight at that moment are aborted and reported as errors to
-their own callers. Raising `JQ_FILTER_WORKERS` does not narrow this — the kill
+their own callers. Raising `CEL_FILTER_WORKERS` does not narrow this — the kill
 is pool-wide by design. It is an accepted trade-off: the alternative is leaving
-a non-terminating filter holding a worker indefinitely. The pool is also
-rebuilt if a worker dies abnormally (for example, if the kernel OOM-kills a
-filter that allocates without bound), so a single hostile filter cannot disable
-response filtering for the lifetime of the gateway process.
+a non-terminating filter holding a worker indefinitely. Validation policies run
+in a separate pool and are never affected. The pool is also rebuilt if a worker
+dies abnormally, so a single hostile filter cannot disable response filtering
+for the lifetime of the gateway process.
 
-**If you ran a build released before this change**, treat the following as
-disclosed and rotate them: `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and the
-credentials embedded in `DATABASE_URL` and `REDIS_URL`, plus
-`BASIC_AUTH_PASSWORD`. Audit existing tools for `jsonpath_filter` values
-referencing restricted built-ins (including process control and unbounded iteration
-constructs such as `halt`, `recurse`, `while`, `until`, `foreach`, `repeat`, and `builtins`)
-before upgrading, since those tools will begin failing at write and invoke time.
+**If you ran a build released before the jq sandbox** (that is, before filters
+ran in an environment-scrubbed worker), treat the following as disclosed and
+rotate them: `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and the credentials
+embedded in `DATABASE_URL` and `REDIS_URL`, plus `BASIC_AUTH_PASSWORD`.
 
 ### 14. Tool Validation Policy Sandbox
 
 Gateway and tool `tool_validation_policy` values are CEL expressions written by
 operators. They are evaluated when the policy is saved and whenever a tool is
-registered, refreshed, or edited, and — on Linux — they execute in the same kind of
-forked, environment-scrubbed worker as jq filters, under `CEL_TIMEOUT_SECONDS`.
+registered, refreshed, or edited, and — on Linux — they execute in a forked,
+environment-scrubbed worker pool of their own, separate from response filters,
+under `CEL_TIMEOUT_SECONDS`.
 An expression sees only `description` and `tool_name`; any other name, any
 function the CEL runtime does not provide, and any non-boolean result is
 rejected when the policy is saved.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `CEL_EXECUTION` | `subprocess` | `subprocess` evaluates policies in the sandbox; `inprocess` disables it. |
-| `CEL_TIMEOUT_SECONDS` | `1.0` | Wall-clock limit for a single evaluation, at most 1.0. |
-| `CEL_WORKERS` | `2` | Worker processes per gateway process. |
+| `CEL_EXECUTION` | `subprocess` | `subprocess` evaluates filters and policies in the sandbox; `inprocess` disables it. |
+| `CEL_TIMEOUT_SECONDS` | `1.0` | Wall-clock limit for a single policy evaluation, at most 1.0. |
+| `CEL_WORKERS` | `2` | Policy worker processes per gateway process. |
+| `CEL_FILTER_TIMEOUT_SECONDS` | `2.0` | Wall-clock limit for a single response filter, at most 60. |
+| `CEL_FILTER_WORKERS` | `2` | Filter worker processes per gateway process. Raise it if filtered tools are called concurrently enough that a single slow filter queues others. |
 
-The platform caveat, the meaning of `inprocess`, and the pool-wide kill on timeout
-are the same as for the jq sandbox above. A policy that cannot be evaluated counts as a
+!!! warning "The sandbox is Linux-only"
+    The forked worker requires the `fork` start method, which is unsafe on
+    Darwin, so `subprocess` mode is silently inactive on any non-Linux platform
+    **regardless of `CEL_EXECUTION`**. There, filters and policies run in-process
+    with no environment scrub and no time limit. This is announced by a
+    `WARNING` at startup — check for it if you run the gateway outside a Linux
+    container. The shipped container images are Linux, so production
+    deployments get the sandbox.
+
+`CEL_EXECUTION=inprocess` likewise disables both the environment scrub and the
+time limit. It exists only for platforms without a usable `fork`, and must not
+be set in production. The pool-wide kill on timeout works as for response
+filters above, but a filter timeout never touches the policy pool. A policy
+that cannot be evaluated counts as a
 refusal, after one retry for a sandbox that is busy or unavailable, so a failed
 check disables the affected tools with the reason stored on the row rather than
 admitting them unchecked. Setting a policy requires the `validation_policy.manage` permission and
@@ -796,7 +832,7 @@ never at pattern content.
     inline match. No setting disables the sandbox for a regex-bearing schema.
 
 **Platform.** The sandbox forks worker processes on Linux. On any other
-platform it falls back to `spawn`, matching the jq filter sandbox's own
+platform it falls back to `spawn`, matching the CEL sandbox's own
 platform split (see section 13). The shipped container images are Linux.
 
 **Plugin-configured regex.** Regex patterns that an operator supplies in
