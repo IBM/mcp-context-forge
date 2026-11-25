@@ -196,8 +196,9 @@ async def import_command(args: argparse.Namespace) -> None:
             "dry_run": args.dry_run,
         }
 
-        if args.rekey_secret:
-            request_data["rekey_secret"] = args.rekey_secret
+        team_name = getattr(args, "team_name", None)
+        if team_name:
+            request_data["team_name"] = team_name
 
         if args.include:
             # Parse include parameter: "tool:tool1,tool2;server:server1"
@@ -228,6 +229,8 @@ async def import_command(args: argparse.Namespace) -> None:
         print(f"   • Updated: {progress.get('updated', 0)}")
         print(f"   • Skipped: {progress.get('skipped', 0)}")
         print(f"   • Failed: {progress.get('failed', 0)}")
+        if progress.get("unknown"):
+            print(f"   • Unknown: {progress['unknown']}")
 
         # Show warnings if any
         warnings = result.get("warnings", [])
@@ -290,7 +293,7 @@ def create_parser() -> argparse.ArgumentParser:
     import_parser.add_argument("input_file", help="Input file containing export data")
     import_parser.add_argument("--conflict-strategy", choices=["skip", "update", "rename", "fail"], default="update", help="How to handle naming conflicts (default: update)")
     import_parser.add_argument("--dry-run", action="store_true", help="Validate but don't make changes")
-    import_parser.add_argument("--rekey-secret", help="New encryption secret for cross-environment imports")
+    import_parser.add_argument("--team-name", help="Destination team name (defaults to your personal team)")
     import_parser.add_argument("--include", help="Selective import: entity_type:name1,name2;entity_type2:name3")
     import_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     import_parser.set_defaults(func=import_command)

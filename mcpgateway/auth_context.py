@@ -946,6 +946,26 @@ async def require_server_oauth_admin(request: Request, user: Any, db: Session, f
     return True
 
 
+async def get_import_request_scope(request: Request | None, user: Any, db: Session) -> tuple[str, Optional[List[str]], bool]:
+    """Resolve the authenticated actor and authorization scope for import.
+
+    Args:
+        request: Current request.
+        user: Authenticated user.
+        db: Database session for permission checks.
+
+    Returns:
+        Actor email, team scope, and unrestricted platform authority.
+    """
+    if request is None:
+        return get_user_email(user), [], False
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    unrestricted_admin = await is_unrestricted_platform_admin(request, user, db)
+    if not unrestricted_admin and token_teams is None:
+        token_teams = []
+    return user_email or get_user_email(user), token_teams, unrestricted_admin
+
+
 def configuration_export_includes_roots(include_types: Optional[List[str]], exclude_types: Optional[List[str]]) -> bool:
     """Return whether full export selection includes roots."""
     normalized_include = {item.strip().lower() for item in include_types or [] if item and item.strip()}
@@ -956,26 +976,22 @@ def configuration_export_includes_roots(include_types: Optional[List[str]], excl
 
 
 def selective_selection_includes_roots(entity_selections: Any) -> bool:
-    """Return whether selective export/import selection includes roots."""
+    """Return whether selective export selection includes roots."""
     if not isinstance(entity_selections, dict) or "roots" not in entity_selections:
         return False
     roots_selection = entity_selections.get("roots")
     return roots_selection is None or (isinstance(roots_selection, list) and bool(roots_selection))
 
 
-def import_envelope_includes_roots(import_data: Any, selected_entities: Any = None) -> bool:
-    """Return whether import data and selection would touch roots."""
+def import_envelope_includes_roots(import_data: Any) -> bool:
+    """Return whether the import file contains roots."""
     if not isinstance(import_data, dict):
         return False
     entities = import_data.get("entities")
-    if not isinstance(entities, dict) or "roots" not in entities:
+    if not isinstance(entities, dict):
         return False
     roots = entities.get("roots")
-    if not isinstance(roots, list) or not roots:
-        return False
-    if selected_entities is None:
-        return True
-    return selective_selection_includes_roots(selected_entities)
+    return isinstance(roots, list) and bool(roots)
 
 
 def _has_verified_jwt_payload(request: Request) -> bool:

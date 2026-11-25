@@ -48,6 +48,7 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, protect_oauth_config_for_storage
+from mcpgateway.services.import_effects import after_import_commit, after_import_commit_sync
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
@@ -780,10 +781,10 @@ class ServerService(BaseService):
             # Commit the new record and refresh.
             db.commit()
             db.refresh(db_server)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
 
             cache = _get_registry_cache()
-            await cache.invalidate_servers()
+            await after_import_commit(cache.invalidate_servers)
 
             # Force load the relationship attributes.
             _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
@@ -802,11 +803,12 @@ class ServerService(BaseService):
                 "associated_prompts": [str(prompt.id) for prompt in db_server.prompts],
             }
             logger.debug("Server Data: %s", server_data)
-            await self._notify_server_added(db_server)
+            await after_import_commit(self._notify_server_added, db_server)
             logger.info("Registered server: %s", server_in.name)
 
             # Structured logging: Audit trail for server creation
-            self._audit_trail.log_action(
+            after_import_commit_sync(
+                self._audit_trail.log_action,
                 user_id=created_by or "system",
                 action="create_server",
                 resource_type="server",
@@ -1390,7 +1392,7 @@ class ServerService(BaseService):
         db: Session,
         server_id: str,
         server_update: ServerUpdate,
-        user_email: str,
+        user_email: Optional[str],
         modified_by: Optional[str] = None,
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
@@ -1398,6 +1400,7 @@ class ServerService(BaseService):
         *,
         oauth_authorized: bool = False,
         token_teams: Optional[List[str]] = None,
+        import_platform_admin: bool = False,
     ) -> ServerRead:
         """Update an existing server.
 
@@ -1412,6 +1415,7 @@ class ServerService(BaseService):
             modified_user_agent: User agent of the client making the modification.
             oauth_authorized: Whether the route authorizes explicit OAuth configuration.
             token_teams: Teams of the caller token. Limits which A2A agents the caller can attach.
+            import_platform_admin: Verified unrestricted administrator for this import update.
 
         Returns:
             The updated ServerRead object.
@@ -1472,7 +1476,7 @@ class ServerService(BaseService):
             original_server_id = str(server.id)
 
             # Check ownership if user_email provided
-            if user_email:
+            if user_email and not import_platform_admin:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
@@ -1523,7 +1527,7 @@ class ServerService(BaseService):
                 # Validate visibility transitions
                 if new_visibility == "team":
                     target_team_id = server_update.team_id if server_update.team_id is not None else server.team_id
-                    _validate_server_team_assignment(db, user_email, target_team_id)
+                    _validate_server_team_assignment(db, None if import_platform_admin else user_email, target_team_id)
 
                 elif new_visibility == "public":
                     # Optional: Check if user has permission to make resources public
@@ -1594,25 +1598,25 @@ class ServerService(BaseService):
 
             db.commit()
             db.refresh(server)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
             # Force loading relationships
             _ = server.tools, server.resources, server.prompts
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
-            await cache.invalidate_servers()
+            await after_import_commit(cache.invalidate_servers)
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate_server(original_server_id)
+            await after_import_commit(tool_lookup_cache.invalidate_server, original_server_id)
             updated_server_id = str(server.id)
             if updated_server_id != original_server_id:
-                await tool_lookup_cache.invalidate_server(updated_server_id)
+                await after_import_commit(tool_lookup_cache.invalidate_server, updated_server_id)
             # Also invalidate tags cache since server tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
 
-            await self._notify_server_updated(server)
+            await after_import_commit(self._notify_server_updated, server)
             logger.info("Updated server: %s", server.name)
 
             # Structured logging: Audit trail for server update
@@ -1626,7 +1630,8 @@ class ServerService(BaseService):
             if server_update.interfaces is not None:
                 changes.append(f"interfaces: {len(server_update.interfaces)}")
 
-            self._audit_trail.log_action(
+            after_import_commit_sync(
+                self._audit_trail.log_action,
                 user_id=user_email or "system",
                 action="update_server",
                 resource_type="server",

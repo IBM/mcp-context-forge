@@ -9536,7 +9536,8 @@ class TestImportConfigurationEndpoints:
 
         # Mock request body
         import_data = {"version": "1.0", "servers": [{"name": "test-server", "url": "https://example.com"}], "tools": []}
-        request_body = {"import_data": import_data, "conflict_strategy": "update", "dry_run": False, "selected_entities": {"servers": True, "tools": True}}
+        selection = {"servers": ["test-server"], "tools": []}
+        request_body = {"import_data": import_data, "conflict_strategy": "update", "dry_run": False, "selected_entities": selection}
         mock_request.json = AsyncMock(return_value=request_body)
 
         result = await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
@@ -9546,6 +9547,7 @@ class TestImportConfigurationEndpoints:
         assert body["import_id"] == "import-123"
         assert body["status"] == "completed"
         mock_import_config.assert_called_once()
+        assert mock_import_config.call_args.kwargs["selected_entities"] == selection
 
     async def test_admin_import_configuration_missing_import_data(self, mock_request, mock_db):
         """Test import configuration with missing import_data."""
@@ -9614,7 +9616,7 @@ class TestImportConfigurationEndpoints:
         assert call_kwargs["imported_by"] == "dict-user@example.com"
 
     @patch.object(ImportService, "get_import_status")
-    async def test_admin_get_import_status_success(self, mock_get_status, mock_db):
+    async def test_admin_get_import_status_success(self, mock_get_status, mock_request, mock_db):
         """Test getting import status successfully."""
         # First-Party
 
@@ -9622,29 +9624,31 @@ class TestImportConfigurationEndpoints:
         mock_status.to_dict.return_value = {"import_id": "import-123", "status": "in_progress", "progress": {"total": 10, "completed": 5, "errors": 0}}
         mock_get_status.return_value = mock_status
 
-        result = await admin_get_import_status("import-123", user={"email": "test-user@example.com", "db": mock_db})
+        with patch("mcpgateway.admin.get_import_request_scope", return_value=("test-user@example.com", ["team-1"], False)) as mock_scope:
+            result = await admin_get_import_status("import-123", request=mock_request, db=mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
         assert body["import_id"] == "import-123"
         assert body["status"] == "in_progress"
-        mock_get_status.assert_called_with("import-123")
+        mock_scope.assert_awaited_once()
+        mock_get_status.assert_called_once_with("import-123", imported_by="test-user@example.com", token_teams=["team-1"], unrestricted_admin=False)
 
     @patch.object(ImportService, "get_import_status")
-    async def test_admin_get_import_status_not_found(self, mock_get_status, mock_db):
+    async def test_admin_get_import_status_not_found(self, mock_get_status, mock_request, mock_db):
         """Test getting import status when not found."""
         # First-Party
 
         mock_get_status.return_value = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_import_status("nonexistent", user={"email": "test-user@example.com", "db": mock_db})
+            await admin_get_import_status("nonexistent", request=mock_request, db=mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 404
         assert "Import nonexistent not found" in str(excinfo.value.detail)
 
     @patch.object(ImportService, "list_import_statuses")
-    async def test_admin_list_import_statuses(self, mock_list_statuses, mock_db):
+    async def test_admin_list_import_statuses(self, mock_list_statuses, mock_request, mock_db):
         """Test listing all import statuses."""
         # First-Party
 
@@ -9654,14 +9658,15 @@ class TestImportConfigurationEndpoints:
         mock_status2.to_dict.return_value = {"import_id": "import-2", "status": "failed"}
         mock_list_statuses.return_value = [mock_status1, mock_status2]
 
-        result = await admin_list_import_statuses(user={"email": "test-user@example.com", "db": mock_db})
+        with patch("mcpgateway.admin.get_import_request_scope", return_value=("test-user@example.com", ["team-1"], False)):
+            result = await admin_list_import_statuses(request=mock_request, db=mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
         assert len(body) == 2
         assert body[0]["import_id"] == "import-1"
         assert body[1]["import_id"] == "import-2"
-        mock_list_statuses.assert_called_once()
+        mock_list_statuses.assert_called_once_with(imported_by="test-user@example.com", token_teams=["team-1"], unrestricted_admin=False)
 
 
 class TestAdminUIMainEndpoint:

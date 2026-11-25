@@ -8,38 +8,57 @@ Export Service Implementation.
 This module implements comprehensive configuration export functionality according to the export specification.
 It handles:
 - Entity collection from all entity types (Tools, Gateways, Servers, Prompts, Resources, Roots)
-- Secure authentication data encryption using AES-256-GCM
+- Credential omission and reconfiguration indicators
 - Dependency resolution and inclusion
 - Filtering by entity types, tags, and active/inactive status
 - Export format validation and schema compliance
-- Only exports locally configured entities (not federated content)
+- Portable references to authorized federated associations
 """
 
 # Standard
+from collections import defaultdict
 from datetime import datetime, timezone
 import logging
 from typing import Any, cast, Dict, Iterable, List, Optional, Sequence, TypedDict
 
 # Third-Party
-from sqlalchemy import or_, select
-from sqlalchemy.orm import selectinload, Session, with_loader_criteria
+from sqlalchemy import and_, false, or_, select
+from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 # First-Party
+from mcpgateway import __version__
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ResourceRead
-from mcpgateway.utils.services_auth import encode_auth
+from mcpgateway.db import server_tool_association
+from mcpgateway.schemas import GatewayRead, ResourceRead
+from mcpgateway.services.gateway_service import gateway_requires_credentials
+from mcpgateway.services.tool_service import _decrypt_tool_header_value
+from mcpgateway.utils.portable_credentials import without_file_credentials
 from mcpgateway.utils.error_formatter import unexpected_error_detail
+from mcpgateway.utils.header_filtering import is_sensitive_tool_header_name, is_tool_credential_header_name
 
 # Service singletons are imported lazily in __init__ to avoid circular imports
 
 logger = logging.getLogger(__name__)
+
+
+def _portable_tool_headers(headers: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Prepare operational headers for export and leave credentials for removal."""
+    portable: Dict[str, Any] = {}
+    for name, stored in (headers or {}).items():
+        if is_tool_credential_header_name(name):
+            portable[name] = stored
+        elif not is_sensitive_tool_header_name(name) or name.strip().lower() == "content-type":
+            value = _decrypt_tool_header_value(stored)
+            if isinstance(value, str):
+                portable[name] = value
+    return portable
 
 
 def _exportable_resource_base(resource: DbResource | ResourceRead) -> str:
@@ -158,7 +177,7 @@ class ExportService:
         False
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the export service with required dependencies."""
         # Use globally-exported singletons from service modules so they
         # share initialized EventService/Redis clients created at app startup.
@@ -167,7 +186,7 @@ class ExportService:
         from mcpgateway.services.gateway_service import gateway_service
         from mcpgateway.services.prompt_service import prompt_service
         from mcpgateway.services.resource_service import resource_service
-        from mcpgateway.services.root_service import root_service
+        from mcpgateway.services.root_service import get_root_service
         from mcpgateway.services.server_service import server_service
         from mcpgateway.services.tool_service import tool_service
 
@@ -176,7 +195,7 @@ class ExportService:
         self.resource_service = resource_service
         self.prompt_service = prompt_service
         self.server_service = server_service
-        self.root_service = root_service
+        self.root_service = get_root_service()
 
     async def initialize(self) -> None:
         """Initialize the export service."""
@@ -367,6 +386,7 @@ class ExportService:
                 """Top-level full export payload shape."""
 
                 version: str
+                contextforge_version: str
                 exported_at: str
                 exported_by: str
                 source_gateway: str
@@ -388,6 +408,7 @@ class ExportService:
 
             export_data: ExportData = {
                 "version": settings.protocol_version,
+                "contextforge_version": __version__,
                 "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "exported_by": exported_by,
                 "source_gateway": f"http://{settings.host}:{settings.port}",
@@ -434,9 +455,7 @@ class ExportService:
             raise ExportError(f"Failed to export configuration: {unexpected_error_detail(e)}")
 
     async def _export_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """Export tools with encrypted authentication data.
-
-        Uses batch queries to fetch auth data efficiently, avoiding N+1 query patterns.
+        """Export tools without credentials.
 
         Args:
             db: Database session
@@ -453,16 +472,9 @@ class ExportService:
 
         # Filter to only exportable tools (local REST tools, not MCP tools from gateways)
         exportable_tools = [t for t in tools if not (t.integration_type == "MCP" and t.gateway_id)]
-
-        # Batch fetch auth data for tools with masked values (single query instead of N queries)
-        tool_ids_needing_auth = [
-            tool.id for tool in exportable_tools if hasattr(tool, "auth") and tool.auth and hasattr(tool.auth, "auth_value") and tool.auth.auth_value == settings.masked_auth_value
-        ]
-
-        auth_data_map: Dict[Any, tuple] = {}
-        if tool_ids_needing_auth:
-            db_tools_with_auth = db.execute(select(DbTool.id, DbTool.auth_type, DbTool.auth_value).where(DbTool.id.in_(tool_ids_needing_auth))).all()
-            auth_data_map = {row[0]: (row[1], row[2]) for row in db_tools_with_auth}
+        stored_headers = {}
+        if exportable_tools:
+            stored_headers = {str(tool_id): headers for tool_id, headers in db.execute(select(DbTool.id, DbTool.headers).where(DbTool.id.in_([str(tool.id) for tool in exportable_tools])))}
 
         exported_tools = []
         for tool in exportable_tools:
@@ -470,6 +482,8 @@ class ExportService:
                 logger.warning("Tool %s uses SigV4 authentication and is not exported: signing credentials are never written to export files", tool.id)
                 continue
             tool_data = {
+                "id": str(tool.id),
+                "visibility": getattr(tool, "visibility", None) or "public",
                 "name": tool.original_name,  # Use original name, not the slugified version
                 "displayName": tool.displayName,  # Export displayName field from ToolRead
                 "url": str(tool.url),
@@ -477,7 +491,7 @@ class ExportService:
                 "request_type": tool.request_type,
                 "description": tool.description,
                 "original_description": tool.original_description,
-                "headers": tool.headers or {},
+                "headers": _portable_tool_headers(stored_headers.get(str(tool.id), tool.headers)),
                 "input_schema": tool.input_schema or {"type": "object", "properties": {}},
                 "output_schema": tool.output_schema,
                 "annotations": tool.annotations or {},
@@ -491,30 +505,13 @@ class ExportService:
                 "updated_at": tool.updated_at.isoformat() if hasattr(tool.updated_at, "isoformat") and tool.updated_at else None,
             }
 
-            # Handle authentication data securely - use batch-fetched values
-            if hasattr(tool, "auth") and tool.auth:
-                auth = tool.auth
-                if hasattr(auth, "auth_type") and hasattr(auth, "auth_value"):
-                    if auth.auth_value == settings.masked_auth_value:
-                        # Use batch-fetched auth data
-                        if tool.id in auth_data_map:
-                            auth_type, auth_value = auth_data_map[tool.id]
-                            if auth_value:
-                                tool_data["auth_type"] = auth_type
-                                tool_data["auth_value"] = auth_value
-                    else:
-                        # Auth value is not masked, use as-is
-                        tool_data["auth_type"] = auth.auth_type
-                        tool_data["auth_value"] = auth.auth_value
-
-            exported_tools.append(tool_data)
+            tool_data["auth_type"] = getattr(getattr(tool, "auth", None), "auth_type", None)
+            exported_tools.append(without_file_credentials(tool_data)[0])
 
         return exported_tools
 
     async def _export_gateways(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """Export gateways with encrypted authentication data.
-
-        Uses batch queries to fetch auth data efficiently, avoiding N+1 query patterns.
+        """Export gateways without credentials.
 
         Args:
             db: Database session
@@ -529,50 +526,86 @@ class ExportService:
         # Fetch all gateways across all pages (with team-scoped visibility)
         gateways = await self._fetch_all_gateways(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
 
-        # Batch fetch auth data for gateways with masked values (single query instead of N queries)
-        gateway_ids_needing_auth = [g.id for g in gateways if g.auth_type and g.auth_value == settings.masked_auth_value]
+        gateway_ids = [str(gateway.id) for gateway in gateways]
+        query_auth = {}
+        if gateway_ids:
+            stmt = select(DbGateway.id, DbGateway.auth_query_params).where(DbGateway.id.in_(gateway_ids))
+            query_auth = {gateway_id: params for gateway_id, params in db.execute(stmt)}  # pylint: disable=R1721
+        return [entry for gateway in gateways if (entry := self._gateway_export_entry(gateway, query_auth.get(str(gateway.id)))) is not None]
 
-        auth_data_map: Dict[Any, tuple] = {}
-        if gateway_ids_needing_auth:
-            db_gateways_with_auth = db.execute(select(DbGateway.id, DbGateway.auth_type, DbGateway.auth_value).where(DbGateway.id.in_(gateway_ids_needing_auth))).all()
-            auth_data_map = {row[0]: (row[1], row[2]) for row in db_gateways_with_auth}
+    @staticmethod
+    def _gateway_export_entry(gateway: DbGateway | GatewayRead, query_auth: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Serialize a gateway without credentials for either export form."""
+        if gateway.auth_type == "sigv4":
+            logger.warning("Gateway %s uses SigV4 authentication and is not exported", gateway.id)
+            return None
+        gateway_data: dict[str, Any] = {
+            "id": str(gateway.id),
+            "visibility": getattr(gateway, "visibility", None) or "public",
+            "name": gateway.name,
+            "auth_type": gateway.auth_type,
+            "gateway_mode": getattr(gateway, "gateway_mode", None),
+            "url": str(gateway.url),
+            "description": gateway.description,
+            "transport": gateway.transport,
+            "capabilities": gateway.capabilities or {},
+            "is_active": gateway.enabled,
+            "tags": gateway.tags or [],
+            "passthrough_headers": gateway.passthrough_headers or [],
+            "tool_validation_policy": gateway.tool_validation_policy,
+        }
+        if isinstance(query_auth, dict) and query_auth:
+            gateway_data["auth_query_params"] = dict.fromkeys(query_auth)
+        elif getattr(gateway, "auth_query_param_key", None):
+            gateway_data["auth_query_param_key"] = getattr(gateway, "auth_query_param_key")
+        if getattr(gateway, "client_cert", None) or getattr(gateway, "client_key", None) or gateway_requires_credentials(gateway):
+            gateway_data["credentials_required"] = True
+        gateway_data, _ = without_file_credentials(gateway_data)
+        gateway_data["health_check"] = {"url": f"{gateway_data['url']}/health", "interval": 30, "timeout": 10, "retries": 3}
+        return gateway_data
 
-        exported_gateways = []
-        for gateway in gateways:
-            if gateway.auth_type == "sigv4":
-                logger.warning("Gateway %s uses SigV4 authentication and is not exported: signing credentials are never written to export files", gateway.id)
+    @staticmethod
+    def _export_tool_refs(
+        db: Session, server_ids: List[str], user_email: Optional[str], token_teams: Optional[List[str]], *, include_inactive: bool = True
+    ) -> tuple[Dict[str, List[Dict[str, Any]]], set[str]]:
+        """Return visible tool references and server IDs with omitted bindings."""
+        refs: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+        incomplete: set[str] = set()
+        if not server_ids:
+            return refs, incomplete
+        assoc = server_tool_association
+
+        def visible(model: type[DbTool] | type[DbGateway]) -> ColumnElement[bool]:
+            """Build the visibility predicate for the tool or gateway join."""
+            if token_teams is None:
+                return or_(model.visibility != "private", and_(model.visibility == "private", model.owner_email == user_email) if user_email else false())
+            return or_(
+                model.visibility == "public",
+                and_(model.visibility == "team", model.team_id.in_(token_teams)),
+                and_(model.visibility == "private", model.owner_email == user_email) if token_teams and user_email else false(),
+            )
+
+        tool_filter = and_(DbTool.id == assoc.c.tool_id, visible(DbTool))
+        if not include_inactive:
+            tool_filter = and_(tool_filter, DbTool.enabled.is_(True))
+        stmt = (
+            select(assoc.c.server_id, DbTool.id, DbTool.original_name, DbTool.gateway_id, DbGateway.name, DbGateway.url, DbGateway.auth_query_params)
+            .select_from(assoc)
+            .outerjoin(DbTool, tool_filter)
+            .outerjoin(DbGateway, and_(DbGateway.id == DbTool.gateway_id, visible(DbGateway)))
+            .where(assoc.c.server_id.in_(server_ids))
+            .order_by(assoc.c.server_id, DbTool.id)
+        )
+        for server_id, tool_id, name, gateway_id, gateway_name, gateway_url, gateway_query in db.execute(stmt):
+            if tool_id is None or (gateway_id is not None and gateway_name is None):
+                incomplete.add(str(server_id))
                 continue
-            gateway_data = {
-                "name": gateway.name,
-                "url": str(gateway.url),
-                "description": gateway.description,
-                "transport": gateway.transport,
-                "capabilities": gateway.capabilities or {},
-                "health_check": {"url": f"{gateway.url}/health", "interval": 30, "timeout": 10, "retries": 3},
-                "is_active": gateway.enabled,
-                "tags": gateway.tags or [],
-                "passthrough_headers": gateway.passthrough_headers or [],
-                "tool_validation_policy": gateway.tool_validation_policy,
-            }
-
-            # Handle authentication data securely - use batch-fetched values
-            if gateway.auth_type and gateway.auth_value:
-                if gateway.auth_value == settings.masked_auth_value:
-                    # Use batch-fetched auth data
-                    if gateway.id in auth_data_map:
-                        auth_type, auth_value = auth_data_map[gateway.id]
-                        if auth_value:
-                            gateway_data["auth_type"] = auth_type
-                            # DbGateway.auth_value is JSON (dict); export format expects encoded string.
-                            gateway_data["auth_value"] = encode_auth(auth_value) if isinstance(auth_value, dict) else auth_value
-                else:
-                    # Auth value is not masked, use as-is
-                    gateway_data["auth_type"] = gateway.auth_type
-                    gateway_data["auth_value"] = gateway.auth_value
-
-            exported_gateways.append(gateway_data)
-
-        return exported_gateways
+            ref: dict[str, Any] = {"id": str(tool_id), "original_name": name}
+            if gateway_id is not None:
+                safe_gateway, _ = without_file_credentials({"url": gateway_url, "auth_query_params": gateway_query})
+                ref.update(gateway_id=str(gateway_id), gateway_name=gateway_name, gateway_url=safe_gateway["url"])
+            refs[str(server_id)].append(ref)
+        return refs, incomplete
 
     async def _export_servers(
         self, db: Session, tags: Optional[List[str]], include_inactive: bool, root_path: str = "", user_email: Optional[str] = None, token_teams: Optional[List[str]] = None
@@ -594,12 +627,15 @@ class ExportService:
         servers = await self._fetch_all_servers(db, tags, include_inactive, user_email=user_email, token_teams=token_teams)
         exported_servers = []
 
+        refs, incomplete = self._export_tool_refs(db, [str(server.id) for server in servers], user_email, token_teams, include_inactive=include_inactive)
         for server in servers:
+            tool_refs = refs.get(str(server.id), [])
             server_data = {
                 "name": server.name,
                 "description": server.description,
                 "instructions": getattr(server, "instructions", None),
-                "tool_ids": list(server.associated_tools),
+                "visibility": getattr(server, "visibility", None) or "public",
+                "tool_refs": tool_refs,
                 "sse_endpoint": f"{root_path}/servers/{server.id}/sse",
                 "websocket_endpoint": f"{root_path}/servers/{server.id}/ws",
                 "jsonrpc_endpoint": f"{root_path}/servers/{server.id}/jsonrpc",
@@ -608,6 +644,10 @@ class ExportService:
                 "tags": server.tags or [],
             }
 
+            if str(server.id) in incomplete:
+                server_data["tool_refs_complete"] = False
+            else:
+                server_data["tool_ids"] = [ref["id"] for ref in tool_refs]
             exported_servers.append(server_data)
 
         return exported_servers
@@ -639,6 +679,8 @@ class ExportService:
                 "template": prompt.template,
                 "description": prompt.description,
                 "input_schema": input_schema,
+                "id": str(prompt.id),
+                "visibility": getattr(prompt, "visibility", None) or "public",
                 "tags": prompt.tags or [],
                 # Use the new `enabled` attribute on prompt objects but keep export key `is_active` for compatibility
                 "is_active": getattr(prompt, "enabled", getattr(prompt, "is_active", False)),
@@ -655,6 +697,8 @@ class ExportService:
                 input_schema["properties"] = properties
                 input_schema["required"] = required
 
+            if getattr(prompt, "gateway_id", None):
+                prompt_data["gateway_id"] = str(prompt.gateway_id)
             exported_prompts.append(prompt_data)
 
         return exported_prompts
@@ -684,13 +728,15 @@ class ExportService:
                 "uri": resource.uri,
                 "description": resource.description,
                 "mime_type": resource.mime_type,
+                "id": str(resource.id),
+                "visibility": getattr(resource, "visibility", None) or "public",
                 "tags": resource.tags or [],
                 "is_active": getattr(resource, "enabled", getattr(resource, "is_active", False)),
                 "last_modified": resource.updated_at.isoformat() if resource.updated_at else None,
             }
 
             if resource.gateway_id is not None:
-                resource_data.update(original_name=resource.original_name, custom_name_slug=resource.custom_name_slug)
+                resource_data.update(original_name=resource.original_name, custom_name_slug=resource.custom_name_slug, gateway_id=str(resource.gateway_id))
             exported_resources.append(resource_data)
 
         return exported_resources
@@ -720,7 +766,7 @@ class ExportService:
         Returns:
             Dictionary containing dependency mappings
         """
-        dependencies = {"servers_to_tools": {}, "servers_to_resources": {}, "servers_to_prompts": {}}
+        dependencies: dict[str, dict[str, Any]] = {"servers_to_tools": {}, "servers_to_resources": {}, "servers_to_prompts": {}}
 
         # Extract server-to-tool dependencies
         if "servers" in entities and "tools" in entities:
@@ -811,6 +857,7 @@ class ExportService:
             """Top-level selective export payload shape."""
 
             version: str
+            contextforge_version: str
             exported_at: str
             exported_by: str
             source_gateway: str
@@ -826,6 +873,7 @@ class ExportService:
         }
         export_data: SelExportData = {
             "version": settings.protocol_version,
+            "contextforge_version": __version__,
             "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "exported_by": exported_by,
             "source_gateway": f"http://{settings.host}:{settings.port}",
@@ -915,13 +963,16 @@ class ExportService:
                 continue
 
             tool_data = {
+                "id": str(db_tool.id),
+                "visibility": getattr(db_tool, "visibility", None) or "public",
+                "auth_type": db_tool.auth_type,
                 "name": db_tool.original_name or db_tool.custom_name,
                 "displayName": db_tool.display_name,
                 "url": str(db_tool.url) if db_tool.url else None,
                 "integration_type": db_tool.integration_type,
                 "request_type": db_tool.request_type,
                 "description": db_tool.description,
-                "headers": db_tool.headers or {},
+                "headers": _portable_tool_headers(db_tool.headers),
                 "input_schema": db_tool.input_schema or {"type": "object", "properties": {}},
                 "output_schema": db_tool.output_schema,
                 "annotations": db_tool.annotations or {},
@@ -935,12 +986,7 @@ class ExportService:
                 "updated_at": db_tool.updated_at.isoformat() if db_tool.updated_at else None,
             }
 
-            # Include auth data directly from DB (already have raw values)
-            if db_tool.auth_type and db_tool.auth_value:
-                tool_data["auth_type"] = db_tool.auth_type
-                tool_data["auth_value"] = db_tool.auth_value
-
-            exported_tools.append(tool_data)
+            exported_tools.append(without_file_credentials(tool_data)[0])
 
         return exported_tools
 
@@ -974,38 +1020,7 @@ class ExportService:
         if visible_gateway_ids is not None:
             db_gateways = [db_gateway for db_gateway in db_gateways if str(db_gateway.id) in visible_gateway_ids]
 
-        exported_gateways = []
-        for db_gateway in db_gateways:
-            if db_gateway.auth_type == "sigv4":
-                logger.warning("Gateway %s uses SigV4 authentication and is not exported: signing credentials are never written to export files", db_gateway.id)
-                continue
-            gateway_data = {
-                "name": db_gateway.name,
-                "url": str(db_gateway.url) if db_gateway.url else None,
-                "description": db_gateway.description,
-                "transport": db_gateway.transport,
-                "capabilities": db_gateway.capabilities or {},
-                "health_check": {"url": f"{db_gateway.url}/health", "interval": 30, "timeout": 10, "retries": 3},
-                "is_active": db_gateway.enabled,
-                "tags": db_gateway.tags or [],
-                "passthrough_headers": db_gateway.passthrough_headers or [],
-                "tool_validation_policy": db_gateway.tool_validation_policy,
-            }
-
-            # Include auth data directly from DB (already have raw values)
-            if db_gateway.auth_type:
-                gateway_data["auth_type"] = db_gateway.auth_type
-                if db_gateway.auth_value:
-                    # DbGateway.auth_value is JSON (dict); export format expects an encoded string.
-                    raw = db_gateway.auth_value
-                    gateway_data["auth_value"] = encode_auth(raw) if isinstance(raw, dict) else raw
-                # Include query param auth if present
-                if db_gateway.auth_type == "query_param" and getattr(db_gateway, "auth_query_params", None):
-                    gateway_data["auth_query_params"] = db_gateway.auth_query_params
-
-            exported_gateways.append(gateway_data)
-
-        return exported_gateways
+        return [entry for gateway in db_gateways if (entry := self._gateway_export_entry(gateway, getattr(gateway, "auth_query_params", None))) is not None]
 
     async def _export_selected_servers(
         self, db: Session, server_ids: List[str], root_path: str = "", user_email: Optional[str] = None, token_teams: Optional[List[str]] = None
@@ -1035,38 +1050,20 @@ class ExportService:
             if not server_ids:
                 return []
 
-        # Batch query for selected servers with eager loading to avoid N+1 queries
-        # Filter out deactivated tools, resources, prompts, and agents at query level
-        db_servers = (
-            db.execute(
-                select(DbServer)
-                .options(
-                    selectinload(DbServer.tools),
-                    with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
-                    selectinload(DbServer.resources),
-                    with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
-                    selectinload(DbServer.prompts),
-                    with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
-                    selectinload(DbServer.a2a_agents),
-                    with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
-                )
-                .where(DbServer.id.in_(server_ids))
-            )
-            .scalars()
-            .all()
-        )
+        db_servers = db.execute(select(DbServer).where(DbServer.id.in_(server_ids))).scalars().all()
         if visible_server_ids is not None:
             db_servers = [db_server for db_server in db_servers if str(db_server.id) in visible_server_ids]
 
         exported_servers = []
+        refs, incomplete = self._export_tool_refs(db, [str(server.id) for server in db_servers], user_email, token_teams, include_inactive=False)
         for db_server in db_servers:
-            # Get associated tool IDs (tools are eagerly loaded)
-            tool_ids = [str(tool.id) for tool in db_server.tools] if db_server.tools else []
-
+            tool_refs = refs.get(str(db_server.id), [])
             server_data = {
                 "name": db_server.name,
                 "description": db_server.description,
-                "tool_ids": tool_ids,
+                "instructions": getattr(db_server, "instructions", None),
+                "visibility": getattr(db_server, "visibility", None) or "public",
+                "tool_refs": tool_refs,
                 "sse_endpoint": f"{root_path}/servers/{db_server.id}/sse",
                 "websocket_endpoint": f"{root_path}/servers/{db_server.id}/ws",
                 "jsonrpc_endpoint": f"{root_path}/servers/{db_server.id}/jsonrpc",
@@ -1075,6 +1072,10 @@ class ExportService:
                 "tags": db_server.tags or [],
             }
 
+            if str(db_server.id) in incomplete:
+                server_data["tool_refs_complete"] = False
+            else:
+                server_data["tool_ids"] = [ref["id"] for ref in tool_refs]
             exported_servers.append(server_data)
 
         return exported_servers
@@ -1138,10 +1139,14 @@ class ExportService:
                 "template": db_prompt.template,
                 "description": db_prompt.description,
                 "input_schema": input_schema,
+                "id": str(db_prompt.id),
+                "visibility": getattr(db_prompt, "visibility", None) or "public",
                 "tags": db_prompt.tags or [],
                 "is_active": getattr(db_prompt, "enabled", getattr(db_prompt, "is_active", False)),
             }
 
+            if getattr(db_prompt, "gateway_id", None) and isinstance(db_prompt.gateway_id, str):
+                prompt_data["gateway_id"] = db_prompt.gateway_id
             exported_prompts.append(prompt_data)
 
         return exported_prompts
@@ -1182,13 +1187,15 @@ class ExportService:
                 "uri": db_resource.uri,
                 "description": db_resource.description,
                 "mime_type": db_resource.mime_type,
+                "id": str(db_resource.id),
+                "visibility": getattr(db_resource, "visibility", None) or "public",
                 "tags": db_resource.tags or [],
                 "is_active": db_resource.enabled,
                 "last_modified": db_resource.updated_at.isoformat() if db_resource.updated_at else None,
             }
 
             if db_resource.gateway_id is not None:
-                resource_data.update(original_name=db_resource.original_name, custom_name_slug=db_resource.custom_name_slug)
+                resource_data.update(original_name=db_resource.original_name, custom_name_slug=db_resource.custom_name_slug, gateway_id=str(db_resource.gateway_id))
             exported_resources.append(resource_data)
 
         return exported_resources

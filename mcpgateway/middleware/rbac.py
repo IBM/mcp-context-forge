@@ -317,6 +317,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     """
 
     def _set_trace_context_for_identity(*, email: Optional[str], is_admin: bool, auth_method: str, token_teams: Optional[List[str]] = None, team_scope_known: bool = False) -> None:
+        """Replace the trace identity and apply the request's known team scope."""
         clear_trace_context()
         set_trace_user_email(email)
         set_trace_user_is_admin(is_admin)

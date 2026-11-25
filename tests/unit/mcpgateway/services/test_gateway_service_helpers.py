@@ -8,7 +8,7 @@ GatewayService helper tests.
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
@@ -25,6 +25,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Base, Gateway as DbGateway
 from mcpgateway.schemas import GatewayRead
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, get_list_paginated, MCPListMethod, OAuthToolValidationError
+from mcpgateway.services.gateway_service import _IMPORT_CREDENTIALS_REQUIRED
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -594,26 +595,28 @@ async def test_process_gateway_lifecycle_once_skips_foreign_claim():
 
 
 def test_get_due_gateway_lifecycle_ids_includes_deleting_and_due_pending(monkeypatch):
-    service = GatewayService()
-    fake_db = MagicMock()
-    fake_db.execute.side_effect = [
-        SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: ["gw-deleting"])),
-        SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: ["gw-pending-now", "gw-pending-retry"])),
-    ]
+    """Keep credential-blocked and future retries out of the lifecycle queue."""
+    engine = create_engine("sqlite:///:memory:")
+    session_factory = sessionmaker(bind=engine)
+    now = datetime.now(timezone.utc)
+    rows = {
+        "gw-deleting": {"status": "deleting"},
+        "gw-pending-now": {"status": "pending"},
+        "gw-pending-retry": {"status": "pending", "next_retry_at": now - timedelta(minutes=5)},
+        "gw-pending-future": {"status": "pending", "next_retry_at": now + timedelta(minutes=5)},
+        "gw-pending-credentials": {"status": "pending", "status_message": _IMPORT_CREDENTIALS_REQUIRED},
+    }
+    try:
+        Base.metadata.create_all(bind=engine)
+        with session_factory.begin() as db:
+            db.add_all(DbGateway(id=key, name=key, slug=key, url=f"https://example.com/{key}", transport="SSE", capabilities={}, **fields) for key, fields in rows.items())
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", session_factory)
 
-    class FakeSessionFactory:
-        def __call__(self):
-            return self
-
-        def __enter__(self):
-            return fake_db
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", FakeSessionFactory())
-
-    assert service._get_due_gateway_lifecycle_ids() == ["gw-deleting", "pending:gw-pending-now", "pending:gw-pending-retry"]
+        deleting_id, *pending_ids = GatewayService()._get_due_gateway_lifecycle_ids()
+        assert deleting_id == "gw-deleting"
+        assert sorted(pending_ids) == ["pending:gw-pending-now", "pending:gw-pending-retry"]
+    finally:
+        engine.dispose()
 
 
 def test_split_gateway_lifecycle_ids_preserves_delete_priority():
