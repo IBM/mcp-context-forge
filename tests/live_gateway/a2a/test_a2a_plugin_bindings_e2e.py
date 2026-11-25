@@ -9,6 +9,7 @@ Verify agent binding isolation through an authenticated gateway and HTTP upstrea
 # Standard
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -58,9 +59,50 @@ def _request(client: httpx.Client, method: str, path: str, **kwargs: Any) -> Any
     return response.json()
 
 
+@contextmanager
+def _gateway_client(directory: Path, env: dict[str, str], key: str) -> Generator[httpx.Client, None, None]:
+    """Run one isolated gateway and close its process tree after the test."""
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    token = make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=key, algorithm="HS256")
+    log_path = directory / "gateway.log"
+    with log_path.open("w") as log:
+        process = subprocess.Popen([sys.executable, "-m", "uvicorn", "mcpgateway.main:app", "--host", "127.0.0.1", "--port", str(port)], cwd=directory, env=env, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            with httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=make_auth_headers(token), timeout=30, follow_redirects=True, trust_env=False) as client:
+                deadline = time.monotonic() + 180
+                while time.monotonic() < deadline:
+                    assert process.poll() is None, log_path.read_text()[-8000:]
+                    try:
+                        if client.get("/health").status_code == 200:
+                            break
+                    except httpx.TransportError:
+                        pass
+                    time.sleep(0.1)
+                else:
+                    pytest.fail(log_path.read_text()[-8000:])
+                yield client
+        finally:
+            if os.name == "nt":
+                subprocess.run(
+                    [str(Path(os.environ["SYSTEMROOT"]) / "System32" / "taskkill.exe"), "/PID", str(process.pid), "/T", "/F"],
+                    check=False,
+                    capture_output=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                process.terminate()
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+
 @pytest.fixture(scope="module")
-def binding_gateway(tmp_path_factory: pytest.TempPathFactory) -> Generator[tuple[httpx.Client, str, str], None, None]:
-    """Start a real gateway with an isolated database and header filter."""
+def binding_gateway(tmp_path_factory: pytest.TempPathFactory) -> Generator[tuple[httpx.Client, str, str, dict[str, str]], None, None]:
+    """Start a gateway with an isolated database and an optional Redis backend."""
     directory = tmp_path_factory.mktemp("agent-binding-gateway")
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), _EchoHeaders)
     thread = threading.Thread(target=upstream.serve_forever, daemon=True)
@@ -82,16 +124,14 @@ def binding_gateway(tmp_path_factory: pytest.TempPathFactory) -> Generator[tuple
             }
         )
     )
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
     key = secrets.token_urlsafe(48)
+    redis_url = os.getenv("A2A_BINDING_TEST_REDIS_URL", "")
     env = {
         **os.environ,
         "PYTHONPATH": os.pathsep.join([str(_REPO_ROOT), os.getenv("PYTHONPATH", "")]),
         "DATABASE_URL": f"sqlite:///{directory / 'gateway.db'}",
-        "CACHE_TYPE": "memory",
-        "REDIS_URL": "",
+        "CACHE_TYPE": "redis" if redis_url else "memory",
+        "REDIS_URL": redis_url,
         "JWT_SECRET_KEY": key,
         "AUTH_ENCRYPTION_SECRET": secrets.token_urlsafe(48),
         "PLATFORM_ADMIN_PASSWORD": secrets.token_urlsafe(32),
@@ -110,54 +150,33 @@ def binding_gateway(tmp_path_factory: pytest.TempPathFactory) -> Generator[tuple
         "LOG_LEVEL": "INFO",
         "PYTHONUNBUFFERED": "1",
     }
-    token = make_test_jwt("admin@example.com", is_admin=True, teams=None, secret=key, algorithm="HS256")
-    log_path = directory / "gateway.log"
-    with log_path.open("w") as log:
-        process = subprocess.Popen([sys.executable, "-m", "uvicorn", "mcpgateway.main:app", "--host", "127.0.0.1", "--port", str(port)], cwd=directory, env=env, stdout=log, stderr=subprocess.STDOUT)
-        try:
-            with httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=make_auth_headers(token), timeout=30, follow_redirects=True, trust_env=False) as client:
-                deadline = time.monotonic() + 180
-                while time.monotonic() < deadline:
-                    assert process.poll() is None, log_path.read_text()[-8000:]
-                    try:
-                        if client.get("/health").status_code == 200:
-                            break
-                    except httpx.TransportError:
-                        pass
-                    time.sleep(0.1)
-                else:
-                    pytest.fail(log_path.read_text()[-8000:])
-                team = _request(client, "POST", "/teams/", json={"name": "binding-regression-team"})["id"]
-                for name, team_id in [("search", team), ("other", team), ("teamless", None)]:
-                    _request(
-                        client,
-                        "POST",
-                        "/a2a",
-                        json={
-                            "agent": {"name": name, "agent_type": "generic", "endpoint_url": f"http://127.0.0.1:{upstream.server_port}/", "passthrough_headers": list(_MARKERS)},
-                            "visibility": "public",
-                            "team_id": team_id,
-                        },
-                    )
-                yield client, team, key
-        finally:
-            if os.name == "nt":
-                subprocess.run(
-                    [str(Path(os.environ["SYSTEMROOT"]) / "System32" / "taskkill.exe"), "/PID", str(process.pid), "/T", "/F"],
-                    check=False,
-                    capture_output=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
+    try:
+        with _gateway_client(directory, env, key) as client:
+            team = _request(client, "POST", "/teams/", json={"name": "binding-regression-team"})["id"]
+            for name, team_id in [("search", team), ("other", team), ("teamless", None)]:
+                _request(
+                    client,
+                    "POST",
+                    "/a2a",
+                    json={
+                        "agent": {"name": name, "agent_type": "generic", "endpoint_url": f"http://127.0.0.1:{upstream.server_port}/", "passthrough_headers": list(_MARKERS)},
+                        "visibility": "public",
+                        "team_id": team_id,
+                    },
                 )
-            else:
-                process.terminate()
-            try:
-                process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
-            upstream.shutdown()
-            upstream.server_close()
-            thread.join(timeout=5)
+            yield client, team, key, env
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def binding_peer(binding_gateway: tuple[httpx.Client, str, str, dict[str, str]], tmp_path_factory: pytest.TempPathFactory) -> Generator[httpx.Client, None, None]:
+    """Start a second process with the same database, Redis, and signing key."""
+    _, _, key, env = binding_gateway
+    with _gateway_client(tmp_path_factory.mktemp("agent-binding-peer"), env, key) as client:
+        yield client
 
 
 def _bind(client: httpx.Client, team: str, name: str, header: str) -> Any:
@@ -173,9 +192,9 @@ def _invoke(client: httpx.Client, name: str) -> str:
     return json.dumps(result).lower()
 
 
-def test_agent_bindings_control_real_outgoing_requests(binding_gateway: tuple[httpx.Client, str, str]) -> None:
+def test_agent_bindings_control_real_outgoing_requests(binding_gateway: tuple[httpx.Client, str, str, dict[str, str]]) -> None:
     """Verify collisions, precedence, updates, deletion, concurrency, and teamless calls."""
-    client, team, key = binding_gateway
+    client, team, key, _ = binding_gateway
     tool_body = {"teams": {team: {"policies": [{"tool_names": ["search", "*"], "plugin_id": "HeaderFilter", "mode": "enforce", "config": {"filter_headers": ["x-tool-policy"]}}]}}}
     _request(client, "POST", "/v1/tools/plugin_bindings/", json=tool_body)
     for name in ("search", "other", "teamless"):
@@ -231,9 +250,9 @@ def test_agent_bindings_control_real_outgoing_requests(binding_gateway: tuple[ht
 
 
 @pytest.mark.parametrize("agent_name", ["search", "*"])
-def test_admin_binding_writes_refresh_warm_agent_cache(binding_gateway: tuple[httpx.Client, str, str], agent_name: str) -> None:
+def test_admin_binding_writes_refresh_warm_agent_cache(binding_gateway: tuple[httpx.Client, str, str, dict[str, str]], agent_name: str) -> None:
     """Apply admin form changes to existing agent managers."""
-    client, team, _ = binding_gateway
+    client, team, _, _ = binding_gateway
     assert all(marker in _invoke(client, "search") for marker in _MARKERS)
     form = {"team_id": team, "agent_name": agent_name, "plugin_id": "HeaderFilter", "mode": "enforce", "priority": "10", "config": json.dumps({"filter_headers": ["x-agent-policy"]})}
     response = client.post("/admin/a2a/plugin-bindings", data=form)
@@ -255,3 +274,72 @@ def test_admin_binding_writes_refresh_warm_agent_cache(binding_gateway: tuple[ht
     restored = _invoke(client, "search")
     assert all(marker in restored for marker in _MARKERS), restored
     assert all(marker in _invoke(client, "teamless") for marker in _MARKERS)
+
+
+@pytest.mark.skipif(not os.getenv("A2A_BINDING_TEST_REDIS_URL"), reason="requires an isolated real Redis URL")
+def test_agent_binding_changes_reach_peer_worker(
+    binding_gateway: tuple[httpx.Client, str, str, dict[str, str]],
+    binding_peer: httpx.Client,
+) -> None:
+    """Verify signed invalidation across two real gateway processes."""
+    import redis
+
+    client, team, _, env = binding_gateway
+    with redis.Redis.from_url(env["REDIS_URL"]) as backend:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if backend.pubsub_numsub("plugin:invalidation")[0][1] >= 2:
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("Both gateway invalidation subscribers must connect to Redis")
+        assert backend.info("server")["redis_version"]
+
+    for worker in (client, binding_peer):
+        assert all(marker in _invoke(worker, "search") for marker in _MARKERS)
+        assert all(marker in _invoke(worker, "other") for marker in _MARKERS)
+
+    def wait_for_policy(worker: httpx.Client, name: str, removed: str | None) -> str:
+        """Poll received headers until the peer applies its updated policy."""
+        deadline = time.monotonic() + 15
+        observed = ""
+        while time.monotonic() < deadline:
+            observed = _invoke(worker, name)
+            if removed is None and all(marker in observed for marker in _MARKERS):
+                return observed
+            if removed is not None and removed not in observed:
+                return observed
+            time.sleep(0.1)
+        pytest.fail(f"Policy propagation failed for {name}: {observed}")
+
+    specific = _bind(client, team, "search", "x-agent-policy")
+    propagated = wait_for_policy(binding_peer, "search", "x-agent-policy")
+    assert "x-tool-policy" in propagated and "x-wildcard-policy" in propagated, propagated
+
+    response = binding_peer.post(
+        "/admin/a2a/plugin-bindings",
+        data={
+            "team_id": team,
+            "agent_name": "search",
+            "plugin_id": "HeaderFilter",
+            "mode": "enforce",
+            "priority": "10",
+            "config": json.dumps({"filter_headers": ["x-tool-policy"]}),
+        },
+    )
+    assert response.status_code == 200, response.text
+    reverse = wait_for_policy(client, "search", "x-tool-policy")
+    assert "x-agent-policy" in reverse, reverse
+
+    wildcard = _bind(client, team, "*", "x-wildcard-policy")
+    wait_for_policy(binding_peer, "other", "x-wildcard-policy")
+    response = client.delete(f"/v1/a2a-agents/plugin-bindings/{specific['id']}")
+    assert response.is_success, response.text
+    inherited = wait_for_policy(binding_peer, "search", "x-wildcard-policy")
+    assert "x-tool-policy" in inherited and "x-agent-policy" in inherited, inherited
+    response = binding_peer.post(f"/admin/a2a/plugin-bindings/{wildcard['id']}/delete")
+    assert response.status_code == 200, response.text
+    for worker in (client, binding_peer):
+        wait_for_policy(worker, "search", None)
+        wait_for_policy(worker, "other", None)
+        assert all(marker in _invoke(worker, "teamless") for marker in _MARKERS)

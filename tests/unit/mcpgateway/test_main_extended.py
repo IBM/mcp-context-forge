@@ -442,6 +442,7 @@ class TestInternalTrustedMcpTransportBridge:
         header_names = [name for name, _value in start["headers"]]
         assert header_names.count(b"x-contextforge-mcp-runtime") == 1
 
+
 class TestMcpSerialization:
     """Test MCP-specific response shaping helpers."""
 
@@ -2771,7 +2772,7 @@ class TestMCPPathRewriteMiddleware:
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
         scope = {"type": "http", "path": "/gateway/servers//mcp", "root_path": "/gateway", "headers": []}
-        receive, send = AsyncMock(), AsyncMock()
+        receive = AsyncMock()
         sent = []
 
         async def mock_send(msg):
@@ -5808,7 +5809,6 @@ class TestA2ABranchCoverage:
         response = await main_mod.create_a2a_agent(agent, request, team_id="team-2", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
         assert response.status_code == 403
 
-
     @pytest.mark.asyncio
     async def test_create_a2a_agent_validation_and_integrity_errors(self, monkeypatch):
         # Third-Party
@@ -7901,7 +7901,6 @@ class TestRemainingCoverageGaps:
         sess = FakeSession()
         monkeypatch.setattr(main_mod, "SessionLocal", lambda: sess)
 
-        response = FastAPIResponse()
         result = main_mod.healthcheck()
         assert result["status"] == "unhealthy"
         assert "error" in result
@@ -7922,13 +7921,12 @@ class TestRemainingCoverageGaps:
             def close(self):
                 return None
 
-        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
 
         # Configure Redis to be enabled - but /health should not check it
         monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
         monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
 
-        response = FastAPIResponse()
         result = main_mod.healthcheck()
 
         # Check overall status - should be healthy (Redis not checked)
@@ -7979,7 +7977,7 @@ class TestRemainingCoverageGaps:
             def close(self):
                 return None
 
-        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
 
         # Mock Redis availability check to raise an exception
         async def mock_is_redis_available_exception():
@@ -8028,7 +8026,7 @@ class TestRemainingCoverageGaps:
             def close(self):
                 return None
 
-        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        monkeypatch.setattr(main_mod, "SessionLocal", FakeSession)
 
         # Mock Redis availability check to return True (healthy)
         async def mock_is_redis_available():
@@ -10281,7 +10279,8 @@ class TestRemainingCoverageGaps:
             def __init__(self, *_a, **_k):
                 pass
 
-            async def get_manager(self, server_id=None):
+            async def get_manager(self, server_id=None, *, kind="tool"):
+                assert kind == "tool"
                 return SimpleNamespace(plugin_count=0)
 
         monkeypatch.delenv("PLUGINS_ENABLED", raising=False)
@@ -10289,7 +10288,7 @@ class TestRemainingCoverageGaps:
         plugin_module.enable_plugins(True)
 
         # Create the factory instance
-        plugin_module._plugin_manager_factory = _DummyFactory()
+        monkeypatch.setattr(plugin_module, "_plugin_manager_factory", _DummyFactory())
 
         # Third-Party
         from cpex.framework.settings import settings as plugin_settings

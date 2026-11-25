@@ -1016,7 +1016,8 @@ class TestA2AInvokeGlobalContext:
 
         captured_context = {}
 
-        async def _capture_plugin_manager(agent_context_id):
+        async def _capture_plugin_manager(agent_context_id, *, kind="tool"):
+            assert kind == "agent"
             pm.last_context_id = agent_context_id
 
             async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True, extensions=None):
