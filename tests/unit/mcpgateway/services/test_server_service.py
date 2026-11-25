@@ -3272,9 +3272,11 @@ class TestServerServiceCoverageMissingBranches:
         agent = MagicMock()
         agent.id = "a1"
         agent.name = "agent1"
+        agent.visibility = "public"
 
         db.rollback = Mock()
         db.get = Mock(return_value=agent)
+        db.execute.return_value.scalars.return_value.all.return_value = [agent]
         db.add = Mock()
         db.commit = Mock()
         db.refresh = Mock()

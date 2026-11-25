@@ -674,6 +674,65 @@ def _build_security_scheme(agent: DbA2AAgent) -> tuple[Optional[Dict[str, Any]],
     return {scheme_name: scheme}, [{"schemes": {scheme_name: {}}}]
 
 
+def agent_visible_to(db: Session, agent: DbA2AAgent, user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
+    """Check if a caller can see an agent based on visibility rules.
+
+    Access rules (matching tools/resources/prompts):
+    - public visibility: Always allowed
+    - token_teams is None AND user_email is None: Admin bypass — public + team agents only (private excluded per PR #4341)
+    - No user context (but not admin): Deny access to non-public agents
+    - team visibility: Allowed if agent.team_id in token_teams
+    - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
+
+    Args:
+        db: Database session for admin lookup
+        agent: The agent to check access for
+        user_email: User's email for owner matching
+        token_teams: Teams from JWT. None = admin bypass ONLY when user_email is also None; [] = public-only
+
+    Returns:
+        True if access allowed, False otherwise.
+    """
+    # Public agents are accessible by everyone
+    if agent.visibility == "public":
+        return True
+
+    # Admin bypass (PR #4341 invariant): never reveal another user's private agents.
+    # Anonymous bypass sees public + team only; a DB-resolved admin session
+    # additionally sees their own private agents. Mirrors _check_*_access in
+    # tool/prompt/resource services for consistency.
+    if token_teams is None and user_email is None:
+        return agent.visibility != "private"
+    if token_teams is None and user_email and is_user_admin(db, user_email):
+        return agent.visibility != "private" or agent.owner_email == user_email
+
+    # No user context (but not admin) = deny access to non-public agents
+    if not user_email:
+        return False
+
+    # Public-only tokens (empty teams array) can ONLY access public agents
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+    if is_public_only_token:
+        return False  # Already checked public above
+
+    # Owner can access their own private agents
+    if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
+        return True
+
+    # Team agents: check team membership
+    # token_teams=None with user_email set → admin context, allow all team agents if caller is admin
+    # ([] already handled by public-only check above)
+    if agent.visibility == "team":
+        if token_teams is None:
+            # Upstream token normalization prevents non-admins from reaching
+            # this state, but defend-in-depth: only admins get the unscoped
+            # team bypass here.
+            return is_user_admin(db, user_email)
+        return agent.team_id in token_teams
+
+    return False
+
+
 class A2AAgentService(BaseService):
     """Service for managing A2A agents in the gateway.
 
@@ -747,13 +806,6 @@ class A2AAgentService(BaseService):
     ) -> bool:
         """Check if user has access to agent based on visibility rules.
 
-        Access rules (matching tools/resources/prompts):
-        - public visibility: Always allowed
-        - token_teams is None AND user_email is None: Admin bypass — public + team agents only (private excluded per PR #4341)
-        - No user context (but not admin): Deny access to non-public agents
-        - team visibility: Allowed if agent.team_id in token_teams
-        - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
-
         Args:
             db: Database session for admin lookup
             agent: The agent to check access for
@@ -763,44 +815,7 @@ class A2AAgentService(BaseService):
         Returns:
             True if access allowed, False otherwise.
         """
-        # Public agents are accessible by everyone
-        if agent.visibility == "public":
-            return True
-
-        # Admin bypass (PR #4341 invariant): never reveal another user's private agents.
-        # Anonymous bypass sees public + team only; a DB-resolved admin session
-        # additionally sees their own private agents. Mirrors _check_*_access in
-        # tool/prompt/resource services for consistency.
-        if token_teams is None and user_email is None:
-            return agent.visibility != "private"
-        if token_teams is None and user_email and is_user_admin(db, user_email):
-            return agent.visibility != "private" or agent.owner_email == user_email
-
-        # No user context (but not admin) = deny access to non-public agents
-        if not user_email:
-            return False
-
-        # Public-only tokens (empty teams array) can ONLY access public agents
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        if is_public_only_token:
-            return False  # Already checked public above
-
-        # Owner can access their own private agents
-        if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
-            return True
-
-        # Team agents: check team membership
-        # token_teams=None with user_email set → admin context, allow all team agents if caller is admin
-        # ([] already handled by public-only check above)
-        if agent.visibility == "team":
-            if token_teams is None:
-                # Upstream token normalization prevents non-admins from reaching
-                # this state, but defend-in-depth: only admins get the unscoped
-                # team bypass here.
-                return is_user_admin(db, user_email)
-            return agent.team_id in token_teams
-
-        return False
+        return agent_visible_to(db, agent, user_email, token_teams)
 
     def _visible_agent_filters(
         self,
