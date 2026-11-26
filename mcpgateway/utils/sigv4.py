@@ -34,6 +34,7 @@ import httpx2
 ALGORITHM = "AWS4-HMAC-SHA256"
 UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD"
 SIGV4_SENSITIVE_KEYS = frozenset({"secret_access_key", "session_token"})
+SIGV4_REDACT_NAMES: Tuple[str, ...] = (*sorted(SIGV4_SENSITIVE_KEYS), "x-amz-security-token", "x-amz-signature", "x-amz-credential")
 SIGV4_CONFIG_KEYS = frozenset({"access_key_id", "secret_access_key", "session_token", "region", "service", "unsigned_payload"})
 _SCOPE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _ACCESS_KEY_ID = re.compile(r"^[A-Za-z0-9]{16,128}$")

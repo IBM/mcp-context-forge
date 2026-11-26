@@ -1313,7 +1313,7 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
                 raise ValueError("A presigned URL cannot be combined with auth_type 'sigv4'")
             if not self.sigv4_config and not self.gateway_id:
                 raise ValueError("sigv4_config is required when auth_type is 'sigv4' and the tool has no gateway")
-            if self.sigv4_config and settings.masked_auth_value in (self.sigv4_config.get("secret_access_key"), self.sigv4_config.get("session_token")):
+            if self.sigv4_config and any(self.sigv4_config.get(key) == settings.masked_auth_value for key in SIGV4_SENSITIVE_KEYS):
                 raise ValueError("sigv4_config must carry the real secret_access_key on registration")
         elif self.sigv4_config:
             raise ValueError("sigv4_config is only valid when auth_type is 'sigv4'")
@@ -4237,7 +4237,7 @@ class GatewayCreate(BaseModelWithConfigDict):
         if self.auth_type == "sigv4":
             if not self.sigv4_config:
                 raise ValueError("sigv4_config is required when auth_type is 'sigv4'")
-            if settings.masked_auth_value in (self.sigv4_config.get("secret_access_key"), self.sigv4_config.get("session_token")):
+            if any(self.sigv4_config.get(key) == settings.masked_auth_value for key in SIGV4_SENSITIVE_KEYS):
                 raise ValueError("sigv4_config must carry the real secret_access_key on registration")
         elif self.sigv4_config:
             raise ValueError("sigv4_config is only valid when auth_type is 'sigv4'")

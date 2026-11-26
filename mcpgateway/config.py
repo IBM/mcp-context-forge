@@ -78,6 +78,7 @@ from mcpgateway.config_sections import (
     TransportSettings,
 )
 from mcpgateway.utils.origin import is_exact_https_origin
+from mcpgateway.utils.sigv4 import SIGV4_REDACT_NAMES
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -2535,19 +2536,7 @@ class Settings(  # pylint: disable=too-many-ancestors
     siem_export_consumer_group: str = Field(default="siem-exporters", description="Redis consumer group name for SIEM workers")
     siem_export_url_allowlist: List[str] = Field(default_factory=list, description="Optional outbound destination URL allowlist (hostnames or URL prefixes)")
     siem_export_redact_fields: List[str] = Field(
-        default_factory=lambda: [
-            "user_email",
-            "authorization",
-            "token",
-            "password",
-            "secret",
-            "api_key",
-            "secret_access_key",
-            "session_token",
-            "x-amz-security-token",
-            "x-amz-signature",
-            "x-amz-credential",
-        ],
+        default_factory=lambda: ["user_email", "authorization", "token", "password", "secret", "api_key", *SIGV4_REDACT_NAMES],
         description="Fields to redact before exporting events",
     )
     siem_destinations: List[Dict[str, Any]] = Field(default_factory=list, description="SIEM destination configuration (JSON list)")
@@ -3387,7 +3376,7 @@ class Settings(  # pylint: disable=too-many-ancestors
     otel_redact_fields: str = Field(
         default=(
             "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_id,sessionid,"
-            "session_token,secret_access_key,x-amz-security-token,x-amz-signature,x-amz-credential"
+            + ",".join(SIGV4_REDACT_NAMES)
         ),
         description="Comma-separated trace payload field names to redact before export",
     )
