@@ -8,6 +8,7 @@ Helper tests for tool_service schema and response filter utilities.
 
 # Standard
 import logging
+from types import SimpleNamespace
 
 # Third-Party
 import jsonschema
@@ -146,3 +147,55 @@ def test_as_content_blocks_wraps_anything_else_as_text(value, expected):
     from mcpgateway.common.models import TextContent
 
     assert tool_service._as_content_blocks(value) == [TextContent(type="text", text=expected)]
+
+
+def test_response_status_content_keeps_a_safe_challenge():
+    """An upstream 401 keeps its status and a printable WWW-Authenticate value."""
+    response = SimpleNamespace(status_code=401, headers={"WWW-Authenticate": 'Bearer error="invalid_token", error_description="expired"'})
+
+    assert tool_service._response_status_content(response) == {
+        "status_code": 401,
+        "www_authenticate": 'Bearer error="invalid_token", error_description="expired"',
+    }
+
+
+def test_response_status_content_drops_unsafe_challenges():
+    """Control characters, over-long values, and non-strings are not stored."""
+    injected = SimpleNamespace(status_code=401, headers={"www-authenticate": "Bearer\r\nX-Injected: yes"})
+    too_long = SimpleNamespace(status_code=403, headers={"www-authenticate": "Bearer " + ("a" * 600)})
+    missing = SimpleNamespace(status_code=500, headers={})
+
+    assert tool_service._response_status_content(injected) == {"status_code": 401}
+    assert tool_service._response_status_content(too_long) == {"status_code": 403}
+    assert tool_service._response_status_content(missing) == {"status_code": 500}
+    assert tool_service._response_status_content(SimpleNamespace(status_code=True, headers={})) is None
+
+
+def test_http_error_structured_content_reads_httpx_and_httpx2():
+    """Both HTTP client libraries expose the upstream status to the tool result."""
+    # Third-Party
+    import httpx
+    import httpx2
+
+    def status_error(module, status_code):
+        request = module.Request("POST", "https://upstream.example/mcp")
+        response = module.Response(status_code, headers={"www-authenticate": 'Bearer error="invalid_token"'}, request=request)
+        return module.HTTPStatusError("unauthorized", request=request, response=response)
+
+    for module in (httpx, httpx2):
+        content = tool_service._http_error_structured_content(status_error(module, 401))
+        assert content["status_code"] == 401
+        assert content["www_authenticate"] == 'Bearer error="invalid_token"'
+
+    assert tool_service._http_error_structured_content(RuntimeError("no status")) is None
+
+
+def test_tool_invocation_error_keeps_only_auth_statuses():
+    """Only upstream 401 and 403 stay on the invocation error."""
+    denied = tool_service.ToolInvocationError("denied", upstream_status_code=403, upstream_www_authenticate='Bearer error="insufficient_scope"')
+    other = tool_service.ToolInvocationError("missing", upstream_status_code=404, upstream_www_authenticate="Bearer")
+
+    assert denied.upstream_status_code == 403
+    assert denied.upstream_www_authenticate == 'Bearer error="insufficient_scope"'
+    assert other.upstream_status_code is None
+    assert other.upstream_www_authenticate is None

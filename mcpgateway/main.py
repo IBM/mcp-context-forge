@@ -9493,6 +9493,94 @@ async def _handle_tools_list_rpc(
     return result
 
 
+_UPSTREAM_AUTH_STATUS_CODES = frozenset({401, 403})
+
+
+def _tool_result_upstream_auth_status(result: Any) -> Optional[int]:
+    """Return 401 or 403 when a tool result reports an upstream authorization failure.
+
+    Args:
+        result: JSON-RPC result payload.
+
+    Returns:
+        The upstream HTTP status when the payload is an error tool result with
+        that status. None for every other payload.
+    """
+    if not isinstance(result, dict):
+        return None
+    is_error = result.get("isError")
+    if is_error is None:
+        is_error = result.get("is_error")
+    if is_error is not True:
+        return None
+    structured = result.get("structuredContent")
+    if structured is None:
+        structured = result.get("structured_content")
+    if not isinstance(structured, dict):
+        return None
+    status_code = structured.get("status_code")
+    if status_code is None:
+        status_code = structured.get("statusCode")
+    if isinstance(status_code, int) and not isinstance(status_code, bool) and status_code in _UPSTREAM_AUTH_STATUS_CODES:
+        return status_code
+    return None
+
+
+def _upstream_auth_challenge(status_code: int) -> str:
+    """Build the WWW-Authenticate challenge for an upstream authorization failure.
+
+    The realm is ``upstream``. A gateway session failure uses a Bearer challenge
+    with no realm. A client can tell the two failures apart.
+
+    Args:
+        status_code: Upstream HTTP status, 401 or 403.
+
+    Returns:
+        A Bearer challenge that names the upstream failure.
+    """
+    if status_code == 403:
+        error = "insufficient_scope"
+        description = "upstream authorization denied"
+    else:
+        error = "invalid_token"
+        description = "upstream credential rejected"
+    return f'Bearer realm="upstream", error="{error}", error_description="{description}"'
+
+
+def _upstream_auth_jsonrpc_error(exc: ToolInvocationError) -> Dict[str, Any]:
+    """Build a JSON-RPC error for an upstream authorization failure.
+
+    Args:
+        exc: Tool invocation error that carries an upstream 401 or 403.
+
+    Returns:
+        JSON-RPC error object with the upstream status in ``data``.
+    """
+    data: Dict[str, Any] = {"status": exc.upstream_status_code}
+    if exc.upstream_www_authenticate:
+        data["www_authenticate"] = exc.upstream_www_authenticate
+    return {"code": -32000, "message": "Upstream authorization failed", "data": data}
+
+
+def _upstream_auth_http_response(req_id: Any, status_code: int, *, result: Any = None, error: Optional[Dict[str, Any]] = None) -> ORJSONResponse:
+    """Return an RPC payload with the upstream authorization HTTP status.
+
+    Args:
+        req_id: JSON-RPC request id.
+        status_code: Upstream HTTP status, 401 or 403.
+        result: Tool result for the JSON-RPC result member.
+        error: JSON-RPC error object. Used when the call raised instead of returning a tool result.
+
+    Returns:
+        HTTP response whose status matches the upstream authorization failure.
+    """
+    if error is not None:
+        content: Dict[str, Any] = {"jsonrpc": "2.0", "error": error, "id": req_id}
+    else:
+        content = {"jsonrpc": "2.0", "result": result, "id": req_id}
+    return ORJSONResponse(status_code=status_code, content=content, headers={"WWW-Authenticate": _upstream_auth_challenge(status_code)})
+
+
 async def _handle_rpc_authenticated(request: Request, db: Session, user):
     """Handle RPC requests.
 
@@ -10022,7 +10110,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     result = result.model_dump(by_alias=True, exclude_none=True)
                 if not _trusted_internal_mcp_dispatch:
                     result = _object_only_structured_content(result)
-            except (PluginError, PluginViolationError):
+            except (PluginError, PluginViolationError, ToolInvocationError):
                 raise
             except ToolNotFoundError:
                 # Method name not registered as a tool → spec-mandated -32601
@@ -10033,6 +10121,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 logger.error("Unexpected error invoking method %s: %s", method, exc)
                 raise JSONRPCError(-32603, "Internal error", {})
 
+        upstream_status = _tool_result_upstream_auth_status(result)
+        if upstream_status is not None:
+            return _upstream_auth_http_response(req_id, upstream_status, result=result)
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
     except (PluginError, PluginViolationError):
@@ -10040,6 +10131,17 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
     except JSONRPCError as e:
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
+    except ToolInvocationError as exc:
+        auth_status = exc.upstream_status_code
+        if isinstance(auth_status, int) and auth_status in _UPSTREAM_AUTH_STATUS_CODES:
+            logger.error("RPC upstream authorization failure status=%s", auth_status)
+            return _upstream_auth_http_response(req_id, auth_status, error=_upstream_auth_jsonrpc_error(exc))
+        logger.error("RPC error: %s", str(exc))
+        return {
+            "jsonrpc": "2.0",
+            "error": {"code": -32603, "message": "Internal error"},
+            "id": req_id,
+        }
     except Exception as e:
         logger.error(f"RPC error: {str(e)}")
         return {

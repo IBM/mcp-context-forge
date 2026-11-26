@@ -41,8 +41,9 @@ from starlette.websockets import WebSocketDisconnect
 
 # First-Party
 from mcpgateway.common.models import BlobResourceContents, InitializeResult, ResourceContent, ServerCapabilities
-from mcpgateway.services.prompt_service import PromptUpstreamError, PromptValidationError
 from mcpgateway.services.a2a_service import A2ATestOutcome
+from mcpgateway.services.prompt_service import PromptUpstreamError, PromptValidationError
+from mcpgateway.services.tool_service import ToolInvocationError
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
@@ -3435,6 +3436,115 @@ class TestRPCEndpoints:
             skip_pre_invoke=False,
             require_model_visible=True,
         )
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    @pytest.mark.parametrize("status_code,error_token", [(401, "invalid_token"), (403, "insufficient_scope")])
+    def test_rpc_propagates_upstream_auth_status(self, mock_invoke_tool, test_client, auth_headers, status_code, error_token):
+        """An upstream 401 or 403 on tools/call sets the outer HTTP status and a distinct challenge."""
+        mock_invoke_tool.return_value = {
+            "content": [{"type": "text", "text": f"HTTP {status_code}"}],
+            "isError": True,
+            "structuredContent": {
+                "status_code": status_code,
+                "www_authenticate": 'Bearer realm="mcp", error="invalid_token", error_description="expired-marker"',
+            },
+        }
+
+        response = test_client.post(
+            "/rpc/",
+            json={"jsonrpc": "2.0", "id": "auth-1", "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}},
+            headers=auth_headers,
+        )
+
+        challenge = response.headers["www-authenticate"]
+        body = response.json()
+        assert response.status_code == status_code
+        assert 'realm="upstream"' in challenge
+        assert f'error="{error_token}"' in challenge
+        assert "expired-marker" not in challenge
+        assert body["id"] == "auth-1"
+        assert body["result"]["isError"] is True
+        assert body["result"]["structuredContent"]["status_code"] == status_code
+        assert "expired-marker" in body["result"]["structuredContent"]["www_authenticate"]
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    def test_rpc_propagates_upstream_auth_status_for_legacy_method(self, mock_invoke_tool, test_client, auth_headers):
+        """A legacy method invocation uses the same outer status as tools/call."""
+        mock_invoke_tool.return_value = {
+            "content": [{"type": "text", "text": "HTTP 401"}],
+            "is_error": True,
+            "structured_content": {"status_code": 401},
+        }
+
+        response = test_client.post("/rpc/", json={"jsonrpc": "2.0", "id": "legacy-auth", "method": "legacy_tool", "params": {}}, headers=auth_headers)
+
+        assert response.status_code == 401
+        assert 'error="invalid_token"' in response.headers["www-authenticate"]
+        assert response.json()["result"]["is_error"] is True
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"content": [{"type": "text", "text": "missing"}], "isError": True, "structuredContent": {"status_code": 404}},
+            {"content": [{"type": "text", "text": "ok"}], "isError": False, "structuredContent": {"status_code": 401}},
+            {"content": [{"type": "text", "text": "tool failed"}], "isError": True},
+        ],
+    )
+    def test_rpc_keeps_http_200_for_non_auth_tool_results(self, mock_invoke_tool, test_client, auth_headers, payload):
+        """Tool results that are not an upstream 401 or 403 stay HTTP 200."""
+        mock_invoke_tool.return_value = payload
+
+        response = test_client.post(
+            "/rpc/",
+            json={"jsonrpc": "2.0", "id": "plain", "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200
+        assert "upstream" not in response.headers.get("www-authenticate", "")
+        assert response.json()["id"] == "plain"
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    def test_rpc_propagates_raised_upstream_auth_failure(self, mock_invoke_tool, test_client, auth_headers):
+        """A raised upstream 401 becomes HTTP 401 and does not leak the exception text."""
+        mock_invoke_tool.side_effect = ToolInvocationError(
+            "Tool invocation failed: https://upstream.example/mcp/leak-marker",
+            upstream_status_code=401,
+            upstream_www_authenticate='Bearer error="invalid_token", error_description="expired-marker"',
+        )
+
+        response = test_client.post(
+            "/rpc/",
+            json={"jsonrpc": "2.0", "id": "raised-401", "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}},
+            headers=auth_headers,
+        )
+
+        body = response.json()
+        assert response.status_code == 401
+        assert 'realm="upstream"' in response.headers["www-authenticate"]
+        assert 'error="invalid_token"' in response.headers["www-authenticate"]
+        assert body["error"]["code"] == -32000
+        assert body["error"]["message"] == "Upstream authorization failed"
+        assert body["error"]["data"]["status"] == 401
+        assert "expired-marker" in body["error"]["data"]["www_authenticate"]
+        assert "leak-marker" not in response.text
+
+    @patch("mcpgateway.main.tool_service.invoke_tool")
+    def test_rpc_keeps_internal_error_for_non_auth_invocation_failure(self, mock_invoke_tool, test_client, auth_headers):
+        """A tool failure without an upstream 401 or 403 stays a JSON-RPC internal error."""
+        mock_invoke_tool.side_effect = ToolInvocationError("Tool invocation failed: connection reset", upstream_status_code=500)
+
+        response = test_client.post(
+            "/rpc/",
+            json={"jsonrpc": "2.0", "id": "raised-500", "method": "tools/call", "params": {"name": "test_tool", "arguments": {}}},
+            headers=auth_headers,
+        )
+
+        body = response.json()
+        assert response.status_code == 200
+        assert body["error"]["code"] == -32603
+        assert body["error"]["message"] == "Internal error"
 
     def test_rpc_tool_invocation_requires_tools_execute(self, test_client, auth_headers):
         req = {
