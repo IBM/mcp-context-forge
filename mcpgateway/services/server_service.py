@@ -496,7 +496,9 @@ class ServerService(BaseService):
 
         return top_performers
 
-    def convert_server_to_read(self, server: DbServer, include_metrics: bool = False, *, db: Optional[Session] = None, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> ServerRead:
+    def convert_server_to_read(
+        self, server: DbServer, include_metrics: bool = False, *, db: Optional[Session] = None, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None
+    ) -> ServerRead:
         """
         Converts a DbServer instance into a ServerRead model, optionally including aggregated metrics.
 
@@ -972,9 +974,7 @@ class ServerService(BaseService):
                 if server_ids:
                     # Recheck public agent associations against the database on each cache hit.
                     rows = db.execute(
-                        select(DbServer.id, DbA2AAgent.id)
-                        .join(DbServer.a2a_agents)
-                        .where(DbServer.id.in_(server_ids), DbA2AAgent.enabled.is_(True), DbA2AAgent.visibility == "public")
+                        select(DbServer.id, DbA2AAgent.id).join(DbServer.a2a_agents).where(DbServer.id.in_(server_ids), DbA2AAgent.enabled.is_(True), DbA2AAgent.visibility == "public")
                     ).all()
                     for server_id, agent_id in rows:
                         current_agents.setdefault(server_id, []).append(agent_id)
