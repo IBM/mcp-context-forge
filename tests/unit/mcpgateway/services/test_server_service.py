@@ -23,6 +23,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.server_service import (
+    _update_server_associations,
     _validate_server_team_assignment,
     ServerError,
     ServerNotFoundError,
@@ -3846,14 +3847,17 @@ class TestConvertServerToReadAssociatedToolIds:
         assert result.associated_tool_ids == ["42"]
 
     @pytest.mark.asyncio
-    async def test_get_server_filters_deactivated_entities(self, server_service, test_db):
-        """Test that get_server filters out deactivated tools, prompts, and resources."""
+    async def test_get_server_keeps_disabled_entities(self, server_service, test_db):
+        """Test that get_server reports disabled tools, prompts, and resources as attached."""
         # Standard
         from types import SimpleNamespace
 
         enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
         enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
         enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
+        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
+        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
+        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
 
         mock_server = SimpleNamespace(
             id="server-1",
@@ -3880,9 +3884,9 @@ class TestConvertServerToReadAssociatedToolIds:
             oauth_enabled=False,
             oauth_config=None,
             tags=[],
-            tools=[enabled_tool],
-            resources=[enabled_resource],
-            prompts=[enabled_prompt],
+            tools=[enabled_tool, disabled_tool],
+            resources=[enabled_resource, disabled_resource],
+            prompts=[enabled_prompt, disabled_prompt],
             a2a_agents=[],
             metrics=[],
             email_team=None,
@@ -3897,21 +3901,17 @@ class TestConvertServerToReadAssociatedToolIds:
         # Call get_server
         result = await server_service.get_server(test_db, "server-1")
 
-        # Verify that only enabled entities are in the result
-        assert len(result.associated_tools) == 1
-        assert "enabled_tool" in result.associated_tools
-        assert "disabled_tool" not in result.associated_tools
+        # Verify that disabled entities stay attached in the result
+        assert result.associated_tools == ["enabled_tool", "disabled_tool"]
+        assert result.associated_tool_ids == ["tool-1", "tool-2"]
 
-        assert len(result.associated_resources) == 1
-        assert "res-1" in result.associated_resources
-        assert "res-2" not in result.associated_resources
+        assert result.associated_resources == ["res-1", "res-2"]
 
-        assert len(result.associated_prompts) == 1
-        assert "prompt-1" in result.associated_prompts
+        assert result.associated_prompts == ["prompt-1", "prompt-2"]
 
     @pytest.mark.asyncio
-    async def test_list_servers_filters_deactivated_entities(self, server_service, test_db):
-        """Test that list_servers filters out deactivated tools, prompts, and resources."""
+    async def test_list_servers_keeps_disabled_entities(self, server_service, test_db):
+        """Test that list_servers reports disabled tools, prompts, and resources as attached."""
         # Standard
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
@@ -3919,6 +3919,9 @@ class TestConvertServerToReadAssociatedToolIds:
         enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
         enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
         enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
+        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
+        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
+        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
 
         mock_server = SimpleNamespace(
             id="server-1",
@@ -3945,9 +3948,9 @@ class TestConvertServerToReadAssociatedToolIds:
             oauth_enabled=False,
             oauth_config=None,
             tags=[],
-            tools=[enabled_tool],
-            resources=[enabled_resource],
-            prompts=[enabled_prompt],
+            tools=[enabled_tool, disabled_tool],
+            resources=[enabled_resource, disabled_resource],
+            prompts=[enabled_prompt, disabled_prompt],
             a2a_agents=[],
             metrics=[],
             email_team=None,
@@ -3963,25 +3966,20 @@ class TestConvertServerToReadAssociatedToolIds:
             # Call list_servers
             servers, next_cursor = await server_service.list_servers(test_db, include_inactive=False)
 
-            # Verify that only enabled entities are in the result
+            # Verify that disabled entities stay attached in the result
             assert len(servers) == 1
             server_result = servers[0]
 
-            assert len(server_result.associated_tools) == 1
-            assert "enabled_tool" in server_result.associated_tools
-            assert "disabled_tool" not in server_result.associated_tools
+            assert server_result.associated_tools == ["enabled_tool", "disabled_tool"]
+            assert server_result.associated_tool_ids == ["tool-1", "tool-2"]
 
-            assert len(server_result.associated_resources) == 1
-            assert "res-1" in server_result.associated_resources
-            assert "res-2" not in server_result.associated_resources
+            assert server_result.associated_resources == ["res-1", "res-2"]
 
-            assert len(server_result.associated_prompts) == 1
-            assert "prompt-1" in server_result.associated_prompts
-            assert "prompt-2" not in server_result.associated_prompts
+            assert server_result.associated_prompts == ["prompt-1", "prompt-2"]
 
     @pytest.mark.asyncio
-    async def test_list_servers_for_user_filters_deactivated_entities(self, server_service, test_db):
-        """Test that list_servers_for_user filters out deactivated tools, prompts, and resources."""
+    async def test_list_servers_for_user_keeps_disabled_entities(self, server_service, test_db):
+        """Test that list_servers_for_user reports disabled tools, prompts, and resources as attached."""
         # Standard
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
@@ -3989,6 +3987,9 @@ class TestConvertServerToReadAssociatedToolIds:
         enabled_tool = SimpleNamespace(id="tool-1", name="enabled_tool", enabled=True)
         enabled_resource = SimpleNamespace(id="res-1", name="enabled_resource", enabled=True)
         enabled_prompt = SimpleNamespace(id="prompt-1", name="enabled_prompt", enabled=True)
+        disabled_tool = SimpleNamespace(id="tool-2", name="disabled_tool", enabled=False)
+        disabled_resource = SimpleNamespace(id="res-2", name="disabled_resource", enabled=False)
+        disabled_prompt = SimpleNamespace(id="prompt-2", name="disabled_prompt", enabled=False)
 
         mock_server = SimpleNamespace(
             id="server-1",
@@ -4015,9 +4016,9 @@ class TestConvertServerToReadAssociatedToolIds:
             oauth_enabled=False,
             oauth_config=None,
             tags=[],
-            tools=[enabled_tool],
-            resources=[enabled_resource],
-            prompts=[enabled_prompt],
+            tools=[enabled_tool, disabled_tool],
+            resources=[enabled_resource, disabled_resource],
+            prompts=[enabled_prompt, disabled_prompt],
             a2a_agents=[],
             metrics=[],
             email_team=None,
@@ -4038,21 +4039,57 @@ class TestConvertServerToReadAssociatedToolIds:
             # Call list_servers_for_user
             servers = await server_service.list_servers_for_user(test_db, user_email="user@example.com", include_inactive=False)
 
-            # Verify that only enabled entities are in the result
+            # Verify that disabled entities stay attached in the result
             assert len(servers) == 1
             server_result = servers[0]
 
-            assert len(server_result.associated_tools) == 1
-            assert "enabled_tool" in server_result.associated_tools
-            assert "disabled_tool" not in server_result.associated_tools
+            assert server_result.associated_tools == ["enabled_tool", "disabled_tool"]
+            assert server_result.associated_tool_ids == ["tool-1", "tool-2"]
 
-            assert len(server_result.associated_resources) == 1
-            assert "res-1" in server_result.associated_resources
-            assert "res-2" not in server_result.associated_resources
+            assert server_result.associated_resources == ["res-1", "res-2"]
 
-            assert len(server_result.associated_prompts) == 1
-            assert "prompt-1" in server_result.associated_prompts
-            assert "prompt-2" not in server_result.associated_prompts
+            assert server_result.associated_prompts == ["prompt-1", "prompt-2"]
+
+
+class TestEditPreservesDisabledAssociations:
+    """Saving a form seeded from the detail response keeps disabled components attached (#7275)."""
+
+    @pytest.fixture
+    def server_service(self):
+        return ServerService()
+
+    @pytest.fixture
+    def attached_server(self, test_db):
+        """Persist a server with one enabled and one disabled component of each kind."""
+        tools = [DbTool(id=f"a100000000000000000000000000000{n}", original_name=f"tool_{n}", url="https://example.com/t", description="d", integration_type="REST", request_type="GET", input_schema={}, enabled=n == 1) for n in (1, 2)]
+        resources = [DbResource(id=f"b200000000000000000000000000000{n}", uri=f"file:///r{n}", name=f"res{n}", description="d", mime_type="text/plain", enabled=n == 1) for n in (1, 2)]
+        prompts = [DbPrompt(id=f"c300000000000000000000000000000{n}", original_name=f"prompt_{n}", name=f"prompt_{n}", description="d", template="t", argument_schema={}, enabled=n == 1) for n in (1, 2)]
+        server = DbServer(id="srv-7275", name="server-7275", description="d", enabled=True, visibility="public", tools=tools, resources=resources, prompts=prompts)
+        test_db.add(server)
+        test_db.commit()
+        yield server
+        test_db.delete(server)
+        for row in (*tools, *resources, *prompts):
+            test_db.delete(row)
+        test_db.commit()
+
+    @pytest.mark.asyncio
+    async def test_detail_round_trip_keeps_disabled_components(self, server_service, test_db, attached_server):
+        """The detail response lists disabled components and a seeded update retains them."""
+        detail = await server_service.get_server(test_db, attached_server.id)
+
+        assert sorted(detail.associated_tool_ids) == ["a1000000000000000000000000000001", "a1000000000000000000000000000002"]
+        assert sorted(detail.associated_resources) == ["b2000000000000000000000000000001", "b2000000000000000000000000000002"]
+        assert sorted(detail.associated_prompts) == ["c3000000000000000000000000000001", "c3000000000000000000000000000002"]
+
+        update = ServerUpdate(associated_tools=detail.associated_tool_ids, associated_resources=detail.associated_resources, associated_prompts=detail.associated_prompts)
+        _update_server_associations(test_db, attached_server, update)
+        test_db.commit()
+        test_db.expire_all()
+
+        assert {t.id for t in attached_server.tools} == {"a1000000000000000000000000000001", "a1000000000000000000000000000002"}
+        assert {r.id for r in attached_server.resources} == {"b2000000000000000000000000000001", "b2000000000000000000000000000002"}
+        assert {p.id for p in attached_server.prompts} == {"c3000000000000000000000000000001", "c3000000000000000000000000000002"}
 
 
 # --------------------------------------------------------------------------- #
