@@ -19,7 +19,7 @@ Contract under test:
 """
 
 # Standard
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
@@ -27,6 +27,27 @@ import pytest
 # First-Party
 from mcpgateway import auth_context
 from mcpgateway.auth_context import get_request_identity, get_rpc_filter_context, get_scoped_resource_access_context, get_user_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("has_request", "email", "teams", "unrestricted", "expected"),
+    [
+        (False, "ignored@example.com", ["team"], False, ("caller@example.com", [], False)),
+        (True, None, None, False, ("caller@example.com", [], False)),
+        (True, "scoped@example.com", None, True, ("scoped@example.com", None, True)),
+        (True, "scoped@example.com", ["team"], False, ("scoped@example.com", ["team"], False)),
+    ],
+)
+async def test_import_request_scope(monkeypatch, has_request, email, teams, unrestricted, expected):
+    """Preserve restricted team scope and reject unrestricted defaults for ordinary callers."""
+    resolver = AsyncMock(return_value=unrestricted)
+    monkeypatch.setattr(auth_context, "get_scoped_resource_access_context", lambda *_: (email, teams))
+    monkeypatch.setattr(auth_context, "is_unrestricted_platform_admin", resolver)
+    request = MagicMock() if has_request else None
+    user = {"email": "caller@example.com", "is_admin": True}
+    assert await auth_context.get_import_request_scope(request, user, MagicMock()) == expected
+    assert resolver.await_count == int(has_request)
 
 
 def _request(*, jwt_payload=None, token_teams=None, token_use=None):

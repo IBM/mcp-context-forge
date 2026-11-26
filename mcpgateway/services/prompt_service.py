@@ -57,6 +57,7 @@ from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_d
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, get_content_security_service, TemplateValidationError
 from mcpgateway.services.event_service import EventService
+from mcpgateway.services.import_effects import after_import_commit, after_import_commit_sync
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -1033,14 +1034,15 @@ class PromptService(BaseService):
             db.add(db_prompt)
             db.commit()
             db.refresh(db_prompt)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
             # Notify subscribers
-            await self._notify_prompt_added(db_prompt)
+            await after_import_commit(self._notify_prompt_added, db_prompt)
 
             logger.info("Registered prompt: %s", prompt.name)
 
             # Structured logging: Audit trail for prompt creation
-            audit_trail.log_action(
+            after_import_commit_sync(
+                audit_trail.log_action,
                 user_id=created_by or "system",
                 action="create_prompt",
                 resource_type="prompt",
@@ -1083,17 +1085,17 @@ class PromptService(BaseService):
 
             # Invalidate cache after successful creation
             cache = _get_registry_cache()
-            await cache.invalidate_prompts()
+            await after_import_commit(cache.invalidate_prompts)
             # Also invalidate tags cache since prompt tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
             # First-Party
             from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
-            metrics_cache.invalidate_prefix("top_prompts:")
-            metrics_cache.invalidate("prompts")
+            after_import_commit_sync(metrics_cache.invalidate_prefix, "top_prompts:")
+            after_import_commit_sync(metrics_cache.invalidate, "prompts")
 
             return PromptRead.model_validate(prompt_dict)
 
@@ -2426,6 +2428,7 @@ class PromptService(BaseService):
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        import_platform_admin: bool = False,
     ) -> PromptRead:
         """
         Update a prompt template.
@@ -2439,6 +2442,7 @@ class PromptService(BaseService):
             modified_via: Source of modification (ui/api/import)
             modified_user_agent: User agent string from the modification request
             user_email: Email of user performing update (for ownership check)
+            import_platform_admin: Verified unrestricted administrator for this import update.
 
         Returns:
             The updated PromptRead object
@@ -2489,7 +2493,7 @@ class PromptService(BaseService):
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
             # Check ownership if user_email provided
-            if user_email:
+            if user_email and not import_platform_admin:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
@@ -2618,12 +2622,13 @@ class PromptService(BaseService):
 
             db.commit()
             db.refresh(prompt)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
 
-            await self._notify_prompt_updated(prompt)
+            await after_import_commit(self._notify_prompt_updated, prompt)
 
             # Structured logging: Audit trail for prompt update
-            audit_trail.log_action(
+            after_import_commit_sync(
+                audit_trail.log_action,
                 user_id=user_email or modified_by or "system",
                 action="update_prompt",
                 resource_type="prompt",
@@ -2654,12 +2659,12 @@ class PromptService(BaseService):
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
-            await cache.invalidate_prompts()
+            await after_import_commit(cache.invalidate_prompts)
             # Also invalidate tags cache since prompt tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
 
             return self.convert_prompt_to_read(prompt)
 

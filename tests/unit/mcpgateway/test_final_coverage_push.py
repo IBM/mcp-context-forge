@@ -196,9 +196,7 @@ async def test_import_command_parameter_parsing():
         json.dump(test_data, f)
         temp_file = f.name
 
-    args = argparse.Namespace(
-        input_file=temp_file, conflict_strategy="update", dry_run=True, rekey_secret="new-secret", include="tools:tool1,tool2;servers:server1", verbose=True  # pragma: allowlist secret
-    )  # pragma: allowlist secret
+    args = argparse.Namespace(input_file=temp_file, conflict_strategy="update", dry_run=True, team_name="Operations", include="tools:tool1,tool2;servers:server1", verbose=True)
 
     # Mock the API call
     with patch("mcpgateway.cli_export_import.make_authenticated_request") as mock_request:
@@ -213,8 +211,9 @@ async def test_import_command_parameter_parsing():
 
         assert request_data["conflict_strategy"] == "update"
         assert request_data["dry_run"] == True
-        assert request_data["rekey_secret"] == "new-secret"
-        assert "selected_entities" in request_data
+        assert request_data["team_name"] == "Operations"
+        assert "rekey_secret" not in request_data
+        assert request_data["selected_entities"] == {"tools": ["tool1", "tool2"], "servers": ["server1"]}
 
 
 def test_utils_coverage():

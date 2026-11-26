@@ -665,6 +665,8 @@ async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[s
         A ``CardResponse`` as described by ``_get_json``.
     """
     async with client.stream(method, target.pin(target.validated_url), headers=request_headers, content=body, extensions=target.extensions) as response:
+        if response.status_code == 304:
+            return CardResponse(304, etag=response.headers.get("etag"), max_age=parse_max_age(response.headers.get("cache-control")))
         if response.status_code != 200:
             return CardResponse(response.status_code, challenge=response.headers.get("www-authenticate"))
         if response.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
@@ -679,7 +681,7 @@ async def _read_body(client: Any, url: str, target: Any, request_headers: Dict[s
     return CardResponse(200, orjson.loads(bytes(received)), etag=response.headers.get("etag"), max_age=parse_max_age(response.headers.get("cache-control")))
 
 
-async def _get_json(url: str, headers: Optional[Dict[str, str]], payload: Optional[Dict[str, Any]] = None) -> CardResponse:
+async def _get_json(url: str, headers: Optional[Dict[str, str]], payload: Optional[Dict[str, Any]] = None, if_none_match: Optional[str] = None) -> CardResponse:
     """GET one URL, or POST a JSON payload to it, under the outbound policy and parse a size-capped JSON body.
 
     The request asks for an identity encoding and discards a content-encoded response, so
@@ -689,6 +691,7 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]], payload: Option
         url: Candidate card URL.
         headers: Optional caller headers, sent only to this URL's pinned host.
         payload: Optional JSON body. The request is a POST when given.
+        if_none_match: Optional stored ETag, sent as ``If-None-Match`` so an unchanged card answers 304.
 
     Returns:
         A ``CardResponse``. ``status`` is ``None`` when the request was blocked or failed;
@@ -703,7 +706,8 @@ async def _get_json(url: str, headers: Optional[Dict[str, str]], payload: Option
             except ValueError as exc:
                 logger.warning("A2A card URL rejected by outbound policy: %s (%s)", sanitize_url_for_logging(url), SecurityValidator.sanitize_log_message(str(exc)))
                 return CardResponse(None)
-            base_headers = {"Accept": "application/json", "Accept-Encoding": "identity", **({"Content-Type": "application/json"} if payload is not None else {}), **(headers or {})}
+            conditional = {"If-None-Match": if_none_match} if if_none_match else {}
+            base_headers = {"Accept": "application/json", "Accept-Encoding": "identity", **({"Content-Type": "application/json"} if payload is not None else {}), **(headers or {}), **conditional}
             request_headers = target.apply_headers(base_headers)
             async with get_isolated_http_client(follow_redirects=False, timeout=float(settings.federation_timeout)) as client:
                 if payload is None:
@@ -750,6 +754,45 @@ def _build_found_response(url: str, document: Dict[str, Any], etag: Optional[str
     )
 
 
+def apply_extended_result(found: A2AFetchCardResponse, result: "ExtendedCardResult") -> None:
+    """Set the extended card fields of ``found`` from an extended card attempt.
+
+    Args:
+        found: Response for the public card. A ``not_modified`` response has no public card, so it gets no added field paths.
+        result: Outcome of the extended card request.
+    """
+    found.extended_outcome = result.outcome
+    if result.card is not None:
+        found.extended_card = result.card
+        found.extended_raw_card = None if result.card is result.document else result.document
+        found.extended_etag = result.etag
+        found.extended_max_age = result.max_age
+        if found.card:
+            found.extended_additions = extended_card_additions(found.card, result.card)
+
+
+async def fetch_stored_extended_card(document: Dict[str, Any], source_url: str, headers: Optional[Dict[str, str]]) -> Optional["ExtendedCardResult"]:
+    """Fetch the extended card for a stored public card, for example after a 304 answer.
+
+    Args:
+        document: Stored public card, as fetched.
+        source_url: URL the public card came from.
+        headers: Credential headers for the card URL.
+
+    Returns:
+        The extended card result, or ``None`` when there are no credentials or the card declares no extended card.
+    """
+    if not headers:
+        return None
+    try:
+        card, _ = normalize_card(document)
+    except (AttributeError, TypeError, KeyError, ValueError):
+        return None
+    if not declares_extended_card(card):
+        return None
+    return await fetch_extended_card(card, source_url, headers)
+
+
 async def _with_extended_card(found: A2AFetchCardResponse, headers: Optional[Dict[str, str]]) -> A2AFetchCardResponse:
     """Add the extended card to a found response when the card declares one and credentials exist.
 
@@ -763,18 +806,11 @@ async def _with_extended_card(found: A2AFetchCardResponse, headers: Optional[Dic
     """
     if not headers or not found.card or not declares_extended_card(found.card):
         return found
-    result = await fetch_extended_card(found.card, str(found.source_url), headers)
-    found.extended_outcome = result.outcome
-    if result.card is not None:
-        found.extended_card = result.card
-        found.extended_raw_card = None if result.card is result.document else result.document
-        found.extended_etag = result.etag
-        found.extended_max_age = result.max_age
-        found.extended_additions = extended_card_additions(found.card, result.card)
+    apply_extended_result(found, await fetch_extended_card(found.card, str(found.source_url), headers))
     return found
 
 
-async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional[Dict[str, str]]) -> A2AFetchCardResponse:
+async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional[Dict[str, str]], if_none_match: Optional[str] = None) -> A2AFetchCardResponse:
     """Fetch, validate and normalize an Agent Card from an unregistered endpoint.
 
     Tries each candidate URL in order. Any answer other than a card moves to the next
@@ -787,6 +823,7 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
         base_url: Endpoint or direct card URL.
         path: Optional explicit card path.
         headers: Optional headers, for example credentials for an authenticated card.
+        if_none_match: Optional stored ETag. A 304 answer returns outcome ``not_modified``.
 
     Returns:
         The normalized card with a suggested agent mapping, or a response naming why no card was returned.
@@ -795,9 +832,11 @@ async def fetch_agent_card(base_url: str, path: Optional[str], headers: Optional
     try:
         async with asyncio.timeout(float(settings.federation_timeout)):
             for url in build_candidate_urls(base_url, path):
-                fetched = await _get_json(url, headers)
+                fetched = await (_get_json(url, headers, if_none_match=if_none_match) if if_none_match else _get_json(url, headers))
                 if fetched.status is None:
                     return _unreachable()
+                if fetched.status == 304 and if_none_match:
+                    return A2AFetchCardResponse(found=False, outcome="not_modified", source_url=url, etag=fetched.etag or if_none_match, max_age=fetched.max_age)
                 if fetched.status in (401, 403):
                     return _auth_required(fetched.challenge)
                 document = fetched.document

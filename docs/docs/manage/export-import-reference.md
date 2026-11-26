@@ -34,11 +34,14 @@ mcpgateway import backup.json
 # Dry-run validation
 mcpgateway import backup.json --dry-run
 
+# Import into a named team
+mcpgateway import backup.json --team-name "Operations"
+
 # Skip conflicts
 mcpgateway import backup.json --conflict-strategy skip
 
-# Cross-environment with key rotation
-mcpgateway import backup.json --rekey-secret $NEW_SECRET
+# Cross-environment import
+mcpgateway import backup.json
 
 # Selective import
 mcpgateway import backup.json --include "tools:api_tool;servers:ai_server"
@@ -119,8 +122,8 @@ MCPGATEWAY_BULK_IMPORT_RATE_LIMIT=10
 |----------|----------|----------|
 | `skip` | Skip existing entities | Additive imports |
 | `update` | Overwrite existing entities | Environment promotion |
-| `rename` | Add timestamp suffix | Preserve both versions |
-| `fail` | Stop on conflicts | Strict validation |
+| `rename` | Add a numbered suffix such as `_imported_1` | Preserve both versions |
+| `fail` | Roll back the import on conflict and return HTTP 409 | Strict validation |
 
 ---
 
@@ -202,14 +205,9 @@ jq empty export.json
 jq 'has("version") and has("entities")' export.json
 ```
 
-### "Encryption/Decryption Failed"
-```bash
-# Ensure consistent encryption key
-echo $AUTH_ENCRYPTION_SECRET
+### Import reports credentials required
 
-# Use same key for export and import environments
-mcpgateway import backup.json --rekey-secret $AUTH_ENCRYPTION_SECRET
-```
+Configure credentials on the destination for each entity listed in the API response's `credentials_required` field. To rotate an instance's encryption secret, follow the [rotation guide](../operations/auth-encryption-secret-rotation.md).
 
 ---
 
@@ -228,8 +226,8 @@ echo "✅ Backup created: backup-$DATE.json"
 #!/bin/bash
 # Sync staging to production
 mcpgateway export --tags production --out staging-config.json
-mcpgateway import staging-config.json --rekey-secret $PROD_SECRET --dry-run
-mcpgateway import staging-config.json --rekey-secret $PROD_SECRET
+mcpgateway import staging-config.json --dry-run
+mcpgateway import staging-config.json
 ```
 
 ### Selective Migration

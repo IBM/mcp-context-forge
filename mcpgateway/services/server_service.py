@@ -43,10 +43,12 @@ from mcpgateway.db import ServerInterface as DbServerInterface
 from mcpgateway.db import ServerMetric, ServerMetricsHourly, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import interface_identity, ServerCreate, ServerInterfaceInput, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
+from mcpgateway.services.a2a_service import agent_visible_to
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, protect_oauth_config_for_storage
+from mcpgateway.services.import_effects import after_import_commit, after_import_commit_sync
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
@@ -103,7 +105,10 @@ SERVER_ASSOCIATION_TYPES: list[_AssociationType] = [
     for m in SERVER_ASSOCIABLE_ENTITY_MODELS
 ]
 
-SERVER_ASSOCIATION_SELECTINLOADS: list[Any] = [selectinload(getattr(DbServer, at.rel_attr)) for at in SERVER_ASSOCIATION_TYPES]
+SERVER_ASSOCIATION_SELECTINLOADS: list[Any] = [
+    *(selectinload(getattr(DbServer, at.rel_attr)) for at in SERVER_ASSOCIATION_TYPES),
+    selectinload(DbServer.a2a_agents).selectinload(DbA2AAgent.tool),
+]
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -240,6 +245,63 @@ class ServerNameConflictError(ServerError):
         super().__init__(message)
 
 
+def _sync_agent_tools(server: DbServer, dropped_agents: Optional[List[DbA2AAgent]] = None) -> None:
+    """Sync the derived tools of the A2A agents on a server.
+
+    MCP clients list a server's tools from ``server_tool_association``. They never read
+    ``server_a2a_association``. An agent is callable through a server only when its
+    derived tool is in ``server.tools``. The tool of each associated agent is attached,
+    and the tool of each dropped agent is detached.
+
+    Args:
+        server: Server ORM instance to modify.
+        dropped_agents: Agents the caller detached in this change. Their derived tools leave the server,
+            unless an agent that stays on the server uses the same tool.
+    """
+    current = {tool.id for tool in server.tools}
+    for agent in server.a2a_agents:
+        tool = agent.tool
+        if tool is not None and tool.id not in current:
+            server.tools.append(tool)
+            current.add(tool.id)
+            logger.info("A2A agent %s tool %s attached to server %s", agent.name, tool.id, server.name)
+    still_used = {agent.tool.id for agent in server.a2a_agents if agent.tool is not None}
+    still_attached = {agent.id for agent in server.a2a_agents}
+    for agent in dropped_agents or []:
+        tool = agent.tool
+        if agent.id not in still_attached and tool is not None and tool.id not in still_used and tool.id in current:
+            server.tools.remove(tool)
+            current.discard(tool.id)
+            logger.info("A2A agent %s tool %s detached from server %s", agent.name, tool.id, server.name)
+
+
+def _require_visible_a2a_agents(db: Session, agent_ids: Optional[Sequence[str]], user_email: Optional[str], token_teams: Optional[List[str]], attached: Sequence[DbA2AAgent] = ()) -> None:
+    """Reject agent IDs that the caller cannot see.
+
+    A missing agent and an invisible agent raise the same error, so the error does not reveal
+    whether an ID exists. Agents already attached to the server stay allowed.
+
+    Args:
+        db: Database session.
+        agent_ids: Agent IDs the request attaches to the server.
+        user_email: Email of the caller, for owner matching.
+        token_teams: Teams of the caller token. ``None`` is the admin bypass, ``[]`` is public-only.
+        attached: Agents already attached to the server. They need no new check.
+
+    Raises:
+        ServerError: If any requested agent is missing or not visible to the caller.
+    """
+    already_attached = {agent.id for agent in attached}
+    requested = {id_.strip() for id_ in agent_ids or [] if id_ and id_.strip()} - already_attached
+    if not requested:
+        return
+    agents = db.execute(select(DbA2AAgent).where(DbA2AAgent.id.in_(requested))).scalars().all()
+    visible = {agent.id for agent in agents if agent_visible_to(db, agent, user_email, token_teams)}
+    unavailable = requested - visible
+    if unavailable:
+        raise ServerError(f"A2A Agents with ids {sorted(unavailable)} do not exist.")
+
+
 def _associate_server_entities(db: Session, db_server: DbServer, server_in: ServerCreate) -> None:
     """Associate tools/resources/prompts/a2a_agents with a server during creation.
 
@@ -272,6 +334,7 @@ def _associate_server_entities(db: Session, db_server: DbServer, server_in: Serv
             rel.append(obj)
             if at.model is DbA2AAgent:
                 logger.info("A2A agent %s associated with server %s", obj.name, db_server.name)
+    _sync_agent_tools(db_server)
 
 
 def _apply_server_interfaces(server: DbServer, interfaces: Optional[List[ServerInterfaceInput]]) -> None:
@@ -309,6 +372,8 @@ def _update_server_associations(db: Session, server: DbServer, server_update: Se
     ``None``), clears the existing relationship and re-populates it from the
     supplied IDs.
     """
+    changes_agent_tools = any(getattr(server_update, field, None) is not None for field in ("associated_tools", "associated_a2a_agents"))
+    previous_agents: List[DbA2AAgent] = list(server.a2a_agents) if changes_agent_tools else []
     for at in SERVER_ASSOCIATION_TYPES:
         new_ids = getattr(server_update, at.input_field, None)
         if new_ids is None:
@@ -318,6 +383,8 @@ def _update_server_associations(db: Session, server: DbServer, server_update: Se
         if ids:
             objs = db.execute(select(at.model).where(at.model.id.in_(ids))).scalars().all()
             setattr(server, at.rel_attr, list(objs))
+    if changes_agent_tools:
+        _sync_agent_tools(server, dropped_agents=previous_agents)
 
 
 class ServerService(BaseService):
@@ -597,6 +664,7 @@ class ServerService(BaseService):
         visibility: Optional[str] = "public",
         *,
         oauth_authorized: bool = False,
+        token_teams: Optional[List[str]] = None,
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
@@ -623,6 +691,7 @@ class ServerService(BaseService):
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
             oauth_authorized: Whether the route authorizes explicit OAuth configuration.
+            token_teams: Teams of the caller token. Limits which A2A agents the caller can attach.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -705,16 +774,17 @@ class ServerService(BaseService):
             logger.info("Adding server to DB session: %s", db_server.name)
             db.add(db_server)
 
+            _require_visible_a2a_agents(db, server_in.associated_a2a_agents, owner_email, token_teams)
             _associate_server_entities(db, db_server, server_in)
             _apply_server_interfaces(db_server, getattr(server_in, "interfaces", None))
 
             # Commit the new record and refresh.
             db.commit()
             db.refresh(db_server)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
 
             cache = _get_registry_cache()
-            await cache.invalidate_servers()
+            await after_import_commit(cache.invalidate_servers)
 
             # Force load the relationship attributes.
             _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
@@ -733,11 +803,12 @@ class ServerService(BaseService):
                 "associated_prompts": [str(prompt.id) for prompt in db_server.prompts],
             }
             logger.debug("Server Data: %s", server_data)
-            await self._notify_server_added(db_server)
+            await after_import_commit(self._notify_server_added, db_server)
             logger.info("Registered server: %s", server_in.name)
 
             # Structured logging: Audit trail for server creation
-            self._audit_trail.log_action(
+            after_import_commit_sync(
+                self._audit_trail.log_action,
                 user_id=created_by or "system",
                 action="create_server",
                 resource_type="server",
@@ -1321,13 +1392,15 @@ class ServerService(BaseService):
         db: Session,
         server_id: str,
         server_update: ServerUpdate,
-        user_email: str,
+        user_email: Optional[str],
         modified_by: Optional[str] = None,
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         *,
         oauth_authorized: bool = False,
+        token_teams: Optional[List[str]] = None,
+        import_platform_admin: bool = False,
     ) -> ServerRead:
         """Update an existing server.
 
@@ -1341,6 +1414,8 @@ class ServerService(BaseService):
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
             oauth_authorized: Whether the route authorizes explicit OAuth configuration.
+            token_teams: Teams of the caller token. Limits which A2A agents the caller can attach.
+            import_platform_admin: Verified unrestricted administrator for this import update.
 
         Returns:
             The updated ServerRead object.
@@ -1401,7 +1476,7 @@ class ServerService(BaseService):
             original_server_id = str(server.id)
 
             # Check ownership if user_email provided
-            if user_email:
+            if user_email and not import_platform_admin:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
@@ -1452,7 +1527,7 @@ class ServerService(BaseService):
                 # Validate visibility transitions
                 if new_visibility == "team":
                     target_team_id = server_update.team_id if server_update.team_id is not None else server.team_id
-                    _validate_server_team_assignment(db, user_email, target_team_id)
+                    _validate_server_team_assignment(db, None if import_platform_admin else user_email, target_team_id)
 
                 elif new_visibility == "public":
                     # Optional: Check if user has permission to make resources public
@@ -1464,6 +1539,7 @@ class ServerService(BaseService):
             if server_update.team_id is not None:
                 server.team_id = server_update.team_id
 
+            _require_visible_a2a_agents(db, getattr(server_update, "associated_a2a_agents", None), user_email, token_teams, attached=server.a2a_agents)
             _update_server_associations(db, server, server_update)
             _apply_server_interfaces(server, server_update.interfaces)
 
@@ -1522,25 +1598,25 @@ class ServerService(BaseService):
 
             db.commit()
             db.refresh(server)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
             # Force loading relationships
             _ = server.tools, server.resources, server.prompts
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
-            await cache.invalidate_servers()
+            await after_import_commit(cache.invalidate_servers)
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate_server(original_server_id)
+            await after_import_commit(tool_lookup_cache.invalidate_server, original_server_id)
             updated_server_id = str(server.id)
             if updated_server_id != original_server_id:
-                await tool_lookup_cache.invalidate_server(updated_server_id)
+                await after_import_commit(tool_lookup_cache.invalidate_server, updated_server_id)
             # Also invalidate tags cache since server tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
 
-            await self._notify_server_updated(server)
+            await after_import_commit(self._notify_server_updated, server)
             logger.info("Updated server: %s", server.name)
 
             # Structured logging: Audit trail for server update
@@ -1554,7 +1630,8 @@ class ServerService(BaseService):
             if server_update.interfaces is not None:
                 changes.append(f"interfaces: {len(server_update.interfaces)}")
 
-            self._audit_trail.log_action(
+            after_import_commit_sync(
+                self._audit_trail.log_action,
                 user_id=user_email or "system",
                 action="update_server",
                 resource_type="server",

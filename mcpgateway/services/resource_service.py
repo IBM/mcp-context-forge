@@ -65,6 +65,7 @@ from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
 from mcpgateway.services.event_service import EventService
+from mcpgateway.services.import_effects import after_import_commit, after_import_commit_sync
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import apply_resource_meta, optional_extension_metadata, validate_ui_resource
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
@@ -818,17 +819,18 @@ class ResourceService(BaseService):
             db.add(db_resource)
             db.commit()
             db.refresh(db_resource)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
 
-            await _get_registry_cache().invalidate_resources()
+            await after_import_commit(_get_registry_cache().invalidate_resources)
 
             # Notify subscribers
-            await self._notify_resource_added(db_resource)
+            await after_import_commit(self._notify_resource_added, db_resource)
 
             logger.info("Registered resource: %s", resource.uri)
 
             # Structured logging: Audit trail for resource creation
-            audit_trail.log_action(
+            after_import_commit_sync(
+                audit_trail.log_action,
                 user_id=created_by or "system",
                 action="create_resource",
                 resource_type="resource",
@@ -3475,6 +3477,7 @@ class ResourceService(BaseService):
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        import_platform_admin: bool = False,
     ) -> ResourceRead:
         """
         Update a resource.
@@ -3501,6 +3504,7 @@ class ResourceService(BaseService):
             modified_via: Source of modification (ui/api/import)
             modified_user_agent: User agent string from the modification request
             user_email: Email of user performing update (for ownership check)
+            import_platform_admin: Verified unrestricted administrator for this import update.
 
         Returns:
             The updated ResourceRead object
@@ -3543,7 +3547,7 @@ class ResourceService(BaseService):
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
             # Check ownership if user_email provided
-            if user_email:
+            if user_email and not import_platform_admin:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
@@ -3710,24 +3714,24 @@ class ResourceService(BaseService):
                 resource.version = 1
             db.commit()
             db.refresh(resource)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
-            await cache.invalidate_resources()
+            await after_import_commit(cache.invalidate_resources)
             # Also invalidate tags cache since resource tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
             # First-Party
             from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
-            metrics_cache.invalidate_prefix("top_resources:")
-            metrics_cache.invalidate("resources")
+            after_import_commit_sync(metrics_cache.invalidate_prefix, "top_resources:")
+            after_import_commit_sync(metrics_cache.invalidate, "resources")
 
             # Notify subscribers
-            await self._notify_resource_updated(resource)
+            await after_import_commit(self._notify_resource_updated, resource)
 
             logger.info("Updated resource: %s", resource.uri)
 
@@ -3740,7 +3744,8 @@ class ResourceService(BaseService):
             if resource_update.description:
                 changes.append("description updated")
 
-            audit_trail.log_action(
+            after_import_commit_sync(
+                audit_trail.log_action,
                 user_id=user_email or modified_by or "system",
                 action="update_resource",
                 resource_type="resource",

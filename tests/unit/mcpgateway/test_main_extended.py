@@ -7612,12 +7612,29 @@ class TestExportImportEndpoints:
 
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.import_configuration.__wrapped__(
-                import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"}
+                import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities={"tools": []}, db=MagicMock(), user={"email": "admin@example.com"}
             )
 
         assert excinfo.value.status_code == 403
         assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
         import_service.import_configuration.assert_not_awaited()
+
+    async def test_import_configuration_rejects_null_rekey_option(self, monkeypatch):
+        """Reject a request that includes the retired option with a null value."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        import_data = {"entities": {"tools": []}}
+        request = MagicMock(spec=Request, json=AsyncMock(return_value={"import_data": import_data, "rekey_secret": None}))
+        service = MagicMock(import_configuration=AsyncMock())
+        monkeypatch.setattr(main_mod, "import_service", service)
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.import_configuration.__wrapped__(request=request, import_data=import_data, db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert excinfo.value.status_code == 400
+        assert "python -m mcpgateway.scripts.migrate_enc_secret" in excinfo.value.detail
+        service.import_configuration.assert_not_awaited()
 
     @pytest.mark.parametrize("dry_run", [True, False])
     async def test_import_configuration_allows_root_free_payload_when_root_gate_denies(self, monkeypatch, dry_run):
@@ -8313,13 +8330,21 @@ class TestRemainingCoverageGaps:
 
         status_obj = MagicMock()
         status_obj.to_dict.return_value = {"status": "ok"}
-        monkeypatch.setattr(main_mod.import_service, "get_import_status", MagicMock(return_value=status_obj))
-        result = await main_mod.get_import_status.__wrapped__("import-1", user={"email": "user@example.com"})
+        request = _make_request("/v1/import/status/import-1")
+        db = MagicMock()
+        user = {"email": "user@example.com"}
+        scope = AsyncMock(return_value=("user@example.com", ["team-1"], False))
+        monkeypatch.setattr(main_mod, "get_import_request_scope", scope)
+        get_status = MagicMock(return_value=status_obj)
+        monkeypatch.setattr(main_mod.import_service, "get_import_status", get_status)
+        result = await main_mod.get_import_status.__wrapped__("import-1", request=request, db=db, user=user)
         assert result["status"] == "ok"
+        scope.assert_awaited_once_with(request, user, db)
+        get_status.assert_called_once_with("import-1", imported_by="user@example.com", token_teams=["team-1"], unrestricted_admin=False)
 
         monkeypatch.setattr(main_mod.import_service, "get_import_status", MagicMock(return_value=None))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_import_status.__wrapped__("import-2", user={"email": "user@example.com"})
+            await main_mod.get_import_status.__wrapped__("import-2", request=request, db=db, user=user)
         assert excinfo.value.status_code == 404
 
     async def test_list_and_cleanup_import_statuses(self, monkeypatch):
@@ -8330,13 +8355,20 @@ class TestRemainingCoverageGaps:
         s1.to_dict.return_value = {"id": "1"}
         s2 = MagicMock()
         s2.to_dict.return_value = {"id": "2"}
-        monkeypatch.setattr(main_mod.import_service, "list_import_statuses", MagicMock(return_value=[s1, s2]))
-        result = await main_mod.list_import_statuses.__wrapped__(user={"email": "user@example.com"})
+        db = MagicMock()
+        user = {"email": "user@example.com"}
+        monkeypatch.setattr(main_mod, "get_import_request_scope", AsyncMock(return_value=("user@example.com", ["team-1"], False)))
+        list_statuses = MagicMock(return_value=[s1, s2])
+        monkeypatch.setattr(main_mod.import_service, "list_import_statuses", list_statuses)
+        result = await main_mod.list_import_statuses.__wrapped__(request=_make_request("/v1/import/status"), db=db, user=user)
         assert result == [{"id": "1"}, {"id": "2"}]
+        list_statuses.assert_called_once_with(imported_by="user@example.com", token_teams=["team-1"], unrestricted_admin=False)
 
-        monkeypatch.setattr(main_mod.import_service, "cleanup_completed_imports", MagicMock(return_value=2))
-        result = await main_mod.cleanup_import_statuses.__wrapped__(max_age_hours=1, user={"email": "user@example.com"})
+        cleanup = MagicMock(return_value=2)
+        monkeypatch.setattr(main_mod.import_service, "cleanup_completed_imports", cleanup)
+        result = await main_mod.cleanup_import_statuses.__wrapped__(request=_make_request("/v1/import/cleanup", method="POST"), max_age_hours=1, db=db, user=user)
         assert result["removed_count"] == 2
+        cleanup.assert_called_once_with(1, imported_by="user@example.com", token_teams=["team-1"], unrestricted_admin=False)
 
     async def test_create_server_public_only_restrictions_and_team_id(self, monkeypatch):
         # First-Party
@@ -9412,7 +9444,6 @@ class TestRemainingCoverageGaps:
             import_data={"tools": []},
             conflict_strategy="update",
             dry_run=False,
-            rekey_secret=None,
             selected_entities=None,
             db=MagicMock(),
             user=user,

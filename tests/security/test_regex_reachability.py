@@ -39,6 +39,7 @@ import jsonschema
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.services.tool_service import _validate_tool_input_arguments, _validate_with_cached_schema
 from mcpgateway.utils import safe_jsonschema
@@ -118,12 +119,16 @@ def _boom(*args, **kwargs):
 
 
 @pytest.fixture(autouse=True)
-def _pool():
+def _pool(monkeypatch):
     """Start and stop the validation pool around each test.
+
+    Args:
+        monkeypatch: Set a test-only budget for worker imports under parallel load.
 
     Yields:
         None.
     """
+    monkeypatch.setattr(settings, "regex_timeout_seconds", 5.0)
     start_validation_pool()
     yield
     shutdown_validation_pool()

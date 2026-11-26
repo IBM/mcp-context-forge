@@ -665,6 +665,8 @@ class TestTokenScopingMiddleware:
             ("GET", "/a2a/", Permissions.A2A_READ),
             ("GET", "/a2a/agent-1", Permissions.A2A_READ),
             ("GET", "/a2a/agent-1/card", Permissions.A2A_READ),
+            ("POST", "/a2a/agent-1/card", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/agent-1/card/", Permissions.A2A_UPDATE),
             ("POST", "/a2a", Permissions.A2A_CREATE),
             ("POST", "/a2a/", Permissions.A2A_CREATE),
             ("POST", "/a2a/fetch-card", Permissions.A2A_CREATE),
@@ -691,6 +693,8 @@ class TestTokenScopingMiddleware:
         [
             ("GET", "/a2a", Permissions.A2A_CREATE),
             ("GET", "/a2a/agent-1/card", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/agent-1/card", Permissions.A2A_READ),
+            ("POST", "/a2a/agent-1/card", Permissions.A2A_CREATE),
             ("POST", "/a2a", Permissions.A2A_READ),
             ("POST", "/a2a/fetch-card", Permissions.A2A_READ),
             ("POST", "/a2a/fetch-card", Permissions.A2A_INVOKE),
