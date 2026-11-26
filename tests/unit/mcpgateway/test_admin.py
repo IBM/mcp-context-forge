@@ -6766,7 +6766,7 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_toggle_status.assert_called_with(mock_db, "agent-1", True, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, "agent-1", True, user_email="test-user", token_teams=[])
 
     @patch.object(A2AAgentService, "set_agent_state")
     async def test_admin_set_a2a_agent_state_error_handlers(self, mock_toggle_status, mock_request, mock_db):
@@ -6816,7 +6816,7 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_delete_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", purge_metrics=False)
+        mock_delete_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", purge_metrics=False, token_teams=[])
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_error_handlers(self, mock_delete_agent, mock_request, mock_db):

@@ -968,6 +968,29 @@ class A2AAgentService(BaseService):
             query = query.filter(predicate)
         return [row[0] for row in query.all()]
 
+    async def _enforce_token_team_scope(
+        self,
+        db: Session,
+        agent: DbA2AAgent,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> None:
+        """Deny a mutation when the token's team scope does not cover the agent.
+
+        Args:
+            db: Database session.
+            agent: The agent targeted by the mutation.
+            user_email: Caller's email.
+            token_teams: Teams from the token. None means no token narrowing.
+
+        Raises:
+            PermissionError: If the agent is outside the token's team scope.
+        """
+        if token_teams is None:
+            return
+        if not await self._check_agent_access(db, agent, user_email, token_teams):
+            raise PermissionError("Agent is outside the token's team scope")
+
     async def _check_agent_access_by_id(
         self,
         db: Session,
@@ -2223,6 +2246,7 @@ class A2AAgentService(BaseService):
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> A2AAgentRead:
         """Update an existing A2A agent.
 
@@ -2235,13 +2259,14 @@ class A2AAgentService(BaseService):
             modified_via: Modification method.
             modified_user_agent: User agent of modification request.
             user_email: Email of user performing update (for ownership check).
+            token_teams: Teams from the caller's token. None means no token narrowing.
 
         Returns:
             Updated agent data.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
-            PermissionError: If user doesn't own the agent.
+            PermissionError: If user doesn't own the agent or the agent is outside the token's team scope.
             A2AAgentNameConflictError: If name conflicts with another agent.
             A2AAgentError: For other errors during update.
             IntegrityError: If a database integrity error occurs.
@@ -2253,6 +2278,8 @@ class A2AAgentService(BaseService):
 
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+            await self._enforce_token_team_scope(db, agent, user_email, token_teams)
 
             # Check ownership if user_email provided
             if user_email:
@@ -2586,7 +2613,15 @@ class A2AAgentService(BaseService):
             db.rollback()
             raise A2AAgentError(f"Failed to update A2A agent: {unexpected_error_detail(e)}")
 
-    async def set_agent_state(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
+    async def set_agent_state(
+        self,
+        db: Session,
+        agent_id: str,
+        activate: bool,
+        reachable: Optional[bool] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2AAgentRead:
         """Set the activation status of an A2A agent.
 
         Args:
@@ -2595,13 +2630,14 @@ class A2AAgentService(BaseService):
             activate: True to activate, False to deactivate.
             reachable: Optional reachability status.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            token_teams: Teams from the caller's token. None means no token narrowing.
 
         Returns:
             Updated agent data.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
-            PermissionError: If user doesn't own the agent.
+            PermissionError: If user doesn't own the agent or the agent is outside the token's team scope.
         """
         with create_span(
             "a2a.state_change",
@@ -2617,6 +2653,8 @@ class A2AAgentService(BaseService):
 
                 if not agent:
                     raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+                await self._enforce_token_team_scope(db, agent, user_email, token_teams)
 
                 if user_email:
                     # First-Party
@@ -2693,7 +2731,7 @@ class A2AAgentService(BaseService):
                 set_span_error(span, exc)
                 raise
 
-    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
+    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, purge_metrics: bool = False, token_teams: Optional[List[str]] = None) -> None:
         """Delete an A2A agent.
 
         Args:
@@ -2701,10 +2739,11 @@ class A2AAgentService(BaseService):
             agent_id: Agent ID.
             user_email: Email of user performing delete (for ownership check).
             purge_metrics: If True, delete raw + rollup metrics for this agent.
+            token_teams: Teams from the caller's token. None means no token narrowing.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
-            PermissionError: If user doesn't own the agent.
+            PermissionError: If user doesn't own the agent or the agent is outside the token's team scope.
         """
         with create_span(
             "a2a.delete",
@@ -2720,6 +2759,8 @@ class A2AAgentService(BaseService):
 
                 if not agent:
                     raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+                await self._enforce_token_team_scope(db, agent, user_email, token_teams)
 
                 # Check ownership if user_email provided
                 if user_email:

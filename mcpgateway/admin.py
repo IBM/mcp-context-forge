@@ -17327,6 +17327,7 @@ async def admin_edit_a2a_agent(
             agent_update.protocol_version = str(form["protocol_version"])
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
+        _, token_teams = get_scoped_resource_access_context(request, user)
         await a2a_service.update_agent(
             db=db,
             agent_id=agent_id,
@@ -17336,6 +17337,7 @@ async def admin_edit_a2a_agent(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            token_teams=token_teams,
         )
 
         return ORJSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
@@ -17401,7 +17403,8 @@ async def admin_set_a2a_agent_state(
         is_inactive_checked = str(form.get("is_inactive_checked", "false"))
         team_id = str(form.get("team_id", "") or "")
 
-        await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
+        _, token_teams = get_scoped_resource_access_context(request, user)
+        await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email, token_teams=token_teams)
 
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting A2A agent state {agent_id}: {e}")
@@ -17422,7 +17425,7 @@ async def admin_set_a2a_agent_state(
 @require_permission("a2a.delete", allow_admin_bypass=False)
 async def admin_delete_a2a_agent(
     agent_id: str,
-    request: Request,  # pylint: disable=unused-argument
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> RedirectResponse:
@@ -17453,7 +17456,8 @@ async def admin_delete_a2a_agent(
         is_inactive_checked = str(form.get("is_inactive_checked", "false"))
         team_id = str(form.get("team_id", "") or "")
         user_email = get_user_email(user)
-        await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
+        _, token_teams = get_scoped_resource_access_context(request, user)
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics, token_teams=token_teams)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting A2A agent {agent_id}: {e}")
         error_code = "permission_denied"

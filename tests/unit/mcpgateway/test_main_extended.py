@@ -5868,17 +5868,17 @@ class TestA2ABranchCoverage:
         svc.delete_agent = AsyncMock(side_effect=PermissionError("nope"))
         monkeypatch.setattr(main_mod, "a2a_service", svc)
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.delete_a2a_agent("agent-1", MagicMock(), purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 403
 
         svc.delete_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.delete_a2a_agent("agent-1", MagicMock(), purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 404
 
         svc.delete_agent = AsyncMock(side_effect=A2AAgentError("bad"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.delete_a2a_agent("agent-1", MagicMock(), purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 400
 
     @pytest.mark.asyncio
