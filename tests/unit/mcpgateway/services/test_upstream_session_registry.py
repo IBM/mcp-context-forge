@@ -1259,6 +1259,10 @@ class _FakeClientSession:
     ``session.initialize()`` directly fails here with AttributeError.
     """
 
+    @staticmethod
+    def _stamp(data, opts):
+        """Stand-in for the SDK's per-request stamp."""
+
 
 class _FakeClient:
     """Async-CM stand-in for ``mcp.client.Client``.
@@ -1344,6 +1348,8 @@ async def test_default_session_factory_streamablehttp_path(monkeypatch):
     client = _FakeClient.instances[-1]
     assert session is client.session
     assert client.handshake_done is True
+    # The caller's envelope _meta is filtered on handshake-era sessions.
+    assert session._stamp is not _FakeClientSession._stamp  # pylint: disable=protected-access
     assert captured["which"] == "streamable"
     assert captured["url"] == req.url
     assert captured["headers"] == req.headers

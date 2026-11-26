@@ -44,6 +44,7 @@ import mcp_types
 from mcpgateway.config import settings
 from mcpgateway.observability import create_span, upstream_transport_context
 from mcpgateway.transports.context import request_headers_var
+from mcpgateway.utils.mcp_proxy_client import drop_envelope_on_handshake
 from mcpgateway.utils.session_compat import RequestResponder
 from mcpgateway.utils.ssrf_pinning import build_pinned_httpx_client_factory, HttpxClientFactory, PinnedTarget, resolve_pinned_target
 from mcpgateway.utils.streamable_http_compat import streamable_http_client, UpstreamSessionInfo
@@ -658,6 +659,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             # __aenter__ enters the transport and performs the mode-driven
             # handshake; no explicit session.initialize() here.
             async with client:
+                drop_envelope_on_handshake(client)
                 session_info.annotate(init_span)
                 if not ready.done():
                     ready.set_result((client.session, client))

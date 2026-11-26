@@ -34,16 +34,19 @@ import httpx2
 from mcp import Client
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.inbound import MCP_PROTOCOL_VERSION_HEADER
 from mcp_types import CLIENT_CAPABILITIES_META_KEY
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
 # First-Party
+from mcpgateway.common.validators import MCP_ENVELOPE_META_KEYS
 from mcpgateway.config import settings
 from mcpgateway.observability import create_span, upstream_request_context
 from mcpgateway.utils.streamable_http_compat import ErrorResponseHook, UpstreamSessionInfo
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["keep_caller_capabilities", "mcp_proxy_client"]
+__all__ = ["drop_envelope_on_handshake", "keep_caller_capabilities", "mcp_proxy_client"]
 
 
 # Capabilities the gateway carries upstream on the caller's behalf: the three kinds of
@@ -93,6 +96,35 @@ def keep_caller_capabilities(client: Client) -> None:
         meta = (data.get("params") or {}).get("_meta")
         if caller is not None and isinstance(meta, dict) and CLIENT_CAPABILITIES_META_KEY in meta:
             meta[CLIENT_CAPABILITIES_META_KEY] = caller
+
+    session._stamp = stamp  # pylint: disable=protected-access
+
+
+def drop_envelope_on_handshake(client: Client) -> None:
+    """Keep the caller's 2026-07-28 envelope ``_meta`` keys off a handshake-era upstream.
+
+    The keys describe the inbound hop. A modern upstream stamp overwrites them,
+    but the handshake stamp leaves them in place, and the upstream then refuses
+    the request.
+
+    Args:
+        client: A connected ``mcp.Client``.
+    """
+    session = client.session
+    sdk_stamp = session._stamp  # pylint: disable=protected-access
+
+    def stamp(data: dict[str, Any], opts: Any) -> None:
+        """Run the SDK stamp, then drop the envelope keys on a handshake connection.
+
+        Args:
+            data: The serialized request about to be sent.
+            opts: The SDK's per-call options, which carry the stamped protocol version.
+        """
+        sdk_stamp(data, opts)
+        meta = (data.get("params") or {}).get("_meta")
+        if isinstance(meta, dict) and (opts.get("headers") or {}).get(MCP_PROTOCOL_VERSION_HEADER) in HANDSHAKE_PROTOCOL_VERSIONS:
+            for key in MCP_ENVELOPE_META_KEYS:
+                meta.pop(key, None)
 
     session._stamp = stamp  # pylint: disable=protected-access
 
@@ -152,6 +184,7 @@ async def mcp_proxy_client(
                 finally:
                     session_info.annotate(init_span)
             keep_caller_capabilities(client)
+            drop_envelope_on_handshake(client)
             yield client
         return
 
@@ -190,6 +223,7 @@ async def mcp_proxy_client(
                     finally:
                         session_info.annotate(init_span)
                 keep_caller_capabilities(client)
+                drop_envelope_on_handshake(client)
                 yield client
         except BaseException as exc:  # noqa: BLE001 — re-raised below unless translated
             # an error the SDK made up stands for a transport failure: surface that instead
