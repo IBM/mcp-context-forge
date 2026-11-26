@@ -864,7 +864,7 @@ export const copyEnvVariables = async function (provider) {
     OPENAI_BASE_URL=https://api.openai.com/v1`,
 
     anthropic: `ANTHROPIC_API_KEY=<api_key>
-    ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+    ANTHROPIC_MODEL=claude-sonnet-4-6
     ANTHROPIC_MAX_TOKENS=4096`,
 
     aws_bedrock: `AWS_BEDROCK_MODEL_ID=anthropic.claude-v2

@@ -421,7 +421,7 @@ class AnthropicConfig(BaseModel):
 
     Attributes:
         api_key: Anthropic API authentication key.
-        model: Claude model identifier (e.g., claude-3-5-sonnet-20241022, claude-3-opus).
+        model: Claude model identifier (e.g., claude-sonnet-4-6).
         temperature: Sampling temperature for response generation (0.0-1.0).
         max_tokens: Maximum number of tokens to generate.
         timeout: Request timeout duration in seconds.
@@ -430,15 +430,15 @@ class AnthropicConfig(BaseModel):
     Examples:
         >>> config = AnthropicConfig(
         ...     api_key="sk-ant-...",  # pragma: allowlist secret
-        ...     model="claude-3-5-sonnet-20241022",
+        ...     model="claude-sonnet-4-6",
         ...     temperature=0.7
         ... )
         >>> config.model
-        'claude-3-5-sonnet-20241022'
+        'claude-sonnet-4-6'
     """
 
     api_key: str = Field(..., description="Anthropic API key")
-    model: str = Field(default="claude-3-5-sonnet-20241022", description="Claude model name")
+    model: str = Field(default="claude-sonnet-4-6", description="Claude model name")
     temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="Sampling temperature")
     max_tokens: int = Field(default=4096, gt=0, description="Maximum tokens to generate")
     timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
@@ -448,7 +448,7 @@ class AnthropicConfig(BaseModel):
         "json_schema_extra": {
             "example": {
                 "api_key": "sk-ant-...",  # pragma: allowlist secret
-                "model": "claude-3-5-sonnet-20241022",
+                "model": "claude-sonnet-4-6",
                 "temperature": 0.7,
                 "max_tokens": 4096,
             }
@@ -1088,11 +1088,11 @@ class AnthropicProvider:
     Examples:
         >>> config = AnthropicConfig(  # doctest: +SKIP
         ...     api_key="sk-ant-...",  # pragma: allowlist secret
-        ...     model="claude-3-5-sonnet-20241022"
+        ...     model="claude-sonnet-4-6"
         ... )
         >>> provider = AnthropicProvider(config)  # doctest: +SKIP
         >>> provider.get_model_name()  # doctest: +SKIP
-        'claude-3-5-sonnet-20241022'
+        'claude-sonnet-4-6'
 
     Note:
         Requires langchain-anthropic package to be installed.
@@ -1111,7 +1111,7 @@ class AnthropicProvider:
         Examples:
             >>> config = AnthropicConfig(  # doctest: +SKIP
             ...     api_key="sk-ant-...",  # pragma: allowlist secret
-            ...     model="claude-3-5-sonnet-20241022"
+            ...     model="claude-sonnet-4-6"
             ... )
             >>> provider = AnthropicProvider(config)  # doctest: +SKIP
         """
@@ -1141,7 +1141,7 @@ class AnthropicProvider:
         Examples:
             >>> config = AnthropicConfig(  # doctest: +SKIP
             ...     api_key="sk-ant-...",  # pragma: allowlist secret
-            ...     model="claude-3-5-sonnet-20241022"
+            ...     model="claude-sonnet-4-6"
             ... )
             >>> provider = AnthropicProvider(config)  # doctest: +SKIP
             >>> # llm = provider.get_llm()  # Returns ChatAnthropic instance
@@ -1183,11 +1183,11 @@ class AnthropicProvider:
         Examples:
             >>> config = AnthropicConfig(  # doctest: +SKIP
             ...     api_key="sk-ant-...",  # pragma: allowlist secret
-            ...     model="claude-3-5-sonnet-20241022"
+            ...     model="claude-sonnet-4-6"
             ... )
             >>> provider = AnthropicProvider(config)  # doctest: +SKIP
             >>> provider.get_model_name()  # doctest: +SKIP
-            'claude-3-5-sonnet-20241022'
+            'claude-sonnet-4-6'
         """
         return self.config.model
 

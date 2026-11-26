@@ -67,7 +67,7 @@ class AnthropicConfig(BaseModel):
 
     api_base: str = "https://api.anthropic.com/v1"
     api_key_env: str = "ANTHROPIC_API_KEY"
-    model: str = "claude-3-5-sonnet-latest"
+    model: str = "claude-sonnet-4-6"
     max_tokens: int = 512
     temperature: float = 0.2
 

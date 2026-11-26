@@ -17,7 +17,7 @@ default_config:
   anthropic:
     api_base: "https://api.anthropic.com/v1"
     api_key_env: "ANTHROPIC_API_KEY"
-    model: "claude-3-5-sonnet-latest"
+    model: "claude-sonnet-4-6"
     max_tokens: 512
     temperature: 0.2
   prompt_template: "You are a helpful assistant. Summarize the following content succinctly in no more than {max_tokens} tokens. Focus on key points, remove redundancy, and preserve critical details."

@@ -408,7 +408,7 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
 | `ANTHROPIC_API_KEY`           | Anthropic API key                      | (none)  | string  |
-| `ANTHROPIC_MODEL`             | Claude model name                      | `claude-3-5-sonnet-20241022` | string |
+| `ANTHROPIC_MODEL`             | Claude model name                      | `claude-sonnet-4-6` | string |
 | `ANTHROPIC_TEMPERATURE`       | Sampling temperature                   | `0.7`   | float (0.0-1.0) |
 | `ANTHROPIC_MAX_TOKENS`        | Maximum tokens to generate             | `4096`  | int     |
 | `ANTHROPIC_MAX_RETRIES`       | Maximum number of retries              | `2`     | int     |
