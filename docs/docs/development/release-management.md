@@ -546,8 +546,18 @@ This starts Prometheus, Grafana, and Tempo with OTEL tracing enabled:
 
 ### 8.2 Run a load test with monitoring active
 
+Export a token, then run the benchmark. The default run uses the legacy (2025) MCP specs:
+
 ```bash
-make load-test-cli
+export TOKEN=$(make create-token)
+
+make perf-benchmark-tools TIME=300s
+```
+
+For the modern (2026) MCP specs, run:
+
+```bash
+make perf-benchmark-tools TIME=300s MODE=modern
 ```
 
 While the load test is running, verify in Grafana:
@@ -1449,7 +1459,9 @@ make compose-sso-down
 
 # 10. Monitoring under load (compose stack must be running)
 make monitoring-up
-make load-test-cli
+export TOKEN=$(make create-token)
+make perf-benchmark-tools TIME=300s
+make perf-benchmark-tools TIME=300s MODE=modern
 # ... verify Grafana dashboards, Prometheus targets, Tempo traces ...
 make monitoring-down
 
