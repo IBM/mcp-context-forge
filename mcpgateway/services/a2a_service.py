@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import time
+from types import SimpleNamespace
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import urlparse
 import uuid
@@ -26,7 +27,7 @@ import uuid
 # Third-Party
 from fastapi import HTTPException
 import httpx
-from pydantic import ValidationError
+from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 from sqlalchemy import and_, case, delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -40,12 +41,24 @@ from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentCard
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session, get_for_update, server_tool_association
+from mcpgateway.db import fresh_db_session, get_for_update, server_tool_association, utc_now
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2AFetchCardRequest, A2AFetchCardResponse, A2AStoredCardRead, A2ATestError
-from mcpgateway.services.a2a_card_import import fetch_agent_card, same_origin
+from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
+    A2AAgentCreate,
+    A2AAgentMetrics,
+    A2AAgentRead,
+    A2AAgentUpdate,
+    A2ACardRefreshRequest,
+    A2ACardRefreshResponse,
+    A2AFetchCardRequest,
+    A2AFetchCardResponse,
+    A2AStoredCardRead,
+    A2ATestError,
+)
+from mcpgateway.services.a2a_card_import import apply_extended_result, fetch_agent_card, fetch_stored_extended_card, same_origin
 from mcpgateway.services.a2a_errors import A2AAgentError
 from mcpgateway.services.a2a_oauth import A2A_OAUTH_TOKEN_PURPOSE, forget_a2a_oauth_failures, resolve_a2a_agent_oauth_headers
 from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_terminal_task_state, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
@@ -452,6 +465,57 @@ def _require_secret_reentry_on_token_url_change(new_config: Optional[Dict[str, A
         raise PublicValidationError("Send the OAuth client secret again when you change the token URL.")
 
 
+def _origin_of(url: Optional[str]) -> Optional[str]:
+    """Return the scheme, host, and port of a URL as an origin URL, parsed as the card fetch parses it.
+
+    The well-known card path belongs to the origin, not to the path of the agent endpoint.
+
+    Args:
+        url: Agent endpoint URL, or ``None``.
+
+    Returns:
+        The origin without path, query, or fragment, or ``None`` when ``url`` is missing or invalid.
+
+    Examples:
+        >>> _origin_of("https://agent.example.com/rpc/v1?x=1")
+        'https://agent.example.com'
+        >>> _origin_of("http://127.0.0.1:9100/rpc")
+        'http://127.0.0.1:9100'
+        >>> _origin_of("https://agent.example.com:443/rpc")
+        'https://agent.example.com'
+        >>> _origin_of("not a url") is None
+        True
+        >>> _origin_of(None) is None
+        True
+    """
+    if not url:
+        return None
+    try:
+        parsed = TypeAdapter(AnyHttpUrl).validate_python(url)
+    except ValidationError:
+        return None
+    default_port = 443 if parsed.scheme == "https" else 80
+    port = f":{parsed.port}" if parsed.port and parsed.port != default_port else ""
+    return f"{parsed.scheme}://{parsed.host}{port}"
+
+
+class A2ACardRefreshThrottledError(Exception):
+    """Raised when an agent card is re-fetched again before the minimum interval has passed.
+
+    Attributes:
+        retry_after: Seconds until the next re-fetch is allowed.
+    """
+
+    def __init__(self, retry_after: int):
+        """Store the wait time.
+
+        Args:
+            retry_after: Seconds until the next re-fetch is allowed.
+        """
+        super().__init__(f"Agent Card was re-fetched recently. Retry in {retry_after} seconds")
+        self.retry_after = retry_after
+
+
 class A2AAgentNotFoundError(A2AAgentError):
     """Raised when a requested A2A agent is not found.
 
@@ -746,6 +810,7 @@ class A2AAgentService(BaseService):
         """Initialize a new A2AAgentService instance."""
         self._initialized = False
         self._event_streams: List[AsyncGenerator[str, None]] = []
+        self._card_refresh_attempts: Dict[str, float] = {}
 
     async def initialize(self) -> None:
         """Initialize the A2A agent service."""
@@ -1307,6 +1372,249 @@ class A2AAgentService(BaseService):
         except Exception:
             db.rollback()
             logger.warning("Failed to store Agent Card for A2A agent %s", agent.id, exc_info=True)
+
+    def _reserve_card_refresh(self, agent_id: str) -> None:
+        """Reserve a card re-fetch slot for ``agent_id`` or raise when the interval has not passed.
+
+        Each re-fetch makes an outbound request, so one agent allows one attempt per
+        ``a2a_card_refresh_min_interval`` seconds, failed attempts included. The limit holds per worker.
+
+        Args:
+            agent_id: Agent ID.
+
+        Raises:
+            A2ACardRefreshThrottledError: If the last attempt is younger than the minimum interval.
+        """
+        interval = settings.a2a_card_refresh_min_interval
+        now = time.monotonic()
+        attempts = self._card_refresh_attempts
+        last = attempts.get(agent_id)
+        if interval and last is not None and now - last < interval:
+            raise A2ACardRefreshThrottledError(int(interval - (now - last)) + 1)
+        attempts[agent_id] = now
+        if len(attempts) > 10000:
+            for key in [key for key, value in attempts.items() if now - value >= interval]:
+                del attempts[key]
+
+    @staticmethod
+    def _card_credentials(agent: DbA2AAgent, url: str) -> Optional[Dict[str, str]]:
+        """Return the stored agent credential as headers when ``url`` shares the origin of the endpoint.
+
+        Args:
+            agent: Registered agent row.
+            url: Card URL about to be fetched.
+
+        Returns:
+            Credential headers, or ``None`` when the agent has none or ``url`` is another origin.
+        """
+        if agent.auth_type not in ("basic", "bearer", "authheaders") or not agent.auth_value:
+            return None
+        try:
+            card_url = TypeAdapter(AnyHttpUrl).validate_python(url)
+        except ValidationError:
+            return None
+        if not same_origin(card_url, agent.endpoint_url):
+            return None
+        return {str(key): str(value) for key, value in decode_auth(agent.auth_value).items()}
+
+    async def _fetch_refresh_card(self, agent: DbA2AAgent, latest: Optional[A2AAgentCard], payload: A2ACardRefreshRequest) -> A2AFetchCardResponse:
+        """Fetch the card from the first available URL: caller ``base_url``, stored ``source_url``, then the endpoint.
+
+        Args:
+            agent: Registered agent row.
+            latest: Current stored card, or ``None``.
+            payload: Caller request.
+
+        Returns:
+            The fetch result. The credential of the agent goes only to a URL on the endpoint origin.
+        """
+        if payload.base_url is not None:
+            request = A2AFetchCardRequest(base_url=payload.base_url, headers=payload.headers)
+            return await fetch_agent_card(str(request.base_url), None, request.headers)
+        if latest is not None:
+            fetched = await fetch_agent_card(latest.source_url, None, self._card_credentials(agent, latest.source_url), latest.etag)
+            if fetched.outcome != "no_card":
+                return fetched
+        origin = _origin_of(agent.endpoint_url)
+        if origin is None:
+            return A2AFetchCardResponse(found=False, outcome="no_card")
+        return await fetch_agent_card(origin, None, self._card_credentials(agent, origin))
+
+    @staticmethod
+    def _latest_card(db: Session, agent_id: str, kind: str = "public") -> Optional[A2AAgentCard]:
+        """Return the highest stored card version of one kind for an agent.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            kind: ``public`` or ``extended``.
+
+        Returns:
+            The current card row of that kind, or ``None``.
+        """
+        return db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == kind).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
+
+    async def refresh_card(
+        self,
+        db: Session,
+        agent_id: str,
+        payload: A2ACardRefreshRequest,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2ACardRefreshResponse:
+        """Re-fetch the Agent Card of a registered agent and store a changed card as the next version.
+
+        The caller must pass the ownership check first. The agent row is never written. A failed fetch
+        leaves the stored card unchanged. The database connection returns to the pool before the outbound fetch.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            payload: Optional ``base_url`` and request-only ``headers``.
+            user_email: Requester email for visibility checks.
+            token_teams: Token team scope for visibility checks.
+
+        Returns:
+            Whether the card is unchanged, updated, or created, with the changed top-level keys.
+
+        Raises:
+            A2AAgentError: If no card could be fetched, or the stored card changed during the fetch.
+        """
+        await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+        row = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one()
+        agent = SimpleNamespace(endpoint_url=row.endpoint_url, auth_type=row.auth_type, auth_value=row.auth_value)
+        stored = self._latest_card(db, agent_id)
+        latest = SimpleNamespace(version=stored.version, source_url=stored.source_url, etag=stored.etag, card=stored.card) if stored is not None else None
+        db.commit()
+        db.close()
+
+        self._reserve_card_refresh(agent_id)
+        fetched = await self._fetch_refresh_card(agent, latest, payload)
+        if fetched.outcome == "auth_required":
+            raise A2AAgentError("The Agent Card requires credentials")
+        if fetched.outcome == "unreachable":
+            raise A2AAgentError("The Agent Card URL could not be reached")
+        if not fetched.found and fetched.outcome != "not_modified":
+            raise A2AAgentError("No A2A Agent Card was found")
+        if fetched.outcome == "not_modified" and latest is not None:
+            result = await fetch_stored_extended_card(latest.card, latest.source_url, self._card_credentials(agent, latest.source_url))
+            if result is not None:
+                apply_extended_result(fetched, result)
+        return self._record_card_check(db, agent_id, fetched, latest.version if latest is not None else None)
+
+    @staticmethod
+    def _same_json(first: Any, second: Any) -> bool:
+        """Return whether two JSON values are equal, without treating ``true`` as ``1``.
+
+        Args:
+            first: First JSON value.
+            second: Second JSON value.
+
+        Returns:
+            ``True`` when both serialize to the same JSON.
+        """
+        return json.dumps(first, sort_keys=True, separators=(",", ":")) == json.dumps(second, sort_keys=True, separators=(",", ":"))
+
+    def _store_refreshed_extended_card(self, db: Session, agent_id: str, fetched: A2AFetchCardResponse, now: Any) -> None:
+        """Store a changed extended card as the next version, without committing.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            fetched: Fetch result. Only a ``found`` extended outcome stores a row.
+            now: Time of the check.
+        """
+        if fetched.extended_outcome != "found" or fetched.extended_card is None:
+            return
+        document = fetched.extended_raw_card if fetched.extended_raw_card is not None else fetched.extended_card
+        current = self._latest_card(db, agent_id, "extended")
+        if current is not None and self._same_json(current.card, document):
+            current.checked_at = now
+            return
+        top = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent_id)).scalar() or 0
+        db.add(
+            A2AAgentCard(
+                a2a_agent_id=agent_id,
+                version=top + 1,
+                kind="extended",
+                card=document,
+                detected_version=fetched.detected_version,
+                source_url=fetched.source_url,
+                etag=fetched.extended_etag,
+                max_age=fetched.extended_max_age,
+                fetched_at=now,
+                checked_at=now,
+            )
+        )
+
+    def _record_card_check(self, db: Session, agent_id: str, fetched: A2AFetchCardResponse, base_version: Optional[int] = None) -> A2ACardRefreshResponse:
+        """Store a changed card as the next version, or record the check of an unchanged card.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            fetched: Fetch result with outcome ``found`` or ``not_modified``.
+            base_version: Version of the public card when the fetch started, or ``None`` when none existed.
+
+        Returns:
+            The refresh outcome.
+
+        Raises:
+            A2AAgentError: If the write fails, or another refresh stored a card since the fetch started.
+        """
+        now = utc_now()
+        try:
+            get_for_update(db, DbA2AAgent, agent_id)
+            latest = self._latest_card(db, agent_id)
+            if (latest.version if latest is not None else None) != base_version:
+                db.rollback()
+                raise A2AAgentError("The stored Agent Card changed during the refresh. Try again.")
+            document = (fetched.raw_card if fetched.raw_card is not None else fetched.card) or {}
+            if latest is not None and (fetched.outcome == "not_modified" or self._same_json(latest.card, document)):
+                self._store_refreshed_extended_card(db, agent_id, fetched, now)
+                latest.checked_at = now
+                if fetched.outcome == "not_modified":
+                    if fetched.etag:
+                        latest.etag = fetched.etag
+                    if fetched.max_age is not None:
+                        latest.max_age = fetched.max_age
+                else:
+                    latest.source_url = fetched.source_url
+                    latest.etag = fetched.etag
+                    latest.max_age = fetched.max_age
+                db.commit()
+                return A2ACardRefreshResponse(status="unchanged", version=latest.version, changed_keys=[], source_url=latest.source_url, checked_at=now)
+            previous = latest.card if latest is not None else {}
+            changed = sorted(key for key in set(previous) | set(document) if (key in previous) != (key in document) or not self._same_json(previous.get(key), document.get(key)))
+            top = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent_id)).scalar() or 0
+            version = top + 1
+            db.add(
+                A2AAgentCard(
+                    a2a_agent_id=agent_id,
+                    version=version,
+                    kind="public",
+                    card=document,
+                    detected_version=fetched.detected_version,
+                    source_url=fetched.source_url,
+                    etag=fetched.etag,
+                    max_age=fetched.max_age,
+                    fetched_at=now,
+                    checked_at=now,
+                )
+            )
+            db.flush()
+            self._store_refreshed_extended_card(db, agent_id, fetched, now)
+            db.commit()
+            return A2ACardRefreshResponse(status="updated" if latest is not None else "created", version=version, changed_keys=changed, source_url=fetched.source_url, checked_at=now)
+        except A2AAgentError:
+            raise
+        except IntegrityError as exc:
+            db.rollback()
+            raise A2AAgentError("The stored Agent Card changed during the refresh. Try again.") from exc
+        except Exception as exc:
+            db.rollback()
+            logger.warning("Failed to store refreshed Agent Card for A2A agent %s", agent_id, exc_info=True)
+            raise A2AAgentError("Failed to store the Agent Card") from exc
 
     async def get_stored_card(
         self,

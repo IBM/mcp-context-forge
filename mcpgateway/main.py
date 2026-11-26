@@ -113,7 +113,7 @@ from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, check_permission_inline, get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, _resolve_team_and_check_mode, check_permission_inline, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
@@ -142,6 +142,8 @@ from mcpgateway.schemas import (
     A2AInvokeResponse,
     A2AJsonRpcResponse,
     A2APushNotificationConfigRequest,
+    A2ACardRefreshRequest,
+    A2ACardRefreshResponse,
     A2AStoredCardRead,
     A2ATaskMessageRequest,
     A2ATaskState,
@@ -191,7 +193,15 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_card_import import fetch_agent_card
 from mcpgateway.services.a2a_server_service import A2AServerService
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, A2ATaskStateError, raise_if_a2a_disabled
+from mcpgateway.services.a2a_service import (
+    A2AAgentError,
+    A2AAgentNameConflictError,
+    A2AAgentNotFoundError,
+    A2AAgentService,
+    A2ACardRefreshThrottledError,
+    A2ATaskStateError,
+    raise_if_a2a_disabled,
+)
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import (
@@ -5123,6 +5133,56 @@ async def get_a2a_agent_stored_extended_card(
     return card
 
 
+@a2a_router.post("/{agent_id}/card", response_model=A2ACardRefreshResponse)
+@require_permission("a2a.update")
+async def refresh_a2a_agent_card(
+    agent_id: str,
+    request: Request,
+    payload: Optional[A2ACardRefreshRequest] = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2ACardRefreshResponse:
+    """Re-fetch the Agent Card of a registered agent.
+
+    The card comes from the first available URL: ``base_url`` of the request, the stored
+    ``source_url``, then the URLs derived from the agent ``endpoint_url``. A request with
+    ``base_url`` also needs ``a2a.create``, because the caller picks the URL the gateway fetches.
+    The agent credential goes only to a URL on the origin of ``endpoint_url``. The agent row is not changed.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        payload (Optional[A2ACardRefreshRequest]): Optional ``base_url`` and request-only ``headers``.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2ACardRefreshResponse: Whether the card is unchanged, updated, or created, with the changed top-level keys.
+
+    Raises:
+        HTTPException: If the agent is not visible, the caller lacks permission, the fetch fails, or the rate limit applies.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    payload = payload or A2ACardRefreshRequest()
+    if payload.base_url is not None:
+        team_id, check_any_team = await _resolve_team_and_check_mode(user, {"agent_id": agent_id, "db": db})
+        if not await check_permission_inline(user, "a2a.create", team_id=team_id, check_any_team=check_any_team, db=db, request=request):
+            raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+    user_email, token_teams = await _require_manageable_a2a_agent(a2a_service, db, request, user, agent_id)
+    try:
+        result = await a2a_service.refresh_card(db, agent_id, payload, user_email=user_email, token_teams=token_teams)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2ACardRefreshThrottledError as e:
+        raise HTTPException(status_code=429, detail=str(e), headers={"Retry-After": str(e.retry_after)})
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _audit_a2a_card_refresh(request, user, agent_id, result)
+    logger.info(f"User {safe_log_user(user)} re-fetched the Agent Card of A2A agent {agent_id}: {result.status}")
+    return result
+
+
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)
 @a2a_router.post("/", response_model=A2AAgentRead, status_code=201)
 @require_permission("a2a.create")
@@ -5573,6 +5633,23 @@ def _audit_a2a_extended_card_read(request: Request, user: Any, agent_id: str) ->
         user_agent=request.headers.get("user-agent"),
         request_path=request.url.path,
         request_method=request.method,
+    )
+
+
+def _audit_a2a_card_refresh(request: Request, user: Any, agent_id: str, result: A2ACardRefreshResponse) -> None:
+    """Record an audit entry for an Agent Card refresh, which fetches from an external host and can store a card version."""
+    user_email, _ = get_request_identity(request, user)
+    get_audit_trail_service().log_action(
+        action="refresh_a2a_card",
+        resource_type="a2a_agent",
+        resource_id=agent_id,
+        user_id=user_email or "unknown",
+        user_email=user_email,
+        client_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        request_path=request.url.path,
+        request_method=request.method,
+        details={"status": result.status, "version": result.version, "source_url": sanitize_url_for_logging(str(result.source_url))},
     )
 
 

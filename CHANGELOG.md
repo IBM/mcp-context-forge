@@ -135,6 +135,8 @@ Release 1.1.2 adds **MCP subscriptions**, **A2A Agent Cards**, **AWS Signature V
 
 - **Environment variable warnings** ([#7585](https://github.com/IBM/mcp-context-forge/pull/7585)) - Warn at startup when the environment sets deprecated or removed variables.
 
+- **Agent Card re-fetch** ([#7540](https://github.com/IBM/mcp-context-forge/issues/7540)) - `POST /a2a/{agent_id}/card` fetches the card of a registered agent again. It uses the `base_url` of the request, then the stored `source_url` with its `ETag` in `If-None-Match`, then the URLs derived from `endpoint_url`. A `base_url` in the request also needs `a2a.create`. An unchanged card adds no version and sets `checked_at`. A changed card becomes the next version, and the response lists the changed top-level keys. The agent credential goes only to a URL on the origin of `endpoint_url`. The route does not change the agent row. `A2A_CARD_REFRESH_MIN_INTERVAL` limits calls per agent. Alembic revision `b9d2f4a6c8e1` adds `checked_at`.
+
 ### Changed
 
 - **Team-management authorization** ([#7593](https://github.com/IBM/mcp-context-forge/pull/7593)) - Protected team-management operations require a token that includes the target team and the required RBAC permissions. A personal-team token does not authorize management of other teams. For automation, create the token with the target `team_id`.
