@@ -9271,7 +9271,7 @@ class TokenCreateRequest(BaseModel):
         scope: Optional token scoping configuration
         tags: Optional organizational tags
         team_id: Optional team ID for team-scoped tokens
-        is_active: Token active status (defaults to True)
+        is_active: Must be True (the default). A token cannot be created in an inactive state.
         user_email: Optional email of user to create token for (admin only)
 
     Examples:
@@ -9291,7 +9291,7 @@ class TokenCreateRequest(BaseModel):
     scope: Optional[TokenScopeRequest] = Field(None, description="Token scoping configuration")
     tags: List[Union[str, Dict[str, str]]] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
-    is_active: bool = Field(default=True, description="Token active status")
+    is_active: bool = Field(default=True, description="Must be true. A token cannot be created in an inactive state.")
     user_email: Optional[EmailStr] = Field(None, description="Email of user to create token for (admin only)")
 
 
@@ -9301,9 +9301,9 @@ class TokenUpdateRequest(BaseModel):
     Attributes:
         name: New token name
         description: New token description
-        scope: New token scoping configuration
+        scope: Token scoping configuration. Must match the scope the token was issued with.
         tags: New organizational tags
-        is_active: New token active status
+        is_active: Set to false to deactivate (revoke) the token. Deactivation is permanent.
 
     Examples:
         >>> request = TokenUpdateRequest(
@@ -9316,9 +9316,9 @@ class TokenUpdateRequest(BaseModel):
 
     name: Optional[str] = Field(None, description="New token name", min_length=1, max_length=255)
     description: Optional[str] = Field(None, description="New token description", max_length=1000)
-    scope: Optional[TokenScopeRequest] = Field(None, description="New token scoping configuration")
+    scope: Optional[TokenScopeRequest] = Field(None, description="Token scoping configuration. Must match the scope the token was issued with; the scope of an issued token cannot be changed.")
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="New organizational tags")
-    is_active: Optional[bool] = Field(None, description="New token active status")
+    is_active: Optional[bool] = Field(None, description="Set to false to deactivate (revoke) the token. Deactivation is permanent; a deactivated token cannot be reactivated.")
 
 
 class TokenResponse(BaseModel):

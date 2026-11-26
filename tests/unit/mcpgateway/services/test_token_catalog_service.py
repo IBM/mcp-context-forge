@@ -505,27 +505,19 @@ class TestTokenCatalogService:
             assert added_token.team_id == "team-123"
 
     @pytest.mark.asyncio
-    async def test_create_token_with_is_active_false(self, token_service, mock_db, mock_user):
-        """Test create_token with is_active=False persists the inactive state."""
-        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
-            mock_user,  # User exists
-            None,  # No existing token with same name
-        ]
-
+    async def test_create_token_with_is_active_false_rejected(self, token_service, mock_db, mock_user):
+        """A token cannot be issued in an inactive state."""
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen_token:
-            mock_gen_token.return_value = "jwt_token_inactive"
+            with pytest.raises(ValueError, match="inactive"):
+                await token_service.create_token(
+                    user_email="test@example.com",
+                    name="Inactive Token",
+                    is_active=False,
+                    expires_in_days=30,
+                )
 
-            token, raw_token = await token_service.create_token(
-                user_email="test@example.com",
-                name="Inactive Token",
-                is_active=False,
-                expires_in_days=30,
-            )
-
-            assert raw_token == "jwt_token_inactive"
-            # Verify the token added to DB has is_active=False
-            added_token = mock_db.add.call_args[0][0]
-            assert added_token.is_active is False
+            mock_gen_token.assert_not_called()
+            mock_db.add.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_token_default_is_active_true(self, token_service, mock_db, mock_user):
@@ -1152,60 +1144,137 @@ class TestTokenCatalogService:
                 await token_service.update_token(token_id="token-123", user_email="test@example.com", name="Duplicate")
 
     @pytest.mark.asyncio
-    async def test_update_token_with_scope(self, token_service, mock_db, mock_api_token, token_scope):
-        """Test update_token method with TokenScope."""
+    async def test_update_token_with_identical_scope_is_noop(self, token_service, mock_db, mock_api_token, token_scope):
+        """Resending the stored scope is accepted and leaves the token unchanged."""
+        mock_api_token.server_id = "server-123"
+        mock_api_token.resource_scopes = ["tools.read", "resources.read"]
+        mock_api_token.ip_restrictions = ["192.168.1.0/24"]
+        mock_api_token.time_restrictions = {"business_hours_only": True}
+        mock_api_token.usage_limits = {"max_requests_per_hour": 100}
+
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_api_token
 
-            # Must provide caller_permissions that include the requested scope permissions
             await token_service.update_token(
                 token_id="token-123",
                 user_email="test@example.com",
                 scope=token_scope,
-                caller_permissions=["tools.read", "resources.read"],  # Caller has these permissions
+                caller_permissions=["tools.read", "resources.read"],
             )
 
             assert mock_api_token.server_id == "server-123"
             assert mock_api_token.resource_scopes == ["tools.read", "resources.read"]
-            assert mock_api_token.ip_restrictions == ["192.168.1.0/24"]
-            assert mock_api_token.time_restrictions == {"business_hours_only": True}
-            assert mock_api_token.usage_limits == {"max_requests_per_hour": 100}
+            mock_db.add.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_update_token_deactivate(self, token_service, mock_db, mock_api_token):
-        """Test update_token to deactivate a token by setting is_active=False."""
-        mock_api_token.is_active = True  # Start as active
+    @pytest.mark.parametrize(
+        "changed_field, new_value",
+        [
+            ("server_id", "other-server"),
+            ("permissions", ["tools.read"]),
+            ("ip_restrictions", ["203.0.113.0/24"]),
+            ("time_restrictions", {"weekdays_only": True}),
+            ("usage_limits", {"max_requests_per_hour": 1}),
+        ],
+    )
+    async def test_update_token_rejects_scope_change(self, token_service, mock_db, mock_api_token, changed_field, new_value):
+        """Scope is bound into the issued JWT, so in-place changes are rejected."""
+        stored = {
+            "server_id": "server-123",
+            "permissions": ["tools.read", "resources.read"],
+            "ip_restrictions": ["192.168.1.0/24"],
+            "time_restrictions": {"business_hours_only": True},
+            "usage_limits": {"max_requests_per_hour": 100},
+        }
+        mock_api_token.server_id = stored["server_id"]
+        mock_api_token.resource_scopes = stored["permissions"]
+        mock_api_token.ip_restrictions = stored["ip_restrictions"]
+        mock_api_token.time_restrictions = stored["time_restrictions"]
+        mock_api_token.usage_limits = stored["usage_limits"]
+        new_scope = TokenScope(**{**stored, changed_field: new_value})
 
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_api_token
 
-            await token_service.update_token(
-                token_id="token-123",
-                user_email="test@example.com",
-                is_active=False,
-            )
+            with pytest.raises(ValueError, match="cannot be changed"):
+                await token_service.update_token(
+                    token_id="token-123",
+                    user_email="test@example.com",
+                    scope=new_scope,
+                    caller_permissions=["*"],
+                )
 
-            # Verify token was deactivated
+            mock_db.commit.assert_not_called()
+            assert mock_api_token.server_id == stored["server_id"]
+
+    @pytest.mark.asyncio
+    async def test_update_token_deactivate_revokes_jti(self, token_service, mock_db, mock_api_token):
+        """Deactivating a token revokes its JTI and invalidates the auth cache."""
+        mock_api_token.is_active = True
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_api_token
+
+            with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock) as mock_invalidate:
+                await token_service.update_token(
+                    token_id="token-123",
+                    user_email="test@example.com",
+                    is_active=False,
+                )
+
             assert mock_api_token.is_active is False
-            mock_db.commit.assert_called()
+            mock_db.add.assert_called_once()
+            revocation = mock_db.add.call_args[0][0]
+            assert isinstance(revocation, TokenRevocation)
+            assert revocation.jti == "jti-123"
+            assert revocation.revoked_by == "test@example.com"
+            mock_db.commit.assert_called_once()
+            mock_invalidate.assert_awaited_once_with("jti-123")
 
     @pytest.mark.asyncio
-    async def test_update_token_reactivate(self, token_service, mock_db, mock_api_token):
-        """Test update_token to reactivate a token by setting is_active=True."""
-        mock_api_token.is_active = False  # Start as inactive
+    async def test_update_token_deactivate_cache_failure_is_swallowed(self, token_service, mock_db, mock_api_token):
+        """A cache invalidation failure does not undo the revocation."""
+        mock_api_token.is_active = True
 
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_api_token
 
-            await token_service.update_token(
-                token_id="token-123",
-                user_email="test@example.com",
-                is_active=True,
-            )
+            with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock, side_effect=RuntimeError("error")):
+                await token_service.update_token(token_id="token-123", user_email="test@example.com", is_active=False)
 
-            # Verify token was reactivated
+            assert mock_api_token.is_active is False
+            mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_token_reactivate_rejected(self, token_service, mock_db, mock_api_token):
+        """An inactive (revoked) token cannot be reactivated."""
+        mock_api_token.is_active = False
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_api_token
+
+            with pytest.raises(ValueError, match="cannot be reactivated"):
+                await token_service.update_token(
+                    token_id="token-123",
+                    user_email="test@example.com",
+                    is_active=True,
+                )
+
+            assert mock_api_token.is_active is False
+            mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_token_is_active_true_on_active_token_is_noop(self, token_service, mock_db, mock_api_token):
+        """Sending is_active=True for an already active token changes nothing."""
+        mock_api_token.is_active = True
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_api_token
+
+            await token_service.update_token(token_id="token-123", user_email="test@example.com", is_active=True)
+
             assert mock_api_token.is_active is True
-            mock_db.commit.assert_called()
+            mock_db.add.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_token_is_active_none_no_change(self, token_service, mock_db, mock_api_token):
