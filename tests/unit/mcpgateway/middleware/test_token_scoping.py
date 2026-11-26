@@ -2503,25 +2503,38 @@ def test_check_resource_team_ownership_a2a_non_id_paths_skip_lookup(path):
 
 
 @pytest.mark.asyncio
-async def test_a2a_update_with_team_a_token_for_team_b_agent_returns_403():
-    """PUT /a2a/{id} with a Team-A-only token must return 403 for a Team B agent."""
+@pytest.mark.parametrize(
+    ("token_team", "expected_status", "reaches_route"),
+    [
+        ("team-a", status.HTTP_403_FORBIDDEN, False),
+        ("team-b", status.HTTP_200_OK, True),
+    ],
+)
+async def test_a2a_update_enforces_token_team_against_agent_row(token_team, expected_status, reaches_route):
+    """PUT /a2a/{id} runs the real ownership path: only a token scoped to the agent's team reaches the route."""
     middleware = TokenScopingMiddleware()
     request = _make_request(f"/a2a/{A2A_AGENT_ID}")
     request.method = "PUT"
-    request.headers = {"Authorization": "Bearer token"}
-    payload = {"sub": "owner@example.com", "teams": ["team-a"], "scopes": {"permissions": ["a2a.update"]}}
-    call_next = AsyncMock()
+    payload = {"sub": "owner@example.com", "teams": [token_team], "scopes": {"permissions": ["a2a.update"]}}
+
+    agent = MagicMock()
+    agent.visibility = "team"
+    agent.team_id = "team-b"
+    agent.owner_email = "owner@example.com"
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = agent
+    call_next = AsyncMock(return_value=MagicMock(status_code=status.HTTP_200_OK))
 
     with (
         patch.object(middleware, "_extract_token_scopes", return_value=payload),
         patch.object(middleware, "_check_team_membership", return_value=True),
-        patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED),
-        patch("mcpgateway.db.get_db", return_value=iter([MagicMock()])),
+        patch("mcpgateway.db.get_db", return_value=iter([db])),
     ):
         response = await middleware(request, call_next)
 
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    call_next.assert_not_called()
+    assert response.status_code == expected_status
+    assert call_next.called is reaches_route
+    db.execute.assert_called_once()
 
 
 def _make_request(path: str = "/servers/server-123") -> MagicMock:
