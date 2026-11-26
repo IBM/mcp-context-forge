@@ -331,18 +331,16 @@ make test-ui-headless
 
 Runs the full Playwright test suite in headless Chromium against the live compose stack.
 
-### 5.4 MCP protocol tests
+### 5.4 MCP protocol + RBAC tests
 
-Requires the compose stack to be running with SSE transport enabled.
+Requires a live running stack: the compose testing stack from [Build Verification](#6-build-verification), with the SSE gateway registered. Start it before you run the tests.
 
 ```bash
+make testing-up   # skip if the stack is already running
 make test-e2e
 ```
 
-`test-e2e` runs the consolidated suite covering both RBAC enforcement and
-MCP protocol compliance. `test-mcp-cli` and `test-mcp-rbac` are aliases for
-`test-e2e`. `test-mcp-protocol-e2e` is a deprecated alias for `test-e2e`. It
-sunsets on 2027-01-18.
+`test-e2e` runs the consolidated black-box suite against the live gateway. It covers both RBAC enforcement and MCP protocol compliance. The target reads `MCP_CLI_BASE_URL` (default `http://localhost:8080`), `JWT_SECRET_KEY`, and `PLATFORM_ADMIN_EMAIL`. `test-mcp-cli` and `test-mcp-rbac` are aliases for `test-e2e`. `test-mcp-protocol-e2e` is a deprecated alias for `test-e2e`. It sunsets on 2027-01-18.
 
 ### 5.5 Load testing
 
@@ -680,13 +678,18 @@ This starts a local MkDocs development server. Manually review:
 
 ### 11.3 Deploy versioned documentation
 
-Deploy the documentation for the release version using mike. This creates a version-specific folder on the `gh-pages` branch:
+Deploy the documentation for the release version using mike. This creates a version-specific folder on the `gh-pages` branch.
+
+Documentation is versioned by minor series, not by patch. The current series is `1.1.x`. A patch release (for example 1.1.2 to 1.1.3) redeploys fresh documentation to the existing `1.1.x` folder. Only a major or minor version bump creates a new folder.
 
 ```bash
 cd docs
 
-# Deploy the version (e.g., 1.0.0) with 'latest' alias
-make mike-deploy VERSION=1.0.0
+# Check the published site first: https://ibm.github.io/mcp-context-forge/
+# Confirm the version selector shows the expected series (for example 1.1.x)
+
+# Patch release (1.1.2 -> 1.1.3): refresh the existing 1.1.x docs
+make mike-deploy VERSION=1.1.x
 
 # Set as default version (landing page)
 make mike-set-default
@@ -695,21 +698,26 @@ make mike-set-default
 **Versioning strategy:**
 
 - Documentation is maintained in `main` branch alongside code changes
-- When cutting a release tag (e.g., `v1.0.0`), deploy docs to that version
-- Each version gets its own folder on `gh-pages`: `1.0.0/`, `1.0.1/`, etc.
-- The `latest` alias points to the newest release
-- Old versions remain accessible but are not updated (frozen at release time)
+- When cutting a release tag, deploy docs to the release's version series
+- Patch releases (for example `v1.1.2` to `v1.1.3`) overwrite the `1.1.x/` folder with fresh documentation
+- A major or minor bump (for example `v1.2.0` or `v2.0.0`) creates a new folder (`1.2.x/`, `2.0.x/`)
+- Each series gets its own folder on `gh-pages`
+- The `latest` alias points to the newest series
+- Old series remain accessible but are not updated (frozen when the next series ships)
 
 **Version deployment workflow:**
 
 ```bash
 cd docs
 
-# For stable releases (deploys with 'latest' alias)
-make mike-deploy VERSION=1.0.0
+# Patch release: redeploy the current series (deploys with 'latest' alias)
+make mike-deploy VERSION=1.1.x
+
+# Major or minor release: deploy a new series
+make mike-deploy VERSION=1.2.x
 
 # For release candidates
-make mike-deploy VERSION=1.0.0-RC1
+make mike-deploy VERSION=1.2.0-RC1
 
 # For development previews
 make mike-deploy VERSION=dev
