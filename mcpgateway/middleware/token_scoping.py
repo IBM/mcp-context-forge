@@ -58,6 +58,8 @@ _SERVER_PATH_PATTERNS: List[Pattern[str]] = [
     re.compile(r"^/ws/([^/?]+)(?:$|\?)"),
 ]
 
+_A2A_AGENT_ID = r"(?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})"
+
 # Resource ID extraction patterns (IDs are UUID hex strings)
 _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/servers/?([a-f0-9\-]+)"), "server"),
@@ -65,7 +67,7 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/resources/?([a-f0-9\-]+)"), "resource"),
     (re.compile(r"/prompts/?([a-f0-9\-]+)"), "prompt"),
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
-    (re.compile(r"/a2a/([a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})(?:/|$)"), "a2a_agent"),
+    (re.compile(rf"/a2a/({_A2A_AGENT_ID})(?:/|$)"), "a2a_agent"),
 ]
 
 
@@ -105,6 +107,11 @@ _RESOURCE_OWNERSHIP_SPECS = {
     "a2a_agent": _ResourceOwnershipSpec(A2AAgent, "A2A agent", "A2A agent", ResourceOwnershipResult.NOT_FOUND),
 }
 
+
+# A2A routes that change an agent. Read, invoke, test and task routes enforce visibility in the
+# service and return 404 for a hidden agent, so the middleware must not answer 403 before them.
+_A2A_MUTATION_PATTERN = re.compile(rf"^/(?:admin/)?a2a/{_A2A_AGENT_ID}(?:/(?:state|toggle|edit|delete))?/?$")
+_A2A_MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 _TARGETED_MISSING_DELETE_PATTERN = re.compile(r"^/(?:servers|gateways)/(?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})/?$")
 
@@ -941,6 +948,19 @@ class TokenScopingMiddleware:
             logger.warning(f"Token invalid: User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams")
         return valid
 
+    @staticmethod
+    def _is_a2a_mutation(request_path: str, method: str) -> bool:
+        """Return whether a request changes an A2A agent.
+
+        Args:
+            request_path: Normalized request path.
+            method: HTTP method of the request.
+
+        Returns:
+            bool: True for update, state, toggle and delete routes of one agent.
+        """
+        return method.upper() in _A2A_MUTATION_METHODS and bool(_A2A_MUTATION_PATTERN.fullmatch(request_path))
+
     def _is_targeted_missing_resource_delete(self, request_path: str, method: str) -> bool:
         """Return whether request is an exact server or gateway DELETE path."""
         normalized_path = self._normalize_path_for_matching(request_path)
@@ -1084,7 +1104,13 @@ class TokenScopingMiddleware:
         return ResourceOwnershipResult.DENIED
 
     def _check_resource_team_ownership(
-        self, request_path: str, token_teams: List[Any], db: Optional[Session] = None, _user_email: Optional[str] = None, preloaded_gateway: Optional[Gateway] = None
+        self,
+        request_path: str,
+        token_teams: List[Any],
+        db: Optional[Session] = None,
+        _user_email: Optional[str] = None,
+        preloaded_gateway: Optional[Gateway] = None,
+        method: Optional[str] = None,
     ) -> ResourceOwnershipResult:
         """
         Check if the requested resource is accessible by the token.
@@ -1120,6 +1146,8 @@ class TokenScopingMiddleware:
                 ``SELECT`` - lets a caller that already loaded the gateway (e.g. a
                 batch endpoint that bulk-fetched many gateways) avoid a redundant
                 per-id re-fetch here.
+            method: HTTP method of the request. A2A agent paths are checked only for mutation
+                routes. When omitted, every A2A agent path is checked.
 
         Returns:
             ResourceOwnershipResult: Allowed, missing, or denied ownership result.
@@ -1138,6 +1166,9 @@ class TokenScopingMiddleware:
         # If no resource ID in path, allow (general endpoints like /health, /tokens, /metrics)
         if not resource_id or not resource_type:
             logger.debug(f"No resource ID found in path {request_path}, allowing access")
+            return ResourceOwnershipResult.ALLOWED
+
+        if resource_type == "a2a_agent" and method is not None and not self._is_a2a_mutation(request_path, method):
             return ResourceOwnershipResult.ALLOWED
 
         spec = _RESOURCE_OWNERSHIP_SPECS.get(resource_type)
@@ -1275,7 +1306,7 @@ class TokenScopingMiddleware:
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
                     # Check resource team ownership with shared session
-                    ownership_result = self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email)
+                    ownership_result = self._check_resource_team_ownership(normalized_path, token_teams, db=db, _user_email=user_email, method=request.method)
                     if ownership_result is ResourceOwnershipResult.NOT_FOUND and self._is_targeted_missing_resource_delete(request.url.path, request.method):
                         logger.info("Scoped DELETE target not found: %s", SecurityValidator.sanitize_log_message(normalized_path))
                         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
@@ -1297,7 +1328,7 @@ class TokenScopingMiddleware:
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
-                ownership_result = self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email)
+                ownership_result = self._check_resource_team_ownership(normalized_path, token_teams, _user_email=user_email, method=request.method)
                 if ownership_result is ResourceOwnershipResult.NOT_FOUND and self._is_targeted_missing_resource_delete(request.url.path, request.method):
                     logger.info("Scoped DELETE target not found: %s", SecurityValidator.sanitize_log_message(normalized_path))
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
