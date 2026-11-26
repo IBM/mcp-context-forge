@@ -291,7 +291,7 @@ def test_pool_failure_fails_closed(monkeypatch):
     """When the sandbox cannot be built, evaluation raises instead of running unprotected."""
     shutdown_cel_pool()
     monkeypatch.setattr(cel_runner, "subprocess_mode_available", lambda: True)
-    monkeypatch.setattr(cel_runner._POLICY_SANDBOX, "_build", lambda: (_ for _ in ()).throw(OSError("no fork for you")))  # pylint: disable=protected-access
+    monkeypatch.setattr(cel_runner._POLICY_SANDBOX, "_build", lambda *_: (_ for _ in ()).throw(OSError("no fork for you")))  # pylint: disable=protected-access
     with pytest.raises(CelError, match="no fork for you"):
         evaluate_expression(GLOBAL_POLICY, VARIABLES)
 

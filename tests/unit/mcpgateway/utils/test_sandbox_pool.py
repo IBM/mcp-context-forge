@@ -89,6 +89,24 @@ def test_pool_serves_the_next_call_after_a_kill(pool):
     assert pool.submit(_echo, "still here") == "still here"
 
 
+def _slow_init() -> None:
+    """Stand in for a worker start-up that takes longer than a tight per-call budget."""
+    time.sleep(0.3)
+
+
+def test_rebuild_after_a_kill_warms_workers_outside_the_call_budget():
+    """The first call on a pool rebuilt after a kill must not pay for process start-up under its own timeout."""
+    instance = SandboxPool(name="test", workers_fn=lambda: 1, timeout_fn=lambda: 0.1, initializer=_slow_init)
+    instance.start()
+    try:
+        with pytest.raises(SandboxTimeout):
+            instance.submit(_runaway, r"^(a+)+$", "a" * 40 + "b")
+        assert instance._current_executor() is None
+        assert instance.submit(_echo, "warm") == "warm"
+    finally:
+        instance.shutdown()
+
+
 def test_shutdown_kills_a_worker_running_a_runaway_call():
     """Shutdown must not leave a running call behind, nor its caller blocked.
 
