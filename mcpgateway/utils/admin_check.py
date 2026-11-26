@@ -31,11 +31,16 @@ IMPORTANT security semantics:
 
 # Standard
 import logging
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
 # Third-Party
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.db import A2AAgent as DbA2AAgent
+    from mcpgateway.db import Tool as DbTool
 
 logger = logging.getLogger(__name__)
 
@@ -155,3 +160,67 @@ def is_admin_bypass_granted(
     if token_teams is None and user_email and is_user_admin(db, user_email):
         return True
     return False
+
+
+def agent_visible_to(db: Session, agent: "DbA2AAgent", user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
+    """Check if a caller can see an agent based on visibility rules.
+
+    Access rules (matching tools/resources/prompts):
+    - public visibility: Always allowed
+    - token_teams is None AND user_email is None: Admin bypass — public + team agents only (private excluded per PR #4341)
+    - No user context (but not admin): Deny access to non-public agents
+    - team visibility: Allowed if agent.team_id in token_teams
+    - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
+
+    Args:
+        db: Database session for admin lookup
+        agent: The agent to check access for
+        user_email: User's email for owner matching
+        token_teams: Teams from JWT. None = admin bypass ONLY when user_email is also None; [] = public-only
+
+    Returns:
+        True if access allowed, False otherwise.
+    """
+    # Public agents are accessible by everyone
+    if agent.visibility == "public":
+        return True
+
+    # Admin bypass (PR #4341 invariant): never reveal another user's private agents.
+    # Anonymous bypass sees public + team only; a DB-resolved admin session
+    # additionally sees their own private agents. Mirrors _check_*_access in
+    # tool/prompt/resource services for consistency.
+    if token_teams is None and user_email is None:
+        return agent.visibility != "private"
+    if token_teams is None and user_email and is_user_admin(db, user_email):
+        return agent.visibility != "private" or agent.owner_email == user_email
+
+    # No user context (but not admin) = deny access to non-public agents
+    if not user_email:
+        return False
+
+    # Public-only tokens (empty teams array) can ONLY access public agents
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+    if is_public_only_token:
+        return False  # Already checked public above
+
+    # Owner can access their own private agents
+    if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
+        return True
+
+    # Team agents: check team membership
+    # token_teams=None with user_email set → admin context, allow all team agents if caller is admin
+    # ([] already handled by public-only check above)
+    if agent.visibility == "team":
+        if token_teams is None:
+            # Upstream token normalization prevents non-admins from reaching
+            # this state, but defend-in-depth: only admins get the unscoped
+            # team bypass here.
+            return is_user_admin(db, user_email)
+        return agent.team_id in token_teams
+
+    return False
+
+
+def a2a_tool_references_agent(tool: "DbTool", agent_id: str) -> bool:
+    """Check the integration type and forward reference of a derived tool."""
+    return tool.integration_type == "A2A" and isinstance(tool.annotations, dict) and tool.annotations.get("a2a_agent_id") == agent_id

@@ -19,12 +19,15 @@ import uuid
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import Base
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -190,18 +193,7 @@ class TestA2AAgentService:
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
-        # Mock the created agent with all required fields for ToolRead
-        created_agent = MagicMock()
-        created_agent.id = uuid.uuid4().hex
-        created_agent.name = sample_agent_create.name
-        created_agent.slug = "test-agent"
-        created_agent.metrics = []
-        created_agent.createdAt = "2025-09-26T00:00:00Z"
-        created_agent.updatedAt = "2025-09-26T00:00:00Z"
-        created_agent.enabled = True
-        created_agent.reachable = True
-        # Add any other required fields for ToolRead if needed
-        mock_db.add = MagicMock()
+        mock_db.get.side_effect = lambda model, _id, **kwargs: next(entry.args[0] for entry in mock_db.add.call_args_list if isinstance(entry.args[0], model))
 
         # Mock service method to return a MagicMock (simulate ToolRead)
         service.convert_agent_to_read = MagicMock(return_value=MagicMock())
@@ -222,8 +214,9 @@ class TestA2AAgentService:
         # Verify
         # add: 1 for agent, 1 for tool
         assert mock_db.add.call_count == 2
-        # commit: 1 for agent (before tool creation), 1 for tool, 1 for tool association
-        assert mock_db.commit.call_count == 3
+        assert mock_db.commit.call_count == 2
+        created_agent, created_tool = [entry.args[0] for entry in mock_db.add.call_args_list]
+        assert created_agent.tool is created_tool
         assert service.convert_agent_to_read.called
 
     async def test_register_agent_encrypts_oauth_sensitive_values(self, service, mock_db):
@@ -4459,6 +4452,50 @@ class TestSetAgentStateToolCascade:
     @pytest.fixture
     def mock_db(self):
         return MagicMock(spec=Session)
+
+    @pytest.mark.parametrize(
+        "activate,integration_type,agent_reference,linked",
+        [
+            (True, "A2A", "123", True),
+            (False, "A2A", "123", True),
+            (False, "A2A", "other-agent", False),
+            (False, "A2A", None, False),
+            (False, "A2A", 123, False),
+            (True, "REST", "123", False),
+        ],
+    )
+    async def test_state_cascade_requires_persisted_forward_binding(self, service, monkeypatch, activate, integration_type, agent_reference, linked):
+        """Change the agent state and cascade only to its linked derived tool."""
+        cache = SimpleNamespace(invalidate_agents=AsyncMock(), invalidate_tools=AsyncMock())
+        lookup = SimpleNamespace(invalidate=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: cache)
+        monkeypatch.setattr("mcpgateway.services.a2a_service._get_tool_lookup_cache", lambda: lookup)
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        try:
+            with Session(engine) as db:
+                tool = DbTool(
+                    original_name="fixture-tool",
+                    url="https://agent.example.com",
+                    integration_type=integration_type,
+                    request_type="POST",
+                    input_schema={},
+                    enabled=not activate,
+                    annotations={"a2a_agent_id": agent_reference} if agent_reference else {},
+                )
+                agent = DbA2AAgent(id="123", name="agent", endpoint_url="https://agent.example.com", enabled=not activate, tool=tool)
+                db.add(agent)
+                db.commit()
+
+                await service.set_agent_state(db, agent.id, activate=activate)
+
+                db.refresh(tool)
+                assert agent.enabled is activate
+                assert tool.enabled is (activate if linked else not activate)
+                assert cache.invalidate_tools.await_count == int(linked)
+                assert lookup.invalidate.await_count == int(linked)
+        finally:
+            engine.dispose()
 
     async def test_cascade_deactivates_tool(self, service, mock_db, monkeypatch):
         """Deactivating agent with tool_id cascades to tool (lines 1236-1240)."""

@@ -650,6 +650,8 @@ class ImportService:
                 candidates = [root_state[uri]] if uri in root_state else []
             else:
                 federated = kind in {"tools", "resources", "prompts"} and is_gateway_item
+                if federated and kind == "tools" and clean.get("integration_type") == "A2A":
+                    raise ImportValidationError("Derived A2A tools use local agent bindings")
                 mapped_gateway = self._mapped_gateway(clean, indexes, mappings) if federated else None
                 if federated and mapped_gateway is None:
                     raise ImportValidationError("Federated file item has no matching destination gateway")
@@ -920,6 +922,23 @@ class ImportService:
             return (ServerCreate if create else ServerUpdate)(**payload), False
         needs_credentials = bool(data.get("credentials_required")) and create
         schema = self._catalog_import_schema(kind, data, create=create)
+        existing_type = getattr(existing, "integration_type", None)
+        if isinstance(schema, ToolUpdate) and "A2A" in (schema.integration_type, existing_type):
+            if schema.integration_type != existing_type:
+                raise ImportValidationError("Cannot change A2A tool integration type")
+            if schema.annotations is not None:
+                if not isinstance(existing.annotations, dict) or schema.annotations.get("a2a_agent_id") != existing.annotations.get("a2a_agent_id"):
+                    raise ImportValidationError("Cannot change A2A tool binding")
+            # Portable files cannot replace the endpoint or credentials of an agent's derived tool.
+            stored_transport, _ = without_file_credentials({"url": existing.url, "headers": existing.headers})
+            if (
+                data["url"] != stored_transport["url"]
+                or schema.request_type not in (None, existing.request_type)
+                or (schema.headers is not None and schema.headers != stored_transport.get("headers"))
+                or schema.visibility not in (None, existing.visibility)
+            ):
+                raise ImportValidationError("Import can only update metadata for a derived A2A tool")
+            return schema.model_copy(update={"url": None, "request_type": None, "headers": None}), False
         if isinstance(schema, (GatewayCreate, GatewayUpdate)) and schema.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
             raise ImportValidationError("Direct-proxy gateways are disabled")
         if not isinstance(schema, (GatewayUpdate, ToolUpdate)):

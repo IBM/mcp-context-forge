@@ -43,7 +43,6 @@ from mcpgateway.db import ServerInterface as DbServerInterface
 from mcpgateway.db import ServerMetric, ServerMetricsHourly, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import interface_identity, ServerCreate, ServerInterfaceInput, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
-from mcpgateway.services.a2a_service import agent_visible_to
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
@@ -54,7 +53,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.admin_check import a2a_tool_references_agent, agent_visible_to, is_admin_bypass_granted
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -259,17 +258,20 @@ def _sync_agent_tools(server: DbServer, dropped_agents: Optional[List[DbA2AAgent
             unless an agent that stays on the server uses the same tool.
     """
     current = {tool.id for tool in server.tools}
+    still_used = set()
     for agent in server.a2a_agents:
         tool = agent.tool
-        if tool is not None and tool.id not in current:
+        if tool is None or not a2a_tool_references_agent(tool, agent.id):
+            continue
+        still_used.add(tool.id)
+        if tool.id not in current:
             server.tools.append(tool)
             current.add(tool.id)
             logger.info("A2A agent %s tool %s attached to server %s", agent.name, tool.id, server.name)
-    still_used = {agent.tool.id for agent in server.a2a_agents if agent.tool is not None}
     still_attached = {agent.id for agent in server.a2a_agents}
     for agent in dropped_agents or []:
         tool = agent.tool
-        if agent.id not in still_attached and tool is not None and tool.id not in still_used and tool.id in current:
+        if agent.id not in still_attached and tool is not None and tool.id not in still_used and tool.id in current and a2a_tool_references_agent(tool, agent.id):
             server.tools.remove(tool)
             current.discard(tool.id)
             logger.info("A2A agent %s tool %s detached from server %s", agent.name, tool.id, server.name)
@@ -494,7 +496,7 @@ class ServerService(BaseService):
 
         return top_performers
 
-    def convert_server_to_read(self, server: DbServer, include_metrics: bool = False) -> ServerRead:
+    def convert_server_to_read(self, server: DbServer, include_metrics: bool = False, *, db: Optional[Session] = None, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> ServerRead:
         """
         Converts a DbServer instance into a ServerRead model, optionally including aggregated metrics.
 
@@ -502,6 +504,9 @@ class ServerService(BaseService):
             server (DbServer): The ORM instance of the server.
             include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
+            db: Database session for visibility checks.
+            user_email: Caller identity.
+            token_teams: Caller team scope.
 
         Returns:
             ServerRead: The Pydantic model representing the server, optionally including aggregated metrics.
@@ -592,7 +597,7 @@ class ServerService(BaseService):
         server_dict["associated_tool_ids"] = [str(tool.id) for tool in server.tools if getattr(tool, "enabled", True)] if server.tools else []
         server_dict["associated_resources"] = [res.id for res in server.resources if getattr(res, "enabled", True)] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts if getattr(prompt, "enabled", True)] if server.prompts else []
-        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
+        server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if agent.enabled and agent_visible_to(db, agent, user_email, token_teams)] if db is not None else []
         server_dict["interfaces"] = list(getattr(server, "interfaces", None) or [])
 
         # Team name is loaded via server.team property from email_team relationship
@@ -847,7 +852,7 @@ class ServerService(BaseService):
             )
 
             # Team name is loaded via db_server.team property from email_team relationship
-            return self.convert_server_to_read(db_server)
+            return self.convert_server_to_read(db_server, db=db, user_email=owner_email or created_by, token_teams=token_teams)
         except IntegrityError as ie:
             db.rollback()
             logger.error("IntegrityErrors in group: %s", ie)
@@ -962,6 +967,19 @@ class ServerService(BaseService):
             if cached is not None:
                 # Reconstruct ServerRead objects from cached dicts
                 cached_servers = [ServerRead.model_validate(s).masked() for s in cached["servers"]]
+                server_ids = [server.id for server in cached_servers]
+                current_agents: dict[str, list[str]] = {}
+                if server_ids:
+                    # Recheck public agent associations against the database on each cache hit.
+                    rows = db.execute(
+                        select(DbServer.id, DbA2AAgent.id)
+                        .join(DbServer.a2a_agents)
+                        .where(DbServer.id.in_(server_ids), DbA2AAgent.enabled.is_(True), DbA2AAgent.visibility == "public")
+                    ).all()
+                    for server_id, agent_id in rows:
+                        current_agents.setdefault(server_id, []).append(agent_id)
+                for server in cached_servers:
+                    server.associated_a2a_agents = current_agents.get(server.id, [])
                 return (cached_servers, cached.get("next_cursor"))
 
         # Build base query with ordering and eager load relationships to avoid N+1
@@ -1028,7 +1046,7 @@ class ServerService(BaseService):
         result = []
         for s in servers_db:
             try:
-                result.append(self.convert_server_to_read(s, include_metrics=include_metrics))
+                result.append(self.convert_server_to_read(s, include_metrics=include_metrics, db=db, user_email=user_email, token_teams=token_teams))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception("Failed to convert server %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining servers instead of failing completely
@@ -1146,7 +1164,7 @@ class ServerService(BaseService):
         result = []
         for s in servers:
             try:
-                result.append(self.convert_server_to_read(s, include_metrics=False))
+                result.append(self.convert_server_to_read(s, include_metrics=False, db=db, user_email=user_email, token_teams=team_ids))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception("Failed to convert server %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining servers instead of failing completely
@@ -1355,7 +1373,7 @@ class ServerService(BaseService):
         }
         logger.debug("Server Data: %s", server_data)
         # Team name is loaded via server.team property from email_team relationship
-        server_read = self.convert_server_to_read(server)
+        server_read = self.convert_server_to_read(server, db=db, user_email=user_email, token_teams=token_teams)
 
         self._structured_logger.log(
             level="INFO",
@@ -1539,7 +1557,11 @@ class ServerService(BaseService):
             if server_update.team_id is not None:
                 server.team_id = server_update.team_id
 
-            _require_visible_a2a_agents(db, getattr(server_update, "associated_a2a_agents", None), user_email, token_teams, attached=server.a2a_agents)
+            associated_agent_ids = getattr(server_update, "associated_a2a_agents", None)
+            _require_visible_a2a_agents(db, associated_agent_ids, user_email, token_teams, attached=server.a2a_agents)
+            if associated_agent_ids is not None:
+                hidden_ids = [agent.id for agent in server.a2a_agents if not agent.enabled or not agent_visible_to(db, agent, user_email, token_teams)]
+                server_update = server_update.model_copy(update={"associated_a2a_agents": list(dict.fromkeys(associated_agent_ids + hidden_ids))})
             _update_server_associations(db, server, server_update)
             _apply_server_interfaces(server, server_update.interfaces)
 
@@ -1681,7 +1703,7 @@ class ServerService(BaseService):
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
             logger.debug("Server Data: %s", server_data)
-            return self.convert_server_to_read(server)
+            return self.convert_server_to_read(server, db=db, user_email=user_email, token_teams=token_teams)
         except IntegrityError as ie:
             db.rollback()
             logger.error("IntegrityErrors in group: %s", ie)
@@ -1777,7 +1799,7 @@ class ServerService(BaseService):
         await _get_tool_lookup_cache().invalidate_server(server_id)
         return {"oauth_config_approved": True, "version": expected_version + 1}
 
-    async def set_server_state(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
+    async def set_server_state(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> ServerRead:
         """Set the activation status of a server.
 
         Args:
@@ -1785,6 +1807,7 @@ class ServerService(BaseService):
             server_id: The unique identifier of the server.
             activate: True to activate, False to deactivate.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            token_teams: Caller team scope.
 
         Returns:
             The updated ServerRead object.
@@ -1902,7 +1925,7 @@ class ServerService(BaseService):
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
             logger.info("Server Data: %s", server_data)
-            return self.convert_server_to_read(server)
+            return self.convert_server_to_read(server, db=db, user_email=user_email, token_teams=token_teams)
         except PermissionError as e:
             # Structured logging: Log permission error
             self._structured_logger.log(

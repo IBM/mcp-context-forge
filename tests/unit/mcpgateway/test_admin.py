@@ -1382,7 +1382,7 @@ class TestAdminServerRoutes:
 
         result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
-        mock_set_state.assert_called_once_with(mock_db, "server-1", True, user_email="test-user")
+        mock_set_state.assert_called_once_with(mock_db, "server-1", True, user_email="test-user", token_teams=[])
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert result.headers["location"] == "/admin#catalog"
@@ -1396,7 +1396,7 @@ class TestAdminServerRoutes:
 
         result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
-        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
+        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user", token_teams=[])
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert result.headers["location"] == "/admin#catalog"
@@ -1410,7 +1410,7 @@ class TestAdminServerRoutes:
 
         result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
-        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
+        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user", token_teams=[])
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert result.headers["location"] == "/admin/?include_inactive=true#catalog"
@@ -10017,7 +10017,7 @@ class TestEdgeCasesAndErrorHandling:
             if form_field == "activate":
                 # Only "true" (case-insensitive) should be True
                 expected = value.lower() == "true"
-                mock_toggle.assert_called_with(mock_db, "server-1", expected, user_email="test-user")
+                mock_toggle.assert_called_with(mock_db, "server-1", expected, user_email="test-user", token_teams=[])
 
     async def test_json_field_valid_cases(self, mock_request, mock_db):
         """Test JSON field parsing with valid cases."""

@@ -3436,9 +3436,10 @@ async def admin_servers_partial_html(
     # This eliminates the N+1 query problem from calling get_server_details() in a loop
     servers_pydantic = []
     failed_count = 0
+    scoped_email, token_teams = get_scoped_resource_access_context(request, user)
     for s in servers_db:
         try:
-            servers_pydantic.append(server_service.convert_server_to_read(s, include_metrics=False))
+            servers_pydantic.append(server_service.convert_server_to_read(s, include_metrics=False, db=db, user_email=scoped_email, token_teams=token_teams))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             failed_count += 1
             LOGGER.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
@@ -3960,7 +3961,7 @@ async def admin_set_server_state(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await server_service.set_server_state(db, server_id, activate, user_email=user_email)
+        await server_service.set_server_state(db, server_id, activate, user_email=user_email, token_teams=get_scoped_resource_access_context(request, user)[1])
     except PermissionError as e:
         LOGGER.warning("Permission denied for user %s setting server %s state: %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(server_id), e)
         error_code = "permission_denied"
@@ -17112,6 +17113,7 @@ async def admin_add_a2a_agent(
             team_id=team_id,
             owner_email=user_email,
             visibility=form.get("visibility", "private"),
+            token_teams=get_scoped_resource_access_context(request, user)[1],
         )
 
         return ORJSONResponse(

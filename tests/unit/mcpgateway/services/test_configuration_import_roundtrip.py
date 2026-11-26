@@ -19,11 +19,11 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Base, EmailTeam, EmailTeamMember, EmailUser, Gateway, Prompt, Resource, Server, Tool
-from mcpgateway.schemas import GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
+from mcpgateway.schemas import GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate, ToolUpdate
 from mcpgateway.services.export_service import ExportService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportService, ImportValidationError
 from mcpgateway.services.root_service import RootService
-from mcpgateway.services.tool_service import _protect_tool_headers_for_storage
+from mcpgateway.services.tool_service import _protect_tool_headers_for_storage, ToolError
 
 from mcpgateway.utils.services_auth import encode_auth
 
@@ -79,6 +79,83 @@ async def test_selection_named_team_and_repeat_update(registry, importer):
     assert registry.scalars(select(Tool)).one().description == "repeat"
     empty = await importer.import_configuration(registry, configuration, imported_by=ACTOR, selected_entities={})
     assert empty.total_entities == empty.processed_entities == 0
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_overwrite_of_derived_tool(registry, importer):
+    """Reject overwrites during preview and writes. Preserve stored tool data."""
+    derived = Tool(
+        original_name="derived",
+        custom_name="derived",
+        integration_type="A2A",
+        request_type="POST",
+        url="https://agent.example.com",
+        team_id="target",
+        owner_email=ACTOR,
+        visibility="team",
+        input_schema={},
+        annotations={"a2a_agent_id": "agent-id"},
+    )
+    registry.add(derived)
+    registry.commit()
+    configuration = envelope(
+        tools=[
+            tool("derived"),
+            tool("manual", integration_type="A2A", request_type="POST"),
+            tool("derived", integration_type="A2A", request_type="POST", url=derived.url, annotations={"a2a_agent_id": "other-agent"}),
+            tool("derived", integration_type="A2A", request_type="POST"),
+        ]
+    )
+
+    for dry_run in (True, False):
+        result = await importer.import_configuration(registry, configuration, imported_by=ACTOR, team_name="Target", token_teams=["target"], dry_run=dry_run)
+        assert (result.created_entities, result.updated_entities, result.failed_entities) == (0, 0, 4)
+
+    registry.refresh(derived)
+    assert derived.integration_type == "A2A"
+    assert derived.annotations == {"a2a_agent_id": "agent-id"}
+    assert derived.url == "https://agent.example.com"
+
+
+@pytest.mark.asyncio
+async def test_a2a_metadata_update_preserves_transport(registry, importer):
+    """Preserve the derived tool's binding and credentials during metadata edits."""
+    auth_value = encode_auth({"Authorization": "Bearer fixture-value"})
+    derived = Tool(
+        original_name="derived",
+        url="https://agent.example.com",
+        integration_type="A2A",
+        request_type="POST",
+        visibility="team",
+        team_id="target",
+        owner_email=ACTOR,
+        input_schema={},
+        annotations={"a2a_agent_id": "agent-id"},
+        auth_type="bearer",
+        auth_value=auth_value,
+    )
+    registry.add(derived)
+    registry.commit()
+    schema = ToolUpdate(integration_type="A2A", description="Direct edit")
+    await importer.tool_service.update_tool(registry, derived.id, schema, user_email=ACTOR)
+    assert derived.description == "Direct edit"
+    with pytest.raises(ToolError, match="Cannot change A2A tool binding"):
+        await importer.tool_service.update_tool(registry, derived.id, ToolUpdate(annotations={"a2a_agent_id": "other-agent"}), user_email=ACTOR)
+
+    configuration = envelope(
+        tools=[tool("derived", integration_type="A2A", request_type="POST", url=derived.url, annotations=derived.annotations, description="Imported edit", credentials_required=True)]
+    )
+    scope = {"imported_by": ACTOR, "team_name": "Target", "token_teams": ["target"]}
+    preview = await importer.import_configuration(registry, configuration, dry_run=True, **scope)
+    assert (preview.updated_entities, preview.failed_entities) == (1, 0)
+    applied = await importer.import_configuration(registry, configuration, **scope)
+    assert (applied.updated_entities, applied.failed_entities) == (1, 0)
+
+    registry.refresh(derived)
+    assert derived.description == "Imported edit"
+    assert derived.url == "https://agent.example.com"
+    assert derived.annotations == {"a2a_agent_id": "agent-id"}
+    assert derived.auth_value == auth_value
 
 
 @pytest.mark.asyncio

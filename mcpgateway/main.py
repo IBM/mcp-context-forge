@@ -4376,6 +4376,7 @@ async def approve_server_oauth(
 @require_permission("servers.update")
 async def set_server_state(
     server_id: str,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4385,6 +4386,7 @@ async def set_server_state(
 
     Args:
         server_id (str): The ID of the server to set state for.
+        request: Current request.
         activate (bool): Whether to activate or deactivate the server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -4398,7 +4400,7 @@ async def set_server_state(
     try:
         user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is setting server with ID {server_id} to {'active' if activate else 'inactive'}")
-        return await server_service.set_server_state(db, server_id, activate, user_email=user_email)
+        return await server_service.set_server_state(db, server_id, activate, user_email=user_email, token_teams=get_scoped_resource_access_context(request, user)[1])
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
@@ -4413,6 +4415,7 @@ async def set_server_state(
 @require_permission("servers.update")
 async def toggle_server_status(
     server_id: str,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4423,6 +4426,7 @@ async def toggle_server_status(
 
     Args:
         server_id: The server ID.
+        request: Current request.
         activate: Whether to activate (True) or deactivate (False) the server.
         db: Database session.
         user: Authenticated user context.
@@ -4432,7 +4436,7 @@ async def toggle_server_status(
     """
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
-    return await set_server_state(server_id, activate, db, user)
+    return await set_server_state(server_id, request, activate, db, user)
 
 
 @server_router.post("/{server_id}/test-handshake", response_model=GatewayHandshakeResponse)
@@ -5255,6 +5259,7 @@ async def create_a2a_agent(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            token_teams=get_scoped_resource_access_context(request, user)[1],
         )
     except A2AAgentNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -9037,13 +9042,10 @@ async def _execute_rpc_tools_call(
 
     # Layer-1 exception: run ownership is captured below from the raw context,
     # before admin-bypass normalization is applied.
-    auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-    run_owner_email = auth_user_email
-    run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
-    if auth_is_admin and auth_token_teams is None:
-        auth_user_email = None
-    elif auth_token_teams is None:
-        auth_token_teams = []
+    run_owner_email, run_owner_scope, auth_is_admin = get_rpc_filter_context(request, user)
+    run_owner_team_ids = [] if run_owner_scope is None else list(run_owner_scope)
+    auth_user_email = run_owner_email
+    auth_token_teams = run_owner_scope if auth_is_admin else run_owner_team_ids
 
     oauth_user_email = get_user_email(user)
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -9314,7 +9316,7 @@ async def _handle_app_bridge_tools_call(db: Session, request: Request, app_sessi
 
     try:
         token_teams = app_session.token_teams
-        tool_user_email = None if token_teams is None else app_session.user_email
+        tool_user_email = app_session.user_email
         request_headers = _app_bridge_request_headers(request)
         result = await tool_service.invoke_tool(
             db=db,
@@ -9987,14 +9989,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
 
             # Get authorization context (same as tools/call)
-            # Layer-1 exception: tool-execution authorization, not resource visibility.
-            # Kept in sync with _execute_rpc_tools_call.
+            # Layer-1 exception: Match the tool-execution scope used by tools/call.
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-            if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
-                # auth_token_teams stays None (unrestricted)
-            elif auth_token_teams is None:
-                auth_token_teams = []  # Non-admin without teams = public-only
+            if auth_token_teams is None and not auth_is_admin:
+                auth_token_teams = []
 
             # Get user email for OAuth token selection
             oauth_user_email = get_user_email(user)

@@ -118,7 +118,7 @@ from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.services.tool_validation_policy import admit_stored_tool, admit_tool, apply_refusal, check_policy_permission, policy_changed, policy_text, record_policy_change
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
-from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
+from mcpgateway.utils.admin_check import a2a_tool_references_agent, agent_visible_to, is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -1094,7 +1094,7 @@ class ToolNotFoundError(ToolError):
 class ToolNameConflictError(ToolError):
     """Raised when a tool name conflicts with existing (active or inactive) tool."""
 
-    def __init__(self, name: str, enabled: bool = True, tool_id: Optional[int] = None, visibility: str = "public"):
+    def __init__(self, name: str, enabled: bool = True, tool_id: str | int | None = None, visibility: str = "public"):
         """Initialize the error with tool information.
 
         Args:
@@ -2447,6 +2447,9 @@ class ToolService(BaseService):
         visibility: str = None,
         user_id: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        *,
+        a2a_agent: Optional[DbA2AAgent] = None,
+        a2a_requester_email: Optional[str] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -2464,6 +2467,8 @@ class ToolService(BaseService):
             visibility: Tool visibility (private, team, public).
             user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
             token_teams: Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
+            a2a_agent: Persisted agent for a gateway-managed A2A tool.
+            a2a_requester_email: Authenticated requester for agent visibility checks.
 
         Returns:
             Created tool information.
@@ -2498,6 +2503,15 @@ class ToolService(BaseService):
             'tool_read'
         """
         try:
+            persisted_agent = None
+            if tool.integration_type == "A2A":
+                persisted_agent = db.get(DbA2AAgent, a2a_agent.id, populate_existing=True, with_for_update=True) if a2a_agent is not None else None
+                if persisted_agent is None or persisted_agent.tool_id or not agent_visible_to(db, persisted_agent, a2a_requester_email or created_by, token_teams):
+                    raise ToolError("A2A tools must be created from an accessible agent")
+                team_id, owner_email, visibility = persisted_agent.team_id, persisted_agent.owner_email, persisted_agent.visibility
+                tool = tool.model_copy(update={"annotations": {**(tool.annotations or {}), "a2a_agent_id": persisted_agent.id}})
+            elif a2a_agent is not None:
+                raise ToolError("Agent binding requires an A2A tool")
             if tool.auth is None:
                 auth_type = None
                 auth_value = None
@@ -2619,6 +2633,8 @@ class ToolService(BaseService):
                 plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
             )
             db.add(db_tool)
+            if persisted_agent is not None:
+                persisted_agent.tool = db_tool
             db.commit()
             db.refresh(db_tool)
             after_import_commit_sync(notify_dataplane)
@@ -3235,6 +3251,9 @@ class ToolService(BaseService):
             if refusal:
                 return {"status": "fail", "error": f"Tool {tool.name!r} {refusal}"}
 
+            if tool.integration_type == "A2A":
+                return {"status": "fail", "error": "A2A tools must be created from an accessible agent"}
+
             # Extract auth information
             if tool.auth is None:
                 auth_type = None
@@ -3256,6 +3275,8 @@ class ToolService(BaseService):
                 if conflict_strategy == "update":
                     if tool.name in unowned_names:
                         return {"status": "fail", "error": f"Permission denied: cannot update tool {tool.name}"}
+                    if existing_tool.integration_type == "A2A":
+                        return {"status": "fail", "error": f"Cannot overwrite A2A tool {tool.name}"}
                     previous_sigv4_config = getattr(existing_tool, "sigv4_config", None)
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
@@ -5715,8 +5736,6 @@ class ToolService(BaseService):
         # drift between the two paths.
         # ═══════════════════════════════════════════════════════════════════════════
         resolved = await self._resolve_tool_for_invocation(db, name, request_headers, user_email, token_teams, server_id, require_app_visible, require_model_visible, arguments=arguments)
-        if resolved.schema_validation_error:
-            raise ToolInvocationError(f"Invalid arguments for tool '{name}': {resolved.schema_validation_error}")
         is_direct_proxy = resolved.is_direct_proxy
         tool = resolved.tool
         gateway = resolved.gateway
@@ -5726,6 +5745,17 @@ class ToolService(BaseService):
         # Extract A2A-related data from annotations (will be used after db.close() if A2A tool)
         tool_annotations = tool_payload.get("annotations") or {}
         tool_integration_type = tool_payload.get("integration_type")
+        a2a_agent = None
+        if tool_integration_type == "A2A":
+            agent_id = tool_annotations.get("a2a_agent_id") if isinstance(tool_annotations, dict) else None
+            local_tool_id = tool_payload.get("id") or (str(tool.id) if tool else None)
+            if settings.mcpgateway_a2a_enabled and isinstance(agent_id, str) and agent_id and local_tool_id:
+                a2a_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id).execution_options(populate_existing=True)).scalar_one_or_none()
+            if not a2a_agent or not a2a_agent.enabled or not a2a_agent.tool_id or str(a2a_agent.tool_id) != str(local_tool_id) or not agent_visible_to(db, a2a_agent, user_email, token_teams):
+                raise ToolNotFoundError(f"Tool not found: {name}")
+
+        if resolved.schema_validation_error:
+            raise ToolInvocationError(f"Invalid arguments for tool '{name}': {resolved.schema_validation_error}")
 
         # Get passthrough headers from in-memory cache (Issue #1715)
         # This eliminates 42,000+ redundant DB queries under load
@@ -5927,20 +5957,8 @@ class ToolService(BaseService):
         a2a_agent_oauth_config: Optional[Dict[str, Any]] = None
         a2a_agent_passthrough_headers: Optional[List[str]] = None
 
-        if tool_integration_type == "A2A" and "a2a_agent_id" in tool_annotations:
-            a2a_agent_id = tool_annotations.get("a2a_agent_id")
-            if not a2a_agent_id:
-                raise ToolNotFoundError(f"A2A tool '{name}' missing agent ID in annotations")
-
-            # Query for the A2A agent
-            agent_query = select(DbA2AAgent).where(DbA2AAgent.id == a2a_agent_id)
-            a2a_agent = db.execute(agent_query).scalar_one_or_none()
-
-            if not a2a_agent:
-                raise ToolNotFoundError(f"A2A agent not found for tool '{name}' (agent ID: {a2a_agent_id})")
-
-            if not a2a_agent.enabled:
-                raise ToolNotFoundError(f"A2A agent '{a2a_agent.name}' is disabled")
+        if a2a_agent is not None:
+            a2a_agent_id = a2a_agent.id
 
             # Extract all needed data to local variables before db.close()
             a2a_agent_name = a2a_agent.name
@@ -8073,6 +8091,13 @@ class ToolService(BaseService):
                 if not await permission_service.check_resource_ownership(user_email, tool):
                     raise PermissionError("Only the owner can update this tool")
 
+            requested_type = tool_update.integration_type
+            if requested_type is not None and requested_type != tool.integration_type and "A2A" in (requested_type, tool.integration_type):
+                raise ToolError("Cannot change A2A tool integration type")
+            if tool.integration_type == "A2A" and tool_update.annotations is not None:
+                if not isinstance(tool.annotations, dict) or tool_update.annotations.get("a2a_agent_id") != tool.annotations.get("a2a_agent_id"):
+                    raise ToolError("Cannot change A2A tool binding")
+
             # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
             # Convert to string to handle both string and non-string inputs
             if tool_update.name:
@@ -8662,6 +8687,9 @@ class ToolService(BaseService):
         created_from_ip: Optional[str] = None,
         created_via: Optional[str] = None,
         created_user_agent: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        *,
+        user_email: Optional[str] = None,
     ) -> DbTool:
         """Create a tool entry from an A2A agent for virtual server integration.
 
@@ -8672,20 +8700,38 @@ class ToolService(BaseService):
             created_from_ip: IP address of creator.
             created_via: Creation method.
             created_user_agent: User agent of creation request.
+            token_teams: Caller team scope.
+            user_email: Authenticated requester for agent visibility checks.
 
         Returns:
             The created tool database object.
 
         Raises:
             ToolNameConflictError: If a tool with the same name already exists.
+            ToolError: If the caller cannot see the agent.
         """
+        persisted_agent = db.get(DbA2AAgent, agent.id, populate_existing=True, with_for_update=True)
+        requester_email = user_email or created_by
+        if persisted_agent is None or not agent_visible_to(db, persisted_agent, requester_email, token_teams):
+            raise ToolError("A2A tools must be created from an accessible agent")
+        agent = persisted_agent
+
         # Check if tool already exists for this agent
         tool_name = f"a2a_{agent.slug}"
-        existing_query = select(DbTool).where(DbTool.original_name == tool_name)
+        existing_query = select(DbTool).where(DbTool.original_name == tool_name, DbTool.gateway_id.is_(None))
         existing_tool = db.execute(existing_query).scalar_one_or_none()
 
         if existing_tool:
-            # Tool already exists, return it
+            if (
+                not a2a_tool_references_agent(existing_tool, agent.id)
+                or existing_tool.owner_email != agent.owner_email
+                or existing_tool.team_id != agent.team_id
+                or existing_tool.visibility != agent.visibility
+                or (agent.tool_id and agent.tool_id != existing_tool.id)
+            ):
+                raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
+            agent.tool = existing_tool
+            db.commit()
             return existing_tool
 
         # Create tool entry for the A2A agent
@@ -8706,34 +8752,32 @@ class ToolService(BaseService):
         # Ensure we include identifying A2A tags
         normalized_tags = normalized_tags + ["a2a", "agent"]
 
-        tool_data = ToolCreate(
-            name=tool_name,
-            displayName=generate_display_name(agent.name),
-            url=agent.endpoint_url,
-            description=f"A2A Agent: {agent.description or agent.name}",
-            integration_type="A2A",  # Special integration type for A2A agents
-            request_type="POST",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "User query", "default": "Hello from ContextForge Admin UI test!"},
+        tool_data = ToolCreate.model_validate(
+            {
+                "name": tool_name,
+                "displayName": generate_display_name(agent.name),
+                "url": agent.endpoint_url,
+                "description": f"A2A Agent: {agent.description or agent.name}",
+                "integration_type": "A2A",
+                "request_type": "POST",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "User query", "default": "Hello from ContextForge Admin UI test!"},
+                    },
+                    "required": ["query"],
                 },
-                "required": ["query"],
+                "annotations": {
+                    "title": f"A2A Agent: {agent.name}",
+                    "a2a_agent_id": agent.id,
+                    "a2a_agent_type": agent.agent_type,
+                },
+                "auth_type": agent.auth_type,
+                "auth_value": agent.auth_value,
+                "tags": normalized_tags,
             },
-            allow_auto=True,
-            annotations={
-                "title": f"A2A Agent: {agent.name}",
-                "a2a_agent_id": agent.id,
-                "a2a_agent_type": agent.agent_type,
-            },
-            auth_type=agent.auth_type,
-            auth_value=agent.auth_value,
-            tags=normalized_tags,
+            context={"trusted_a2a_agent": True},
         )
-
-        # Default to "public" visibility if agent visibility is not set
-        # This ensures A2A tools are visible in the Global Tools Tab
-        tool_visibility = agent.visibility or "public"
 
         tool_read = await self.register_tool(
             db,
@@ -8744,11 +8788,16 @@ class ToolService(BaseService):
             created_user_agent=created_user_agent,
             team_id=agent.team_id,
             owner_email=agent.owner_email,
-            visibility=tool_visibility,
+            visibility=agent.visibility,
+            token_teams=token_teams,
+            a2a_agent=agent,
+            a2a_requester_email=requester_email,
         )
 
         # Return the DbTool object for relationship assignment
         tool_db = db.get(DbTool, tool_read.id)
+        if tool_db is None:
+            raise ToolNotFoundError(f"Tool not found: {tool_name}")
         return tool_db
 
     async def update_tool_from_a2a_agent(
@@ -8783,6 +8832,9 @@ class ToolService(BaseService):
             logger.warning("Tool %s not found for A2A agent %s, resetting tool_id", agent.tool_id, agent.id)
             agent.tool_id = None
             db.commit()
+            return None
+        if not a2a_tool_references_agent(tool, agent.id):
+            logger.warning("Ignoring invalid tool binding for A2A agent %s", agent.id)
             return None
 
         # Normalize tags: if agent.tags contains dicts like {'id':..,'label':..},
@@ -8846,74 +8898,13 @@ class ToolService(BaseService):
         if not tool:
             logger.warning("Tool %s not found for A2A agent %s", agent.tool_id, agent.id)
             return
+        if not a2a_tool_references_agent(tool, agent.id):
+            logger.warning("Ignoring invalid tool binding for A2A agent %s", agent.id)
+            return
 
         # Delete the tool
         await self.delete_tool(db=db, tool_id=tool.id, user_email=user_email, purge_metrics=purge_metrics)
         logger.info("Deleted tool %s associated with A2A agent %s", tool.id, agent.id)
-
-    async def _invoke_a2a_tool(self, db: Session, tool: DbTool, arguments: Dict[str, Any]) -> ToolResult:
-        """Invoke an A2A agent through its corresponding tool.
-
-        Args:
-            db: Database session.
-            tool: The tool record that represents the A2A agent.
-            arguments: Tool arguments.
-
-        Returns:
-            Tool result from A2A agent invocation.
-
-        Raises:
-            ToolNotFoundError: If the A2A agent is not found.
-        """
-
-        # Extract A2A agent ID from tool annotations
-        agent_id = tool.annotations.get("a2a_agent_id")
-        if not agent_id:
-            raise ToolNotFoundError(f"A2A tool '{tool.name}' missing agent ID in annotations")
-
-        # Get the A2A agent
-        agent_query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-        agent = db.execute(agent_query).scalar_one_or_none()
-
-        if not agent:
-            raise ToolNotFoundError(f"A2A agent not found for tool '{tool.name}' (agent ID: {agent_id})")
-
-        if not agent.enabled:
-            raise ToolNotFoundError(f"A2A agent '{agent.name}' is disabled")
-
-        # Force-load all attributes needed by _call_a2a_agent before detaching
-        # (accessing them ensures they're loaded into the object's __dict__)
-        _ = (agent.name, agent.endpoint_url, agent.agent_type, agent.protocol_version, agent.auth_type, agent.auth_value, agent.auth_query_params)
-
-        # Detach agent from session so its loaded data remains accessible after close
-        db.expunge(agent)
-
-        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
-        # This prevents "idle in transaction" connection pool exhaustion under load
-        db.commit()
-        db.close()
-
-        # Prepare parameters for A2A invocation
-        try:
-            # Make the A2A agent call (agent is now detached but data is loaded)
-            response_data = await self._call_a2a_agent(agent, arguments)
-
-            # Convert A2A response to MCP ToolResult format
-            if isinstance(response_data, dict) and "response" in response_data:
-                val = response_data["response"]
-                content = [TextContent(type="text", text=val if isinstance(val, str) else orjson.dumps(val).decode())]
-            else:
-                content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
-
-            result = ToolResult(content=content, is_error=False)
-
-        except Exception as e:
-            error_message = unexpected_error_detail(e)
-            content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
-            result = ToolResult(content=content, is_error=True)
-
-        # Note: Metrics are recorded by the calling invoke_tool method, not here
-        return result
 
     async def _call_a2a_agent(self, agent: DbA2AAgent, parameters: Dict[str, Any]):
         """Call an A2A agent directly.

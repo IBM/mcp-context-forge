@@ -1633,6 +1633,30 @@ class TestProcessSingleToolForBulk:
         )
         assert result["status"] == "update"
 
+    def test_bulk_rest_overwrite_preserves_derived_tool(self, tool_service):
+        """A REST import cannot replace the existing derived tool."""
+        source = self._make_tool_create()
+        source.integration_type = "REST"
+        stored = SimpleNamespace(integration_type="A2A", annotations={"a2a_agent_id": "agent-1"}, url="http://agent.example", auth_type="bearer", auth_value="fixture-value")
+        original = vars(stored).copy()
+        result = tool_service._process_single_tool_for_bulk(
+            tool=source,
+            existing_tools_map={source.name: stored},
+            conflict_strategy="update",
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            created_by="admin",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+
+        assert result["status"] == "fail"
+        assert vars(stored) == original
+
     def test_update_on_conflict_rest_type(self, tool_service):
         """Should update REST-specific fields when integration_type is REST."""
         existing = MagicMock()
@@ -1783,81 +1807,22 @@ class TestA2AMethods:
         await tool_service.delete_tool_from_a2a_agent(db, agent)
 
     @pytest.mark.asyncio
-    async def test_invoke_a2a_tool_missing_agent_id(self, tool_service, mock_tool):
-        """Should raise ToolNotFoundError when annotations lack a2a_agent_id."""
-        mock_tool.annotations = {}
-        mock_tool.integration_type = "A2A"
+    @pytest.mark.parametrize(
+        "integration_type,annotations",
+        [("REST", {"a2a_agent_id": "agent-1"}), ("A2A", {"a2a_agent_id": "other-agent"}), ("A2A", None)],
+    )
+    async def test_invalid_reverse_link_cannot_update_or_delete_tool(self, tool_service, integration_type, annotations):
+        """Agent sync and deletion require a matching forward reference."""
+        agent = SimpleNamespace(id="agent-1", tool_id="tool-1")
         db = MagicMock()
-        with pytest.raises(ToolNotFoundError, match="missing agent ID"):
-            await tool_service._invoke_a2a_tool(db, mock_tool, {"query": "hello"})
+        db.get.return_value = SimpleNamespace(id="tool-1", integration_type=integration_type, annotations=annotations)
+        tool_service.update_tool = AsyncMock()
+        tool_service.delete_tool = AsyncMock()
 
-    @pytest.mark.asyncio
-    async def test_invoke_a2a_tool_agent_not_found(self, tool_service, mock_tool):
-        """Should raise ToolNotFoundError when agent is not in DB."""
-        mock_tool.annotations = {"a2a_agent_id": "agent-xyz"}
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = None
-        with pytest.raises(ToolNotFoundError, match="not found"):
-            await tool_service._invoke_a2a_tool(db, mock_tool, {"query": "hello"})
-
-    @pytest.mark.asyncio
-    async def test_invoke_a2a_tool_agent_disabled(self, tool_service, mock_tool):
-        """Should raise ToolNotFoundError when agent is disabled."""
-        mock_tool.annotations = {"a2a_agent_id": "agent-xyz"}
-        agent = MagicMock()
-        agent.enabled = False
-        agent.name = "test-agent"
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        with pytest.raises(ToolNotFoundError, match="disabled"):
-            await tool_service._invoke_a2a_tool(db, mock_tool, {"query": "hello"})
-
-    @pytest.mark.asyncio
-    async def test_invoke_a2a_tool_success(self, tool_service, mock_tool):
-        """Should return ToolResult on successful A2A invocation."""
-        mock_tool.annotations = {"a2a_agent_id": "agent-xyz"}
-        agent = MagicMock()
-        agent.enabled = True
-        agent.name = "agent"
-        agent.endpoint_url = "http://a2a.example.com"
-        agent.agent_type = "generic"
-        agent.protocol_version = "1.0"
-        agent.auth_type = None
-        agent.auth_value = None
-        agent.auth_query_params = None
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-
-        with patch.object(tool_service, "_call_a2a_agent", new_callable=AsyncMock) as mock_call:
-            mock_call.return_value = {"response": "Hello!"}
-            result = await tool_service._invoke_a2a_tool(db, mock_tool, {"query": "hello"})
-
-        assert result.is_error is False
-        assert "Hello!" in result.content[0].text
-
-    @pytest.mark.asyncio
-    async def test_invoke_a2a_tool_error(self, tool_service, mock_tool):
-        """Should return error ToolResult on A2A invocation failure."""
-        mock_tool.annotations = {"a2a_agent_id": "agent-xyz"}
-        agent = MagicMock()
-        agent.enabled = True
-        agent.name = "agent"
-        agent.endpoint_url = "http://a2a.example.com"
-        agent.agent_type = "generic"
-        agent.protocol_version = "1.0"
-        agent.auth_type = None
-        agent.auth_value = None
-        agent.auth_query_params = None
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-
-        with patch.object(tool_service, "_call_a2a_agent", new_callable=AsyncMock) as mock_call:
-            mock_call.side_effect = Exception("connection failed")
-            result = await tool_service._invoke_a2a_tool(db, mock_tool, {"query": "hello"})
-
-        assert result.is_error is True
-        assert "An unexpected error occurred" in result.content[0].text
-        assert "connection failed" not in result.content[0].text
+        assert await tool_service.update_tool_from_a2a_agent(db, agent) is None
+        await tool_service.delete_tool_from_a2a_agent(db, agent)
+        tool_service.update_tool.assert_not_awaited()
+        tool_service.delete_tool.assert_not_awaited()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2821,18 +2786,56 @@ class TestCreateToolFromA2AAgent:
 
     @pytest.mark.asyncio
     async def test_create_tool_from_a2a_existing_returns_tool(self, tool_service):
-        """If tool already exists for agent, return it directly."""
+        """Retry links the agent to its matching committed tool."""
         db = MagicMock()
-        existing_tool = MagicMock()
+        existing_tool = SimpleNamespace(id="tool-1", integration_type="A2A", annotations={"a2a_agent_id": "agent-1"}, visibility="public", team_id=None, owner_email="owner@example.com")
         db.execute.return_value.scalar_one_or_none.return_value = existing_tool
 
-        agent = MagicMock()
-        agent.slug = "my-agent"
-        agent.name = "My Agent"
-        agent.tags = []
+        agent = SimpleNamespace(id="agent-1", slug="my-agent", tool_id=None, visibility="public", team_id=None, owner_email="owner@example.com")
+        db.get.return_value = agent
 
         result = await tool_service.create_tool_from_a2a_agent(db, agent)
         assert result is existing_tool
+        assert agent.tool is existing_tool
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("integration_type", "REST"),
+            ("annotations", {"a2a_agent_id": "other-agent"}),
+            ("visibility", "private"),
+            ("owner_email", "other@example.com"),
+            ("team_id", "other-team"),
+        ],
+    )
+    async def test_create_tool_from_a2a_retry_rejects_conflict(self, tool_service, field, value):
+        """Retry requires matching type, binding, and scope."""
+        db = MagicMock()
+        agent = SimpleNamespace(id="agent-1", slug="my-agent", tool_id=None, visibility="public", team_id=None, owner_email="owner@example.com")
+        tool = SimpleNamespace(id="tool-1", name="a2a_my-agent", integration_type="A2A", annotations={"a2a_agent_id": agent.id}, visibility="public", team_id=None, owner_email=agent.owner_email, enabled=True)
+        setattr(tool, field, value)
+        db.get.return_value = agent
+        db.execute.return_value.scalar_one_or_none.return_value = tool
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.create_tool_from_a2a_agent(db, agent)
+
+        assert agent.tool_id is None
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_tool_from_a2a_retry_requires_visibility(self, tool_service):
+        """An invisible agent cannot adopt a previously committed tool."""
+        db = MagicMock()
+        db.get.return_value = SimpleNamespace(id="agent-1", visibility="private", owner_email="owner@example.com")
+
+        with pytest.raises(ToolError, match="accessible agent"):
+            await tool_service.create_tool_from_a2a_agent(db, db.get.return_value, created_by="other@example.com", token_teams=["team-1"])
+
+        db.execute.assert_not_called()
+        db.commit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_tool_from_a2a_normalizes_tags(self, tool_service):
@@ -2861,7 +2864,7 @@ class TestCreateToolFromA2AAgent:
         mock_tool_read = MagicMock(spec=ToolRead)
         mock_tool_read.id = "tool-99"
         tool_service.register_tool = AsyncMock(return_value=mock_tool_read)
-        db.get.return_value = MagicMock()
+        db.get.side_effect = [agent, MagicMock()]
 
         await tool_service.create_tool_from_a2a_agent(db, agent, created_by="admin")
 
@@ -2890,6 +2893,8 @@ class TestCreateToolFromA2AAgent:
         agent.auth_value = "token123"
         agent.tags = ["tag1"]
 
+        mock_tool.integration_type = "A2A"
+        mock_tool.annotations = {"a2a_agent_id": agent.id}
         db.get.return_value = mock_tool
 
         mock_tool_read = MagicMock(spec=ToolRead)
@@ -2924,6 +2929,8 @@ class TestCreateToolFromA2AAgent:
             "str-tag",
         ]
 
+        mock_tool.integration_type = "A2A"
+        mock_tool.annotations = {"a2a_agent_id": agent.id}
         db.get.return_value = mock_tool
 
         tool_service.update_tool = AsyncMock(return_value=MagicMock(spec=ToolRead))
@@ -2954,6 +2961,8 @@ class TestCreateToolFromA2AAgent:
         agent.tool_id = "tool-1"
         agent.id = "agent-1"
 
+        mock_tool.integration_type = "A2A"
+        mock_tool.annotations = {"a2a_agent_id": agent.id}
         db.get.return_value = mock_tool
         tool_service.delete_tool = AsyncMock()
 
@@ -3424,267 +3433,6 @@ class TestNotificationEventsCoverage:
         await tool_service._notify_tool_removed(tool)
         event = tool_service._event_service.publish_event.call_args[0][0]
         assert event["type"] == "tool_removed"
-
-
-# ─── _invoke_a2a_tool coverage ───────────────────────────────────────────────
-
-
-class TestInvokeA2AToolCoverage:
-    """Tests for _invoke_a2a_tool (lines 4449-4510)."""
-
-    @pytest.fixture
-    def tool_service(self, monkeypatch):
-        svc = ToolService()
-        svc._event_service = AsyncMock()
-
-        async def passthrough_pinning(prepared, *_args, **_kwargs):
-            return SimpleNamespace(endpoint_url=prepared.endpoint_url, headers=dict(prepared.headers), extensions={})
-
-        class ClientAdapter:
-            def __init__(self, client):
-                self._client = client
-
-            def __getattr__(self, name):
-                return getattr(self._client, name)
-
-            async def post(self, url, **kwargs):
-                try:
-                    return await self._client.post(url, **kwargs)
-                except TypeError as exc:
-                    if "extensions" not in str(exc):
-                        raise
-                    kwargs.pop("extensions", None)
-                    return await self._client.post(url, **kwargs)
-
-        class IsolatedClientCtx:
-            async def __aenter__(self):
-                # First-Party
-                from mcpgateway.services.http_client_service import get_http_client
-
-                return ClientAdapter(await get_http_client())
-
-            async def __aexit__(self, *_exc):
-                return None
-
-        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", passthrough_pinning)
-        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
-        return svc
-
-    def _make_a2a_tool(self, agent_id="agent-1"):
-        tool = MagicMock(spec=DbTool)
-        tool.id = "tool-1"
-        tool.name = "a2a-tool"
-        tool.annotations = {"a2a_agent_id": agent_id} if agent_id else {}
-        return tool
-
-    @pytest.mark.asyncio
-    async def test_missing_agent_id_raises(self, tool_service):
-        tool = self._make_a2a_tool(agent_id=None)
-        db = MagicMock()
-        with pytest.raises(ToolNotFoundError, match="missing agent ID"):
-            await tool_service._invoke_a2a_tool(db, tool, {})
-
-    @pytest.mark.asyncio
-    async def test_agent_not_found_raises(self, tool_service):
-        tool = self._make_a2a_tool()
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = None
-        with pytest.raises(ToolNotFoundError, match="A2A agent not found"):
-            await tool_service._invoke_a2a_tool(db, tool, {})
-
-    @pytest.mark.asyncio
-    async def test_agent_disabled_raises(self, tool_service):
-        tool = self._make_a2a_tool()
-        agent = MagicMock()
-        agent.enabled = False
-        agent.name = "test-agent"
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        with pytest.raises(ToolNotFoundError, match="is disabled"):
-            await tool_service._invoke_a2a_tool(db, tool, {})
-
-    @pytest.mark.asyncio
-    async def test_success_with_response_key(self, tool_service):
-        tool = self._make_a2a_tool()
-        agent = MagicMock()
-        agent.enabled = True
-        agent.name = "agent"
-        agent.endpoint_url = "http://agent.test"
-        agent.agent_type = "generic"
-        agent.protocol_version = "1.0"
-        agent.auth_type = None
-        agent.auth_value = None
-        agent.auth_query_params = None
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        tool_service._call_a2a_agent = AsyncMock(return_value={"response": "hello"})
-
-        result = await tool_service._invoke_a2a_tool(db, tool, {"query": "hi"})
-        assert result.is_error is False
-        assert result.content[0].text == "hello"
-
-    @pytest.mark.asyncio
-    async def test_success_without_response_key(self, tool_service):
-        tool = self._make_a2a_tool()
-        agent = MagicMock()
-        agent.enabled = True
-        agent.name = "agent"
-        agent.endpoint_url = "http://agent.test"
-        agent.agent_type = "custom"
-        agent.protocol_version = "1.0"
-        agent.auth_type = None
-        agent.auth_value = None
-        agent.auth_query_params = None
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        tool_service._call_a2a_agent = AsyncMock(return_value="raw-response")
-
-        result = await tool_service._invoke_a2a_tool(db, tool, {})
-        assert result.is_error is False
-        assert result.content[0].text == "raw-response"
-
-    @pytest.mark.asyncio
-    async def test_success_with_dict_response_value(self, tool_service):
-        """When response value is a dict, it should be serialized as valid JSON, not Python repr."""
-        tool = self._make_a2a_tool()
-        agent = MagicMock()
-        agent.enabled = True
-        agent.name = "agent"
-        agent.endpoint_url = "http://agent.test"
-        agent.agent_type = "generic"
-        agent.protocol_version = "1.0"
-        agent.auth_type = None
-        agent.auth_value = None
-        agent.auth_query_params = None
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        tool_service._call_a2a_agent = AsyncMock(return_value={"response": {"has_chart": False, "tracking_system": "IPP", "sql_queries": []}})
-
-        result = await tool_service._invoke_a2a_tool(db, tool, {"query": "hi"})
-        assert result.is_error is False
-        text = result.content[0].text
-        # Must be valid JSON, not Python repr
-        parsed = json.loads(text)
-        assert parsed["has_chart"] is False
-        assert "False" not in text  # Python repr would have capital False
-
-    @pytest.mark.asyncio
-    async def test_success_without_response_key_dict(self, tool_service):
-        """When entire response is a dict without 'response' key, it should be valid JSON."""
-        tool = self._make_a2a_tool()
-        agent = MagicMock()
-        agent.enabled = True
-        agent.name = "agent"
-        agent.endpoint_url = "http://agent.test"
-        agent.agent_type = "custom"
-        agent.protocol_version = "1.0"
-        agent.auth_type = None
-        agent.auth_value = None
-        agent.auth_query_params = None
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        tool_service._call_a2a_agent = AsyncMock(return_value={"id": 1, "jsonrpc": "2.0", "result": {"has_chart": False}})
-
-        result = await tool_service._invoke_a2a_tool(db, tool, {})
-        assert result.is_error is False
-        text = result.content[0].text
-        parsed = json.loads(text)
-        assert parsed["result"]["has_chart"] is False
-        assert "False" not in text
-
-    def _make_agent_mock(self):
-        agent = MagicMock()
-        agent.enabled = True
-        agent.name = "agent"
-        agent.endpoint_url = "http://agent.test"
-        agent.agent_type = "generic"
-        agent.protocol_version = "1.0"
-        agent.auth_type = None
-        agent.auth_value = None
-        agent.auth_query_params = None
-        return agent
-
-    @pytest.mark.asyncio
-    async def test_response_value_none_serialized_as_json_null(self, tool_service):
-        """When response value is None, it should serialize as 'null' (valid JSON)."""
-        tool = self._make_a2a_tool()
-        agent = self._make_agent_mock()
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        tool_service._call_a2a_agent = AsyncMock(return_value={"response": None})
-
-        result = await tool_service._invoke_a2a_tool(db, tool, {})
-        assert result.is_error is False
-        assert result.content[0].text == "null"
-        assert json.loads(result.content[0].text) is None
-
-    @pytest.mark.asyncio
-    async def test_response_value_numeric_serialized_as_json(self, tool_service):
-        """When response value is a number, it should serialize as valid JSON."""
-        tool = self._make_a2a_tool()
-        agent = self._make_agent_mock()
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        tool_service._call_a2a_agent = AsyncMock(return_value={"response": 42})
-
-        result = await tool_service._invoke_a2a_tool(db, tool, {})
-        assert result.is_error is False
-        assert result.content[0].text == "42"
-        assert json.loads(result.content[0].text) == 42
-
-    @pytest.mark.asyncio
-    async def test_response_value_list_serialized_as_json(self, tool_service):
-        """When response value is a list, it should serialize as valid JSON array."""
-        tool = self._make_a2a_tool()
-        agent = self._make_agent_mock()
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        tool_service._call_a2a_agent = AsyncMock(return_value={"response": [1, "two", False]})
-
-        result = await tool_service._invoke_a2a_tool(db, tool, {})
-        assert result.is_error is False
-        parsed = json.loads(result.content[0].text)
-        assert parsed == [1, "two", False]
-        assert "False" not in result.content[0].text
-
-    @pytest.mark.asyncio
-    async def test_root_list_response_serialized_as_json(self, tool_service):
-        """When entire response_data is a list (no 'response' key), it should serialize as JSON array."""
-        tool = self._make_a2a_tool()
-        agent = self._make_agent_mock()
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        tool_service._call_a2a_agent = AsyncMock(return_value=[{"id": 1, "active": True}, {"id": 2, "active": False}])
-
-        result = await tool_service._invoke_a2a_tool(db, tool, {})
-        assert result.is_error is False
-        parsed = json.loads(result.content[0].text)
-        assert len(parsed) == 2
-        assert parsed[0]["active"] is True
-        assert parsed[1]["active"] is False
-        assert "True" not in result.content[0].text
-        assert "False" not in result.content[0].text
-
-    @pytest.mark.asyncio
-    async def test_exception_returns_error_result(self, tool_service):
-        tool = self._make_a2a_tool()
-        agent = MagicMock()
-        agent.enabled = True
-        agent.name = "agent"
-        agent.endpoint_url = "http://agent.test"
-        agent.agent_type = "generic"
-        agent.protocol_version = "1.0"
-        agent.auth_type = None
-        agent.auth_value = None
-        agent.auth_query_params = None
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = agent
-        tool_service._call_a2a_agent = AsyncMock(side_effect=RuntimeError("boom"))
-
-        result = await tool_service._invoke_a2a_tool(db, tool, {})
-        assert result.is_error is True
-        assert "An unexpected error occurred" in result.content[0].text
-        assert "boom" not in result.content[0].text
 
 
 # ─── _call_a2a_agent coverage ────────────────────────────────────────────────
@@ -8147,6 +7895,8 @@ def _make_a2a_agent(*, enabled=True, agent_type="jsonrpc", auth_type=None, auth_
     """Create a mock A2A agent."""
     agent = MagicMock()
     agent.id = "agent-uuid-1"
+    agent.tool_id = "tool-uuid-1"
+    agent.visibility = "public"
     agent.name = "test_a2a_agent"
     agent.endpoint_url = "http://a2a-agent:9000/"
     agent.agent_type = agent_type
@@ -8161,8 +7911,66 @@ def _make_a2a_agent(*, enabled=True, agent_type="jsonrpc", auth_type=None, auth_
 
 class TestInvokeToolA2A:
     @pytest.mark.asyncio
-    async def test_a2a_jsonrpc_success_with_query(self, tool_service):
-        """A2A JSONRPC agent invocation with query argument succeeds."""
+    async def test_invisible_agent_returns_not_found_before_schema_errors(self, tool_service):
+        """Return the same error for invalid arguments to an invisible agent."""
+        payload = _make_tool_payload(integration_type="A2A", request_type="POST", annotations={"a2a_agent_id": "agent-uuid-1"})
+        payload["input_schema"] = {"type": "object", "required": ["query"]}
+        agent = _make_a2a_agent()
+        agent.visibility = "private"
+        agent.owner_email = "owner@example.com"
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        with _setup_cache_for_invoke(payload):
+            with pytest.raises(ToolNotFoundError, match="^Tool not found: test_tool$"):
+                await tool_service.invoke_tool(db, "test_tool", {}, user_email="other@example.com", token_teams=["team-1"])
+            with pytest.raises(ToolInvocationError, match="Invalid arguments"):
+                await tool_service.invoke_tool(db, "test_tool", {}, user_email="owner@example.com", token_teams=["team-1"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "agent_visibility,agent_tool_id,agent_reference,public_only,a2a_enabled",
+        [
+            ("private", "tool-uuid-1", "agent-uuid-1", False, True),
+            ("team", "tool-uuid-1", "agent-uuid-1", False, True),
+            ("team", "tool-uuid-1", "agent-uuid-1", True, True),
+            ("public", None, "agent-uuid-1", False, True),
+            ("public", "other-tool", "agent-uuid-1", False, True),
+            ("public", "tool-uuid-1", None, False, True),
+            ("public", "tool-uuid-1", {"invalid": "id"}, False, True),
+            ("public", "tool-uuid-1", "agent-uuid-1", False, False),
+        ],
+    )
+    async def test_denied_a2a_dispatch_stops_before_outbound_work(self, tool_service, monkeypatch, agent_visibility, agent_tool_id, agent_reference, public_only, a2a_enabled):
+        """A cached tool requires a current, visible, matching agent."""
+        payload = _make_tool_payload(integration_type="A2A", request_type="POST", annotations={"a2a_agent_id": agent_reference})
+        agent = _make_a2a_agent(auth_type="oauth")
+        agent.visibility = agent_visibility
+        agent.tool_id = agent_tool_id
+        agent.team_id = "team-1"
+        agent.owner_email = "owner@example.com"
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        monkeypatch.setattr("mcpgateway.services.tool_service.settings.mcpgateway_a2a_enabled", a2a_enabled)
+
+        with (
+            _setup_cache_for_invoke(payload) as lookup,
+            patch("mcpgateway.services.a2a_oauth.resolve_a2a_oauth_headers", new_callable=AsyncMock) as oauth,
+            patch("mcpgateway.services.tool_service.prepare_a2a_invocation") as prepare,
+            patch("mcpgateway.services.tool_service.get_isolated_http_client") as http_client,
+        ):
+            with pytest.raises(ToolNotFoundError, match="^Tool not found: test_tool$"):
+                await tool_service.invoke_tool(db, "test_tool", {}, user_email="caller@example.com", token_teams=[] if public_only else ["other-team"])
+
+        lookup.return_value.get.assert_awaited_once()
+        oauth.assert_not_awaited()
+        prepare.assert_not_called()
+        http_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("visibility,caller", [("public", "member@example.com"), ("team", "member@example.com"), ("private", "owner@example.com")])
+    async def test_a2a_jsonrpc_success_with_query(self, tool_service, visibility, caller):
+        """Invoke a visible agent. Recheck the binding for the same cached tool."""
         tp = _make_tool_payload(
             integration_type="A2A",
             request_type="POST",
@@ -8170,14 +7978,14 @@ class TestInvokeToolA2A:
         )
         db = MagicMock()
         a2a_agent = _make_a2a_agent()
+        a2a_agent.visibility = visibility
+        a2a_agent.owner_email = "owner@example.com"
+        a2a_agent.team_id = "team-1"
         db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
 
         mock_http_response = MagicMock()
         mock_http_response.status_code = 200
         mock_http_response.json = MagicMock(return_value={"response": "Hello from A2A"})
-
-        async def fake_post(url, json=None, headers=None):
-            return mock_http_response
 
         with (
             _setup_cache_for_invoke(tp),
@@ -8195,9 +8003,14 @@ class TestInvokeToolA2A:
             mock_mbuf.return_value = MagicMock()
 
             tool_service._http_client = AsyncMock()
-            tool_service._http_client.post = fake_post
+            tool_service._http_client.post.return_value = mock_http_response
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "What is A2A?"}, user_email=caller, token_teams=["team-1"])
 
-            result = await tool_service.invoke_tool(db, "test_tool", {"query": "What is A2A?"})
+            a2a_agent.tool_id = None
+            with pytest.raises(ToolNotFoundError, match="^Tool not found: test_tool$"):
+                await tool_service.invoke_tool(db, "test_tool", {"query": "What is A2A?"}, user_email=caller, token_teams=["team-1"])
+
+        tool_service._http_client.post.assert_awaited_once()
         assert result is not None
         assert result.is_error is False
         assert "Hello from A2A" in result.content[0].text
@@ -9070,7 +8883,7 @@ class TestInvokeToolA2A:
         with _setup_cache_for_invoke(tp), patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc:
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
 
-            with pytest.raises(ToolNotFoundError, match="agent not found"):
+            with pytest.raises(ToolNotFoundError, match="Tool not found: test_tool"):
                 await tool_service.invoke_tool(db, "test_tool", {})
 
     @pytest.mark.asyncio
@@ -9088,7 +8901,7 @@ class TestInvokeToolA2A:
         with _setup_cache_for_invoke(tp), patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc:
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
 
-            with pytest.raises(ToolNotFoundError, match="disabled"):
+            with pytest.raises(ToolNotFoundError, match="Tool not found: test_tool"):
                 await tool_service.invoke_tool(db, "test_tool", {})
 
     @pytest.mark.asyncio

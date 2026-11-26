@@ -81,17 +81,18 @@ def test_tool_create_display_name_and_auth_assembly():
 
 def test_tool_create_prevent_manual_and_passthrough_rules():
     with pytest.raises(ValueError):
-        ToolCreate.prevent_manual_mcp_creation({"integration_type": "MCP"})
-
-    with pytest.raises(ValueError):
-        ToolCreate.prevent_manual_mcp_creation({"integration_type": "A2A"})
-
-    ToolCreate.prevent_manual_mcp_creation({"integration_type": "A2A", "allow_auto": True})
+        ToolCreate.prevent_manual_mcp_creation({"integration_type": "MCP"}, SimpleNamespace(context=None))
 
     with pytest.raises(ValueError):
         ToolCreate.enforce_passthrough_fields_for_rest({"integration_type": "MCP", "base_url": "http://example.com"})
 
     ToolCreate.enforce_passthrough_fields_for_rest({"integration_type": "REST", "base_url": "http://example.com"})
+
+
+@pytest.mark.parametrize("legacy_flag", [{}, {"allow_auto": False}, {"allow_auto": True}])
+def test_tool_create_rejects_manual_a2a(legacy_flag):
+    with pytest.raises(ValueError, match="Cannot manually create A2A tools"):
+        ToolCreate.model_validate({"integration_type": "A2A", **legacy_flag})
 
 
 def test_tool_create_passthrough_validators():
@@ -203,8 +204,7 @@ def test_tool_update_validators():
     with pytest.raises(ValueError):
         ToolUpdate.prevent_manual_mcp_update({"integration_type": "MCP"})
 
-    with pytest.raises(ValueError):
-        ToolUpdate.prevent_manual_mcp_update({"integration_type": "A2A"})
+    assert ToolUpdate(integration_type="A2A", description="Updated description").integration_type == "A2A"
 
 
 def test_resource_update_content_and_description():

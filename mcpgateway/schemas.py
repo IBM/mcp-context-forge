@@ -1230,7 +1230,6 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
     """
 
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
-    allow_auto: bool = False  # Internal flag to allow system-initiated A2A tool creation
 
     name: str = Field(..., description="Unique name for the tool")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
@@ -1692,27 +1691,27 @@ class ToolCreate(_SigV4ConfigValidatorMixin, BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def prevent_manual_mcp_creation(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def prevent_manual_mcp_creation(cls, values: Dict[str, Any], info: ValidationInfo) -> Dict[str, Any]:
         """
-        Prevent manual creation of MCP tools via API.
+        Prevent manual creation of MCP and A2A tools.
 
         MCP tools should only be created by the gateway service when discovering
         tools from MCP servers. Users should add MCP servers via the Gateways interface.
 
         Args:
             values: The input values
+            info: Validation context for gateway-managed A2A tools.
 
         Returns:
             Dict[str, Any]: The validated values
 
         Raises:
-            ValueError: If attempting to manually create MCP integration type
+            ValueError: If the request attempts to create a gateway-managed tool.
         """
         integration_type = values.get("integration_type")
-        allow_auto = values.get("allow_auto", False)
         if integration_type == "MCP":
             raise ValueError("Cannot manually create MCP tools. Add MCP servers via the Gateways interface - tools will be auto-discovered and registered with integration_type='MCP'.")
-        if integration_type == "A2A" and not allow_auto:
+        if integration_type == "A2A" and not (info.context or {}).get("trusted_a2a_agent"):
             raise ValueError("Cannot manually create A2A tools. Add A2A agents via the A2A interface - tools will be auto-created when agents are associated with servers.")
         return values
 
@@ -2285,8 +2284,6 @@ class ToolUpdate(_SigV4ConfigValidatorMixin, BaseModelWithConfigDict):
         integration_type = values.get("integration_type")
         if integration_type == "MCP":
             raise ValueError("Cannot update tools to MCP integration type. MCP tools are managed by the gateway service.")
-        if integration_type == "A2A":
-            raise ValueError("Cannot update tools to A2A integration type. A2A tools are managed by the A2A service.")
         return values
 
     @field_validator("base_url")

@@ -28,9 +28,9 @@ def _agent(agent_id, tool=None):
     return SimpleNamespace(id=agent_id, name=agent_id, tool=tool)
 
 
-def _tool(tool_id):
+def _tool(tool_id, agent_id=A1, integration_type="A2A"):
     """Build a tool stand-in."""
-    return SimpleNamespace(id=tool_id)
+    return SimpleNamespace(id=tool_id, integration_type=integration_type, annotations={"a2a_agent_id": agent_id} if agent_id else {})
 
 
 def _server(tools=(), agents=()):
@@ -82,11 +82,25 @@ class TestSyncAgentTools:
         assert server.tools == [other]
 
     def test_dropped_agent_keeps_a_tool_that_another_agent_uses(self):
-        tool = _tool(T1)
+        tool = _tool(T1, A2)
         server = _server(tools=[tool], agents=[_agent(A2, tool)])
 
         _sync_agent_tools(server, dropped_agents=[_agent(A1, tool)])
 
+        assert server.tools == [tool]
+
+    @pytest.mark.parametrize("agent_id,integration_type", [(A2, "A2A"), (None, "A2A"), (A1, "REST")])
+    def test_invalid_link_cannot_attach_or_detach_tool(self, agent_id, integration_type):
+        """An invalid reverse link leaves independent server tools intact."""
+        tool = _tool(T1, agent_id, integration_type)
+        agent = _agent(A1, tool)
+        server = _server(agents=[agent])
+        _sync_agent_tools(server)
+        assert server.tools == []
+
+        server.tools.append(tool)
+        server.a2a_agents.clear()
+        _sync_agent_tools(server, dropped_agents=[agent])
         assert server.tools == [tool]
 
     def test_agent_that_stays_keeps_its_tool(self):
@@ -112,7 +126,7 @@ class TestAssociateOnCreate:
         assert server.a2a_agents == [agent] and server.tools == [tool]
 
     def test_several_agents(self):
-        agents = [_agent(A1, _tool(T1)), _agent(A2, _tool(T2)), _agent(A3)]
+        agents = [_agent(A1, _tool(T1)), _agent(A2, _tool(T2, A2)), _agent(A3)]
         server = _server()
 
         _associate_server_entities(_db_returning(*agents), server, ServerCreate(name="srv", associated_a2a_agents=[A1, A2, A3]))
@@ -195,7 +209,7 @@ def _scoped_agent(agent_id, visibility, team_id=None, owner_email=None):
 @pytest.fixture(autouse=True)
 def _caller_is_not_admin():
     """Treat every caller as a non-admin."""
-    with patch("mcpgateway.services.a2a_service.is_user_admin", return_value=False):
+    with patch("mcpgateway.utils.admin_check.is_user_admin", return_value=False):
         yield
 
 
