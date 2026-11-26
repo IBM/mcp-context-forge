@@ -24,6 +24,9 @@
   Review each issuer with unrestricted administrator credentials, then approve the reviewed server version through
   `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
   See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
+- **Instana 3.12 to 3.19 no longer return HTTP 500 for `traceparent`** ([#7696](https://github.com/IBM/mcp-context-forge/issues/7696)) - Instana Python 3.12 to 3.19
+  raised `TypeError: parent_context must be an Instana SpanContext or None` for requests with a `traceparent` header. The Instana adapter now converts
+  the OpenTelemetry parent into an Instana span context first. Instana 3.20 and later are unchanged.
 
 
 ## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
