@@ -427,6 +427,64 @@ def _wrap_legacy_instana_method(original: Callable[..., Any], span_context_cls: 
     return wrapper
 
 
+def _wrap_instana_foreign_parent_method(original: Callable[..., Any], span_context_cls: Any) -> Callable[..., Any]:
+    """Wrap ``InstanaTracer.start_span`` of Instana 3.12-3.19 so it accepts a foreign parent.
+
+    Args:
+        original: Unbound ``start_span`` that raises ``TypeError`` for a non-Instana parent span context.
+        span_context_cls: ``instana.span_context.SpanContext``.
+
+    Returns:
+        Wrapper that converts the parent span context found in ``context`` before delegating.
+    """
+
+    def wrapper(self: Any, name: str, context: Any = None, *args: Any, **kwargs: Any) -> Any:
+        """Replace a non-Instana parent in ``context`` and delegate.
+
+        Args:
+            self: Tracer instance.
+            name: Span name.
+            context: OpenTelemetry context, or None for the current one.
+            *args: Positional arguments forwarded unchanged.
+            **kwargs: Keyword arguments forwarded unchanged.
+
+        Returns:
+            Whatever the original method returns.
+        """
+        # Third-Party
+        from opentelemetry import trace as otel_trace_api  # pylint: disable=import-outside-toplevel
+
+        parent = otel_trace_api.get_current_span(context).get_span_context()
+        if not isinstance(parent, span_context_cls):
+            converted = _legacy_instana_span_context(context, span_context_cls)
+            context = otel_trace_api.set_span_in_context(otel_trace_api.NonRecordingSpan(converted), context)
+        return original(self, name, context, *args, **kwargs)
+
+    wrapper.__name__ = getattr(original, "__name__", "wrapper")
+    wrapper.__qualname__ = getattr(original, "__qualname__", wrapper.__name__)
+    wrapper.__doc__ = getattr(original, "__doc__", None)
+    wrapper.__wrapped__ = original  # type: ignore[attr-defined]
+    setattr(wrapper, _LEGACY_INSTANA_COMPAT_MARKER, True)
+    return wrapper
+
+
+def _instana_rejects_foreign_parent() -> bool:
+    """Return whether the loaded Instana is 3.12-3.19.
+
+    Those releases accept ``context=`` but raise ``TypeError`` when its parent
+    span context is not an Instana one; 3.20 converts it itself.
+
+    Returns:
+        True for an affected release, False otherwise or when the version is unknown.
+    """
+    version = getattr(sys.modules.get("instana.version"), "VERSION", "")
+    try:
+        release = tuple(int(part) for part in version.split(".")[:2])
+    except ValueError:
+        return False
+    return (3, 12) <= release < (3, 20)
+
+
 def _accepts_kwarg(func: Any, name: str) -> Optional[bool]:
     """Return whether ``func`` accepts keyword ``name``; ``None`` if not introspectable.
 
@@ -445,7 +503,7 @@ def _accepts_kwarg(func: Any, name: str) -> Optional[bool]:
 
 
 def ensure_legacy_instana_context_compat() -> bool:
-    """Make legacy Instana tracers (< 3.12) accept the standard OTel ``context=`` keyword.
+    """Make Instana tracers older than 3.20 accept a standard OTel ``context=`` argument.
 
     MCP SDK 2.x, FastAPI native telemetry, and ContextForge call
     ``start_span(context=...)`` / ``start_as_current_span(context=...)``. Legacy
@@ -453,12 +511,17 @@ def ensure_legacy_instana_context_compat() -> bool:
     The adapter patches the ``InstanaTracer`` class once, so tracers cached by
     third-party modules before ContextForge initializes are covered too.
 
+    Instana 3.12-3.19 accept ``context=`` but reject a non-Instana parent span
+    context (for example the one extracted from an inbound ``traceparent``), so
+    there ``start_span`` is patched to convert the parent first;
+    ``start_as_current_span`` delegates to it.
+
     It is a no-op when Instana was not loaded by the process (this function never
-    imports Instana itself), when the tracer already supports ``context``
-    (Instana >= 3.12), or when it was already applied.
+    imports Instana itself), when the tracer needs no adaptation (Instana >= 3.20),
+    or when it was already applied.
 
     Returns:
-        True if the legacy tracer is (now) adapted, False otherwise.
+        True if the tracer is (now) adapted, False otherwise.
     """
     tracer_module = sys.modules.get("instana.tracer")
     span_context_module = sys.modules.get("instana.span_context")
@@ -475,12 +538,17 @@ def ensure_legacy_instana_context_compat() -> bool:
         if getattr(method, _LEGACY_INSTANA_COMPAT_MARKER, False):
             adapted = True
             continue
-        # Only adapt the exact legacy capability: explicit `span_context`, no `context`.
-        if _accepts_kwarg(method, "context") is not False or _accepts_kwarg(method, "span_context") is not True:
+        accepts_context = _accepts_kwarg(method, "context")
+        # Legacy capability: explicit `span_context`, no `context`.
+        if accepts_context is False and _accepts_kwarg(method, "span_context") is True:
+            setattr(tracer_cls, method_name, _wrap_legacy_instana_method(method, span_context_cls))
+            logger.info("Adapted legacy InstanaTracer.%s to accept the OpenTelemetry `context` argument", method_name)
+        elif method_name == "start_span" and accepts_context is True and _instana_rejects_foreign_parent():
+            setattr(tracer_cls, method_name, _wrap_instana_foreign_parent_method(method, span_context_cls))
+            logger.info("Adapted InstanaTracer.%s to accept a non-Instana parent span context", method_name)
+        else:
             continue
-        setattr(tracer_cls, method_name, _wrap_legacy_instana_method(method, span_context_cls))
         adapted = True
-        logger.info("Adapted legacy InstanaTracer.%s to accept the OpenTelemetry `context` argument", method_name)
     return adapted
 
 

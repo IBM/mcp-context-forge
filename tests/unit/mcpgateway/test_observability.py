@@ -1061,6 +1061,43 @@ class TestLegacyInstanaContextCompat:
         assert observability.ensure_legacy_instana_context_compat() is False
         assert (InstanaTracer.__dict__["start_span"], InstanaTracer.__dict__["start_as_current_span"]) == original
 
+    @pytest.mark.parametrize("version, adapted", [("3.12.0", True), ("3.19.0", True), ("3.20.0", False)])
+    def test_foreign_parent_context(self, fake_legacy_instana, monkeypatch, version, adapted):
+        """Instana 3.12-3.19 accept ``context=`` but reject a non-Instana parent span context."""
+        # Standard
+        import sys
+        import types
+
+        # Third-Party
+        from opentelemetry import trace as otel_trace_api
+
+        span_context_cls = sys.modules["instana.span_context"].SpanContext
+
+        class InstanaTracer:
+            def start_span(self, name, context=None, kind=None):
+                parent = otel_trace_api.get_current_span(context).get_span_context()
+                if parent.is_valid and not isinstance(parent, span_context_cls):
+                    raise TypeError("parent_context must be an Instana SpanContext or None.")
+                return parent
+
+        sys.modules["instana.tracer"].InstanaTracer = InstanaTracer
+        version_mod = types.ModuleType("instana.version")
+        version_mod.VERSION = version
+        monkeypatch.setitem(sys.modules, "instana.version", version_mod)
+
+        assert observability.ensure_legacy_instana_context_compat() is adapted
+        assert observability.ensure_legacy_instana_context_compat() is adapted
+        if not adapted:
+            assert not hasattr(InstanaTracer.start_span, "__wrapped__")
+            return
+        assert not hasattr(InstanaTracer.start_span.__wrapped__, "__wrapped__")
+        inbound = self._inbound_context()
+        expected = otel_trace_api.get_current_span(inbound).get_span_context()
+        for parent in (InstanaTracer().start_span("x", context=inbound), InstanaTracer().start_span("x", inbound)):
+            assert isinstance(parent, span_context_cls)
+            assert parent.span_id == expected.span_id
+        assert not InstanaTracer().start_span("x").is_valid
+
     def test_noop_without_instana(self, monkeypatch):
         """No Instana loaded (ordinary OTel tracers): no-op and Instana is not imported."""
         # Standard
