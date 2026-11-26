@@ -7,6 +7,7 @@ Tests for CLI export/import to improve coverage.
 """
 
 # Standard
+import base64
 from contextlib import asynccontextmanager
 import json
 import os
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
+from pydantic import SecretStr
 import pytest
 
 # First-Party
@@ -37,11 +39,12 @@ async def test_get_auth_token_basic_fallback_when_enabled():
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
             mock_settings.api_allow_basic_auth = True  # Enable basic auth for API
             mock_settings.basic_auth_user = "admin"
-            mock_settings.basic_auth_password = "secret"
+            mock_settings.basic_auth_password = SecretStr("secret")
 
             token = await get_auth_token()
             assert token is not None
             assert token.startswith("Basic ")
+            assert base64.b64decode(token.removeprefix("Basic ")).decode() == f"{mock_settings.basic_auth_user}:{mock_settings.basic_auth_password.get_secret_value()}"
 
 
 @pytest.mark.asyncio
@@ -51,7 +54,7 @@ async def test_get_auth_token_basic_fallback_disabled_by_default():
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
             mock_settings.api_allow_basic_auth = False  # Disabled by default
             mock_settings.basic_auth_user = "admin"
-            mock_settings.basic_auth_password = "secret"
+            mock_settings.basic_auth_password = SecretStr("secret")
 
             token = await get_auth_token()
             # Should return None because API_ALLOW_BASIC_AUTH=false
@@ -78,7 +81,7 @@ async def test_get_auth_token_prefers_jwt_over_basic():
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
             mock_settings.api_allow_basic_auth = True
             mock_settings.basic_auth_user = "admin"
-            mock_settings.basic_auth_password = "secret"
+            mock_settings.basic_auth_password = SecretStr("secret")
 
             token = await get_auth_token()
             # JWT should be preferred over Basic auth
@@ -145,12 +148,12 @@ def test_parser_all_export_options():
 def test_parser_all_import_options():
     """Test all import command options."""
     parser = create_parser()
-    args = parser.parse_args(["import", "data.json", "--conflict-strategy", "rename", "--dry-run", "--rekey-secret", "new-secret", "--include", "tools:tool1,tool2;servers:server1", "--verbose"])
+    args = parser.parse_args(["import", "data.json", "--conflict-strategy", "rename", "--dry-run", "--team-name", "Operations", "--include", "tools:tool1,tool2;servers:server1", "--verbose"])
 
     assert args.input_file == "data.json"
     assert args.conflict_strategy == "rename"
     assert args.dry_run == True
-    assert args.rekey_secret == "new-secret"
+    assert args.team_name == "Operations"
     assert args.include == "tools:tool1,tool2;servers:server1"
     assert args.verbose == True
 
@@ -620,8 +623,8 @@ async def test_import_command_success_dry_run():
     # Mock API response
     api_response = {
         "status": "validated",
-        "progress": {"total": 1, "processed": 1, "created": 0, "updated": 0, "skipped": 1, "failed": 0},
-        "warnings": ["Warning: Tool already exists"],
+        "progress": {"total": 1, "processed": 1, "created": 0, "updated": 0, "skipped": 0, "failed": 0, "unknown": 1},
+        "warnings": ["tools item test_tool: match depends on upstream discovery"],
         "errors": [],
         "import_id": "test-123",
         "started_at": "2023-01-01T00:00:00Z",
@@ -637,7 +640,7 @@ async def test_import_command_success_dry_run():
         args.input_file = temp_file
         args.conflict_strategy = "update"
         args.dry_run = True
-        args.rekey_secret = None
+        args.team_name = None
         args.include = None
         args.verbose = True
 
@@ -651,9 +654,9 @@ async def test_import_command_success_dry_run():
                 mock_print.assert_any_call("📊 Results:")
                 mock_print.assert_any_call("   • Total entities: 1")
                 mock_print.assert_any_call("   • Processed: 1")
-                mock_print.assert_any_call("   • Skipped: 1")
+                mock_print.assert_any_call("   • Unknown: 1")
                 mock_print.assert_any_call("\n⚠️  Warnings (1):")
-                mock_print.assert_any_call("   • Warning: Tool already exists")
+                mock_print.assert_any_call("   • tools item test_tool: match depends on upstream discovery")
                 mock_print.assert_any_call("\n🔍 Import details:")
                 mock_print.assert_any_call("   • Import ID: test-123")
     finally:
@@ -681,7 +684,7 @@ async def test_import_command_with_include_parameter():
         args.input_file = temp_file
         args.conflict_strategy = "rename"
         args.dry_run = False
-        args.rekey_secret = "new-secret"  # pragma: allowlist secret
+        args.team_name = "Operations"
         args.include = "tools:tool1,tool2;servers:server1"
         args.verbose = False
 
@@ -693,7 +696,7 @@ async def test_import_command_with_include_parameter():
             request_data = call_args[1]["json_data"]
             expected_entities = {"tools": ["tool1", "tool2"], "servers": ["server1"]}
             assert request_data["selected_entities"] == expected_entities
-            assert request_data["rekey_secret"] == "new-secret"
+            assert request_data["team_name"] == "Operations"
     finally:
         os.unlink(temp_file)
 
@@ -724,7 +727,7 @@ async def test_import_command_with_errors_and_failures():
         args.input_file = temp_file
         args.conflict_strategy = "fail"
         args.dry_run = False
-        args.rekey_secret = None
+        args.team_name = None
         args.include = None
         args.verbose = False
 
@@ -763,7 +766,7 @@ async def test_import_command_json_parse_error():
         args.input_file = temp_file
         args.conflict_strategy = "update"
         args.dry_run = False
-        args.rekey_secret = None
+        args.team_name = None
         args.include = None
         args.verbose = False
 

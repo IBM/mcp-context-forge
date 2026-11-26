@@ -55,7 +55,7 @@ import socket
 import ssl
 import tempfile
 import time
-from typing import Any, AsyncGenerator, Awaitable, Callable, cast, Dict, List, Literal, Optional, Set, TYPE_CHECKING, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, cast, Dict, Iterable, List, Literal, Optional, Set, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlsplit, urlunparse, urlunsplit
 import uuid
 
@@ -102,17 +102,24 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import EmailUser as DbEmailUser
-from mcpgateway.db import fresh_db_session
+from mcpgateway.db import (
+    fresh_db_session,
+    get_for_update,
+    PromptMetric,
+    resource_has_name_override,
+    ResourceMetric,
+    ResourceSubscription,
+    server_prompt_association,
+    server_resource_association,
+    server_tool_association,
+    SessionLocal,
+    ToolMetric,
+)
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import resource_has_name_override, ResourceMetric, ResourceSubscription
 from mcpgateway.db import Server as DbServer
-from mcpgateway.db import server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.schemas import (
     GATEWAY_SUPPORTED_TRANSPORTS,
@@ -137,10 +144,11 @@ from mcpgateway.schemas import (
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_dataplane
-from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
+from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage, protect_sigv4_config_sync
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.gateway_service_token_cache import get_service_token_cache, SERVICE_TOKEN_CLIENT_AUTH_KEYS, service_token_fingerprint
 from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
+from mcpgateway.services.import_effects import after_import_commit, after_import_commit_sync
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.metrics import gateway_health_check_batch_duration_seconds, gateway_health_check_duration_seconds, gateway_health_checks_total
@@ -161,6 +169,7 @@ from mcpgateway.services.tool_validation_policy import (
     policy_text,
     record_policy_change,
 )
+from mcpgateway.utils.header_filtering import is_tool_credential_header_name
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
@@ -168,13 +177,14 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.internal_http import internal_loopback_base_url
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
-from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.oauth_errors import oauth_failure, response_oauth_code
+from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import warn_unprovable_patterns
 from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_basic_auth_with_stored_password
+from mcpgateway.utils.sigv4 import build_stored_sigv4_auth, build_stored_sigv4_httpx_auth, sigv4_audit_values, SigV4ConfigError, with_sigv4_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
@@ -867,6 +877,32 @@ def classify_connection_failure(exc: BaseException) -> str:
     return "gateway_connection_failed" if transport_seen else "gateway_initialization_failed"
 
 
+_IMPORT_CREDENTIALS_REQUIRED = "Import requires gateway credentials"
+
+
+def gateway_requires_credentials(gateway: DbGateway | GatewayRead) -> bool:
+    """Return whether an imported gateway is blocked on credentials."""
+    return getattr(gateway, "status", None) == "pending" and getattr(gateway, "status_message", None) == _IMPORT_CREDENTIALS_REQUIRED
+
+
+def _is_upstream_unauthorized(exc: BaseException) -> bool:
+    """Detect an upstream HTTP 401 in an exception chain or group."""
+    pending = [exc]
+    seen = set()
+    while pending:
+        error = pending.pop()
+        if id(error) in seen:
+            continue
+        seen.add(id(error))
+        response = getattr(error, "response", None)
+        if getattr(response, "status_code", None) == 401:
+            return True
+        if isinstance(error, BaseExceptionGroup):
+            pending.extend(error.exceptions)
+        pending.extend(cause for cause in (error.__cause__, error.__context__) if cause is not None)
+    return False
+
+
 class GatewayCredentialError(GatewayError):
     """Raised when a stored/decrypted gateway credential is malformed (e.g. contains an
     invisible Unicode character that cannot be encoded into an HTTP header).
@@ -1029,6 +1065,7 @@ class GatewayRegistrationPreparation:
     auth_query_params_decrypted: Optional[Dict[str, str]]
     init_url: str
     oauth_config: Optional[Dict[str, Any]]
+    sigv4_config: Optional[Dict[str, Any]]
     ca_certificate: Optional[str]
     init_client_cert: Optional[str]
     init_client_key: Optional[str]
@@ -1132,13 +1169,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self.resource_service = resource_service
         self._gateway_failure_counts: dict[str, int] = {}
         self._refresh_failures: dict[str, tuple[int, float]] = {}  # gateway_id -> (failure count, monotonic time of next allowed auto-refresh)
-        self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+        self.oauth_manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
         self._token_exchange_cache = TokenExchangeCache(redis_url=getattr(settings, "redis_url", None))
         self._service_token_cache = get_service_token_cache()
 
         # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
         self._refresh_locks: Dict[str, asyncio.Lock] = {}
+
+        # authorization_code gateways already reported as needing a manual refresh, so the
+        # auto-refresh skip is logged once per gateway rather than on every health cycle
+        self._manual_refresh_notified: Set[str] = set()
 
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
@@ -2101,6 +2142,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         client_key: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
         gateway_id: Optional[str] = None,
+        sigv4_config: Optional[Dict[str, Any]] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str], Optional[str]]:
         """Initialize a gateway and optionally bound remote MCP work.
 
@@ -2118,6 +2160,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             client_cert=client_cert,
             client_key=client_key,
             gateway_id=gateway_id,
+            sigv4_config=sigv4_config,
         )
         if initialize_timeout is None:
             return await initialize_task
@@ -2275,6 +2318,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         owner_email: str,
         visibility: str,
         gateway_id: Optional[str] = None,
+        sigv4_config: Optional[Dict[str, Any]] = None,
     ) -> Optional[DbGateway]:
         """
         Check if a gateway with the same URL and credentials already exists.
@@ -2288,6 +2332,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             owner_email: Email of the gateway owner
             visibility: Gateway visibility (public/team/private)
             gateway_id: Optional gateway ID to exclude from check (for updates)
+            sigv4_config: SigV4 configuration. Two SigV4 gateways match when access key, region and service match.
 
         Returns:
             DbGateway if duplicate found, None otherwise
@@ -2307,10 +2352,27 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if gateway_id:
             query = query.filter(DbGateway.id != gateway_id)
 
-        existing_gateways = query.all()
+        return self.find_duplicate_gateway(query.all(), auth_value, oauth_config, sigv4_config)
 
+    @staticmethod
+    def find_duplicate_gateway(
+        existing_gateways: Iterable[DbGateway],
+        auth_value: Optional[Dict[str, str]],
+        oauth_config: Optional[Dict[str, Any]],
+        sigv4_config: Optional[Dict[str, Any]],
+    ) -> Optional[DbGateway]:
         # Check each existing gateway
+        """Find a gateway in the candidate set with equivalent authentication."""
         for existing in existing_gateways:
+            # SigV4 gateways differ from every other auth type and match only on the same signing identity
+            if sigv4_config or existing.auth_type == "sigv4":
+                existing_sigv4 = existing.sigv4_config if existing.auth_type == "sigv4" and isinstance(existing.sigv4_config, dict) else None
+                if sigv4_config and existing_sigv4:
+                    identity_keys = ("access_key_id", "region", "service")
+                    if all(existing_sigv4.get(k) == sigv4_config.get(k) for k in identity_keys):
+                        return existing
+                continue
+
             # Case 1: Both have OAuth config
             if oauth_config and existing.oauth_config:
                 # Compare OAuth configs (exclude dynamic fields like tokens)
@@ -2398,6 +2460,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 team_id=team_id,
                 owner_email=owner_email or "",
                 visibility=visibility,
+                sigv4_config=gateway.sigv4_config if getattr(gateway, "auth_type", None) == "sigv4" else None,
             )
             if duplicate_gateway:
                 raise GatewayDuplicateConflictError(duplicate_gateway=duplicate_gateway)
@@ -2432,6 +2495,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             authentication_headers = {str(k): str(v) for k, v in decoded.items()}
 
         oauth_config = await self.prepare_oauth_config_for_storage(db, getattr(gateway, "oauth_config", None), owner_email)
+        sigv4_config = protect_sigv4_config_sync(getattr(gateway, "sigv4_config", None)) if auth_type == "sigv4" else None
         ca_certificate = getattr(gateway, "ca_certificate", None)
         init_client_cert = getattr(gateway, "client_cert", None)
         init_client_key = getattr(gateway, "client_key", None)
@@ -2453,6 +2517,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_query_params_decrypted=auth_query_params_decrypted,
             init_url=init_url,
             oauth_config=oauth_config,
+            sigv4_config=sigv4_config,
             ca_certificate=ca_certificate,
             init_client_cert=init_client_cert,
             init_client_key=init_client_key,
@@ -2488,6 +2553,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         team_id: Optional[str],
         owner_email: Optional[str],
         visibility: str,
+        import_requires_credentials: bool = False,
     ) -> GatewayRead:
         """Persist a gateway row in pending async-registration state."""
         db_gateway = DbGateway(
@@ -2503,6 +2569,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_value=preparation.auth_value,
             auth_query_params=preparation.auth_query_params_encrypted,
             oauth_config=preparation.oauth_config,
+            sigv4_config=preparation.sigv4_config,
             passthrough_headers=gateway.passthrough_headers,
             tool_validation_policy=getattr(gateway, "tool_validation_policy", None),
             tools=[],
@@ -2524,7 +2591,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_mode=preparation.gateway_mode,
             refresh_interval_seconds=getattr(gateway, "refresh_interval_seconds", None),
             status="pending",
-            status_message="Gateway registration accepted and pending initialization",
+            status_message=_IMPORT_CREDENTIALS_REQUIRED if import_requires_credentials else "Gateway registration accepted and pending initialization",
             registration_attempts=0,
             next_retry_at=None,
             last_error=None,
@@ -2537,14 +2604,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         db.refresh(db_gateway)
 
         cache = _get_registry_cache()
-        await cache.invalidate_gateways()
+        await after_import_commit(cache.invalidate_gateways)
         tool_lookup_cache = _get_tool_lookup_cache()
-        await tool_lookup_cache.invalidate_gateway(str(db_gateway.id))
+        await after_import_commit(tool_lookup_cache.invalidate_gateway, str(db_gateway.id))
 
         # First-Party
         from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-        await admin_stats_cache.invalidate_tags()
+        await after_import_commit(admin_stats_cache.invalidate_tags)
 
         logger.info(f"Accepted gateway registration for async initialization: {SecurityValidator.sanitize_log_message(gateway.name)}")
         return self.convert_gateway_to_read(db_gateway)
@@ -2561,6 +2628,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
+        user_id: Optional[str] = None,
+        import_requires_credentials: bool = False,
     ) -> GatewayRead:
         """Register a new gateway.
 
@@ -2575,6 +2644,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
             initialize_timeout (Optional[float]): Timeout in seconds for gateway initialization.
+            user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            import_requires_credentials: Save pending until destination credentials are supplied.
 
         Returns:
             Created gateway information
@@ -2619,7 +2690,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     team_id=team_id,
                 )
                 if existing_gateway:
-                    if getattr(existing_gateway, "status", None) == "pending":
+                    if created_via != "import" and getattr(existing_gateway, "status", None) == "pending":
                         return self.convert_gateway_to_read(existing_gateway)
                     raise GatewayNameConflictError(
                         existing_gateway.slug,
@@ -2636,7 +2707,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 visibility=visibility,
             )
 
-            if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
+            # Import needs the upstream result to report discovered references and a missing credential.
+            if import_requires_credentials or (created_via != "import" and getattr(settings, "gateway_async_lifecycle_enabled", False) is True):
                 return await self._register_gateway_pending(
                     db,
                     gateway,
@@ -2648,20 +2720,40 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     team_id=team_id,
                     owner_email=owner_email,
                     visibility=visibility,
+                    import_requires_credentials=import_requires_credentials,
                 )
 
-            capabilities, tools, resources, prompts, validation_errors, instructions = await self._initialize_gateway_with_timeout(
-                url=preparation.init_url,
-                authentication=preparation.authentication_headers,
-                transport=gateway.transport,
-                auth_type=preparation.auth_type,
-                oauth_config=preparation.oauth_config,
-                ca_certificate=preparation.ca_certificate,
-                auth_query_params=preparation.auth_query_params_decrypted,
-                client_cert=preparation.init_client_cert,
-                client_key=preparation.init_client_key,
-                initialize_timeout=initialize_timeout,
-            )
+            try:
+                capabilities, tools, resources, prompts, validation_errors, instructions = await self._initialize_gateway_with_timeout(
+                    url=preparation.init_url,
+                    authentication=preparation.authentication_headers,
+                    transport=gateway.transport,
+                    auth_type=preparation.auth_type,
+                    oauth_config=preparation.oauth_config,
+                    ca_certificate=preparation.ca_certificate,
+                    auth_query_params=preparation.auth_query_params_decrypted,
+                    client_cert=preparation.init_client_cert,
+                    client_key=preparation.init_client_key,
+                    initialize_timeout=initialize_timeout,
+                    sigv4_config=preparation.sigv4_config,
+                )
+            except Exception as exc:
+                if created_via != "import" or preparation.auth_type or not _is_upstream_unauthorized(exc):
+                    raise
+                import_requires_credentials = True
+                return await self._register_gateway_pending(
+                    db,
+                    gateway,
+                    preparation=preparation,
+                    created_by=created_by,
+                    created_from_ip=created_from_ip,
+                    created_via=created_via,
+                    created_user_agent=created_user_agent,
+                    team_id=team_id,
+                    owner_email=owner_email,
+                    visibility=visibility,
+                    import_requires_credentials=import_requires_credentials,
+                )
 
             tools = [tool for tool in tools if tool is not None]
             self._validate_tool_name_collisions(
@@ -2679,10 +2771,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_type = "one_time_auth"
                 auth_value = None
                 oauth_config = None
+                sigv4_config = None
             else:
                 auth_type = preparation.auth_type
                 auth_value = preparation.auth_value
                 oauth_config = preparation.oauth_config
+                sigv4_config = preparation.sigv4_config
 
             # DbTool.auth_value is Mapped[Optional[str]] (Text), so encode the dict before
             # storing it there. DbGateway.auth_value is Mapped[Optional[Dict]] (JSON) and
@@ -2935,6 +3029,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_value=auth_value,
                 auth_query_params=preparation.auth_query_params_encrypted,  # Encrypted query param auth
                 oauth_config=oauth_config,
+                sigv4_config=sigv4_config,
                 passthrough_headers=gateway.passthrough_headers,
                 tool_validation_policy=getattr(gateway, "tool_validation_policy", None),
                 tools=db_tools,
@@ -2968,9 +3063,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.add(db_gateway)
             db.commit()
             db.refresh(db_gateway)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
             if db_gateway.tool_validation_policy:
-                record_policy_change(
+                after_import_commit_sync(
+                    record_policy_change,
                     resource_type="gateway",
                     resource_id=db_gateway.id,
                     resource_name=db_gateway.name,
@@ -2981,36 +3077,37 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 )
 
             # Update tracking
-            self._active_gateways.add(db_gateway.url)
+            after_import_commit_sync(self._active_gateways.add, db_gateway.url)
 
             # Notify subscribers
-            await self._notify_gateway_added(db_gateway)
+            await after_import_commit(self._notify_gateway_added, db_gateway)
 
             # Invalidate caches so other workers see the new gateway and its tools/resources/prompts
             cache = _get_registry_cache()
-            await cache.invalidate_gateways()
-            await cache.invalidate_tools()
-            await cache.invalidate_resources()
-            await cache.invalidate_prompts()
+            await after_import_commit(cache.invalidate_gateways)
+            await after_import_commit(cache.invalidate_tools)
+            await after_import_commit(cache.invalidate_resources)
+            await after_import_commit(cache.invalidate_prompts)
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate_gateway(str(db_gateway.id))
+            await after_import_commit(tool_lookup_cache.invalidate_gateway, str(db_gateway.id))
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
 
             # Invalidate loopback passthrough cache when a new gateway has passthrough headers (#3640)
             if gateway.passthrough_headers:
                 # First-Party
                 from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
 
-                invalidate_passthrough_header_caches()
+                after_import_commit_sync(invalidate_passthrough_header_caches)
 
             logger.info("Registered gateway: %s", SecurityValidator.sanitize_log_message(gateway.name))
 
             # Structured logging: Audit trail for gateway creation
-            audit_trail.log_action(
-                user_id=created_by or "system",
+            after_import_commit_sync(
+                audit_trail.log_action,
+                user_id=user_id or created_by or "system",
                 action="create_gateway",
                 resource_type="gateway",
                 resource_id=str(db_gateway.id),
@@ -3027,6 +3124,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     "tools_count": len(tools),
                     "resources_count": len(db_resources),
                     "prompts_count": len(db_prompts),
+                    **sigv4_audit_values(getattr(db_gateway, "sigv4_config", None), registration=True),
                 },
                 context={
                     "created_via": created_via,
@@ -3701,6 +3799,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         modified_user_agent: Optional[str] = None,
         include_inactive: bool = True,
         user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
+        import_clear_credentials: bool = False,
+        import_requires_credentials: bool = False,
+        import_platform_admin: bool = False,
     ) -> Optional[GatewayRead]:
         """Update a gateway.
 
@@ -3714,6 +3816,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             modified_user_agent: User agent string from the modification request
             include_inactive: Whether to include inactive gateways
             user_email: Email of user performing update (for ownership check)
+            import_requires_credentials: Keep the imported gateway pending until configured.
+            import_clear_credentials: Clear destination credentials before applying an imported origin.
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
+            import_platform_admin: Verified unrestricted administrator for this import update.
 
         Returns:
             Updated gateway information
@@ -3744,7 +3850,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
             # Check ownership if user_email provided
-            if user_email:
+            if user_email and not import_platform_admin:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
@@ -3753,8 +3859,34 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raise PermissionError("Only the owner can update this gateway")
 
             if gateway.enabled or include_inactive:
-                if getattr(settings, "gateway_async_lifecycle_enabled", False) is True and getattr(gateway, "status", None) == "pending":
+                auth_blocked = gateway_requires_credentials(gateway)
+                if (
+                    modified_via != "import"
+                    and not auth_blocked
+                    and not import_clear_credentials
+                    and getattr(settings, "gateway_async_lifecycle_enabled", False) is True
+                    and getattr(gateway, "status", None) == "pending"
+                ):
                     return self.convert_gateway_to_read(gateway)
+                if import_clear_credentials:
+                    await self._enforce_token_exchange_admin_only(db, gateway.oauth_config, user_email)
+                    gateway.auth_type = None
+                    gateway.auth_value = None
+                    gateway.auth_query_params = None
+                    gateway.oauth_config = None
+                    gateway.sigv4_config = None
+                    gateway.add_headers = None
+                    gateway.client_cert = None
+                    gateway.client_key = None
+                    gateway.oauth_tokens.clear()
+                    gateway.registered_oauth_clients.clear()
+                    for discovered_tool in gateway.tools:
+                        discovered_tool.auth_type = None
+                        discovered_tool.auth_value = None
+                        discovered_tool.sigv4_config = None
+                        if discovered_tool.headers:
+                            discovered_tool.headers = {key: value for key, value in discovered_tool.headers.items() if not is_tool_credential_header_name(key)}
+                    await after_import_commit(self._service_token_cache.invalidate, gateway.id)
 
                 gateway_name_changed = gateway_update.name is not None and gateway_update.name != gateway.name
                 gateway_visibility_changed = gateway_update.visibility is not None and gateway_update.visibility != gateway.visibility
@@ -3839,6 +3971,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 final_auth_value = decoded_auth_value if gateway_update.auth_value is not None else (decode_auth(gateway.auth_value) if isinstance(gateway.auth_value, str) else gateway.auth_value)
                 final_oauth_config = gateway_update.oauth_config if gateway_update.oauth_config is not None else gateway.oauth_config
                 final_visibility = gateway_update.visibility if gateway_update.visibility is not None else gateway.visibility
+                final_auth_type = gateway_update.auth_type if gateway_update.auth_type is not None else gateway.auth_type
+                final_sigv4_config = (gateway_update.sigv4_config or getattr(gateway, "sigv4_config", None)) if final_auth_type == "sigv4" else None
 
                 # Check for duplicates with updated credentials
                 if not gateway_update.one_time_auth:
@@ -3851,6 +3985,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         visibility=final_visibility,
                         gateway_id=gateway_id,  # Exclude current gateway from check
                         owner_email=user_email,
+                        sigv4_config=final_sigv4_config,
                     )
 
                     if duplicate_gateway:
@@ -3874,6 +4009,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 original_auth_value = gateway.auth_value
                 original_auth_query_params = gateway.auth_query_params
                 original_oauth_config = gateway.oauth_config
+                original_sigv4_config = getattr(gateway, "sigv4_config", None)
                 original_ca_certificate = gateway.ca_certificate
                 original_ca_certificate_sig = gateway.ca_certificate_sig
                 original_signing_algorithm = gateway.signing_algorithm
@@ -3895,6 +4031,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         (gateway.auth_value, original_auth_value),
                         (gateway.auth_query_params, original_auth_query_params),
                         (gateway.oauth_config, original_oauth_config),
+                        (getattr(gateway, "sigv4_config", None), original_sigv4_config),
                         (gateway.ca_certificate, original_ca_certificate),
                         (getattr(gateway, "client_cert", None), original_client_cert),
                         (getattr(gateway, "client_key", None), original_client_key),
@@ -3939,7 +4076,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Validate visibility transitions
                     if gateway_update.visibility == "team":
                         target_team_id = gateway_update.team_id if gateway_update.team_id is not None else gateway.team_id
-                        _validate_gateway_team_assignment(db, user_email, target_team_id)
+                        _validate_gateway_team_assignment(db, None if import_platform_admin else user_email, target_team_id)
                     gateway.visibility = gateway_update.visibility
                     # Propagate visibility to all linked items immediately so it
                     # takes effect even when the upstream server is unreachable
@@ -4004,6 +4141,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway.auth_query_params = None
                         logger.debug("Cleared auth_query_params for gateway %s (switched from query_param to %s)", SecurityValidator.sanitize_log_message(gateway.id), gateway_update.auth_type)
 
+                    # Clear sigv4_config when switching away from sigv4 auth
+                    if original_auth_type == "sigv4" and gateway_update.auth_type != "sigv4":
+                        gateway.sigv4_config = None
+
+                # Handle SigV4 configuration updates
+                if gateway_update.sigv4_config is not None:
+                    if gateway.auth_type != "sigv4":
+                        raise PublicValidationError("sigv4_config requires auth_type 'sigv4'")
+                    gateway.sigv4_config = protect_sigv4_config_sync(dict(gateway_update.sigv4_config), existing_sigv4_config=original_sigv4_config)
+                elif gateway.auth_type == "sigv4" and not getattr(gateway, "sigv4_config", None):
+                    raise PublicValidationError("auth_type 'sigv4' requires sigv4_config")
+
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
@@ -4027,7 +4176,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
                     self._flag_credentials_kept_across_issuer_change(gateway, original_oauth_config, user_email)
                     if gateway.oauth_config != original_oauth_config:
-                        await self._service_token_cache.invalidate(gateway.id)
+                        await after_import_commit(self._service_token_cache.invalidate, gateway.id)
 
                 # Handle auth_value updates (both existing and new auth values)
                 token = gateway_update.auth_token
@@ -4136,14 +4285,26 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     auth_query_params_decrypted = connection_material.auth_query_params_decrypted
                     init_url = connection_material.url
 
-                if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
+                # Update gateway_mode if provided
+                if hasattr(gateway_update, "gateway_mode") and gateway_update.gateway_mode is not None:
+                    if gateway_update.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
+                        raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
+                    gateway.gateway_mode = gateway_update.gateway_mode
+
+                still_blocked = (
+                    import_requires_credentials
+                    or import_clear_credentials
+                    or auth_blocked
+                    and not (gateway.auth_value or gateway.auth_query_params or gateway.oauth_config or gateway.sigv4_config or gateway.client_key)
+                )
+                if still_blocked or (modified_via != "import" and getattr(settings, "gateway_async_lifecycle_enabled", False) is True):
                     gateway.status = "pending"
-                    gateway.status_message = "Gateway update accepted and pending initialization"
+                    gateway.status_message = _IMPORT_CREDENTIALS_REQUIRED if still_blocked else "Gateway update accepted and pending initialization"
                     gateway.registration_attempts = 0
                     gateway.next_retry_at = None
                     gateway.last_error = None
                     gateway.reachable = False
-                    self._active_gateways.discard(original_url)
+                    after_import_commit_sync(self._active_gateways.discard, original_url)
 
                     # Update metadata fields
                     gateway.updated_at = datetime.now(timezone.utc)
@@ -4162,8 +4323,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     db.commit()
                     db.refresh(gateway)
+                    if modified_via == "import":
+                        after_import_commit_sync(notify_dataplane)
                     if policy_was_changed:
-                        record_policy_change(
+                        after_import_commit_sync(
+                            record_policy_change,
                             resource_type="gateway",
                             resource_id=gateway.id,
                             resource_name=gateway.name,
@@ -4174,32 +4338,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         )
 
                     if any(new_value != old_value for new_value, old_value in _connection_field_pairs()):
-                        await _evict_upstream_sessions_for_gateway(str(gateway.id))
+                        await after_import_commit(_evict_upstream_sessions_for_gateway, str(gateway.id))
 
                     cache = _get_registry_cache()
-                    await cache.invalidate_gateways()
-                    await cache.invalidate_tools()
-                    await cache.invalidate_resources()
-                    await cache.invalidate_prompts()
+                    await after_import_commit(cache.invalidate_gateways)
+                    await after_import_commit(cache.invalidate_tools)
+                    await after_import_commit(cache.invalidate_resources)
+                    await after_import_commit(cache.invalidate_prompts)
                     tool_lookup_cache = _get_tool_lookup_cache()
-                    await tool_lookup_cache.invalidate_gateway(str(gateway.id))
+                    await after_import_commit(tool_lookup_cache.invalidate_gateway, str(gateway.id))
                     # First-Party
                     from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-                    await admin_stats_cache.invalidate_tags()
+                    await after_import_commit(admin_stats_cache.invalidate_tags)
 
                     if gateway_update.passthrough_headers is not None:
                         # First-Party
                         from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
 
-                        invalidate_passthrough_header_caches()
+                        after_import_commit_sync(invalidate_passthrough_header_caches)
 
-                    await self._notify_gateway_updated(gateway)
+                    await after_import_commit(self._notify_gateway_updated, gateway)
 
                     logger.info(f"Accepted gateway update for async initialization: {SecurityValidator.sanitize_log_message(gateway.name)}")
 
-                    audit_trail.log_action(
-                        user_id=user_email or modified_by or "system",
+                    after_import_commit_sync(
+                        audit_trail.log_action,
+                        user_id=user_id or user_email or modified_by or "system",
                         action="update_gateway",
                         resource_type="gateway",
                         resource_id=str(gateway.id),
@@ -4213,6 +4378,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             "url": gateway.url,
                             "version": gateway.version,
                             "status": gateway.status,
+                            **sigv4_audit_values(getattr(gateway, "sigv4_config", None), original_sigv4_config),
                         },
                         context={
                             "modified_via": modified_via,
@@ -4271,6 +4437,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             client_cert=connection_material.client_cert,
                             client_key=connection_material.client_key,
                             gateway_id=gateway.id,
+                            sigv4_config=getattr(gateway, "sigv4_config", None),
                         )
                     except Exception as init_err:
                         # New URL/auth/TLS config is unreachable or invalid. Wrap non-connection
@@ -4290,6 +4457,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway.auth_type = "one_time_auth"
                         gateway.auth_value = None
                         gateway.oauth_config = None
+                        gateway.sigv4_config = None
 
                     _vis_changed = gateway_update.visibility is not None
                     catalog_sync = self._sync_gateway_catalog(
@@ -4314,18 +4482,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.upstream_instructions = instructions
 
                     # Register capabilities for notification-driven actions
-                    register_gateway_capabilities_for_notifications(gateway.id, capabilities)
+                    after_import_commit_sync(register_gateway_capabilities_for_notifications, gateway.id, capabilities)
 
                     gateway.last_seen = datetime.now(timezone.utc)
 
                     # Update tracking with new URL
-                    self._active_gateways.discard(gateway.url)
-                    self._active_gateways.add(gateway.url)
+                    after_import_commit_sync(self._active_gateways.discard, gateway.url)
+                    after_import_commit_sync(self._active_gateways.add, gateway.url)
                     reinit_succeeded = True
                 except GatewayToolNameConflictError:
                     raise
                 except (GatewayConnectionError, GatewayCredentialError) as gce:
-                    if init_affecting_changed:
+                    if modified_via == "import" and not gateway.auth_type and _is_upstream_unauthorized(gce):
+                        gateway.status = "pending"
+                        gateway.status_message = _IMPORT_CREDENTIALS_REQUIRED
+                        gateway.reachable = False
+                        after_import_commit_sync(self._active_gateways.discard, gateway.url)
+                    elif init_affecting_changed:
                         # Do NOT persist the broken update — propagate so the outer handler
                         # rolls back (nothing committed) and the API returns 502/422, matching
                         # POST /gateways behavior.
@@ -4333,18 +4506,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.warning("Failed to initialize updated gateway: %s", gce)
                     reinit_succeeded = False
                 except Exception as e:
+                    if modified_via == "import":
+                        raise
                     logger.warning("Failed to initialize updated gateway: %s", sanitize_exception_message(str(e), auth_query_params_decrypted))
                     reinit_succeeded = False
+
+                if auth_blocked and reinit_succeeded:
+                    gateway.reachable = True
+                    gateway.status = "active"
+                    gateway.status_message = None
+                    gateway.last_error = None
 
                 # Update tags if provided
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
-
-                # Update gateway_mode if provided
-                if hasattr(gateway_update, "gateway_mode") and gateway_update.gateway_mode is not None:
-                    if gateway_update.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
-                        raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
-                    gateway.gateway_mode = gateway_update.gateway_mode
 
                 # Update metadata fields
                 gateway.updated_at = datetime.now(timezone.utc)
@@ -4363,9 +4538,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 db.commit()
                 db.refresh(gateway)
-                notify_dataplane()
+                after_import_commit_sync(notify_dataplane)
                 if policy_was_changed:
-                    record_policy_change(
+                    after_import_commit_sync(
+                        record_policy_change,
                         resource_type="gateway",
                         resource_id=gateway.id,
                         resource_name=gateway.name,
@@ -4382,26 +4558,26 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # leave sessions alone to preserve the 1:1 downstream-session
                 # connection-reuse benefit.
                 if any(new_value != old_value for new_value, old_value in _connection_field_pairs()):
-                    await _evict_upstream_sessions_for_gateway(str(gateway.id))
+                    await after_import_commit(_evict_upstream_sessions_for_gateway, str(gateway.id))
 
                 # Invalidate cache after successful update
                 cache = _get_registry_cache()
-                await cache.invalidate_gateways()
-                await cache.invalidate_tools()
-                await cache.invalidate_resources()
-                await cache.invalidate_prompts()
+                await after_import_commit(cache.invalidate_gateways)
+                await after_import_commit(cache.invalidate_tools)
+                await after_import_commit(cache.invalidate_resources)
+                await after_import_commit(cache.invalidate_prompts)
                 tool_lookup_cache = _get_tool_lookup_cache()
-                await tool_lookup_cache.invalidate_gateway(str(gateway.id))
+                await after_import_commit(tool_lookup_cache.invalidate_gateway, str(gateway.id))
                 # Also invalidate tags cache since gateway tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-                await admin_stats_cache.invalidate_tags()
+                await after_import_commit(admin_stats_cache.invalidate_tags)
 
                 # Advance hot/cold poll schedule only after successful tool re-init
                 if reinit_succeeded and self._classification_service and gateway.url:
                     try:
-                        await self._classification_service.mark_poll_completed(gateway.url, "tool_discovery", gateway_id=str(gateway.id))
+                        await after_import_commit(self._classification_service.mark_poll_completed, gateway.url, "tool_discovery", gateway_id=str(gateway.id))
                     except Exception as poll_ts_err:
                         logger.debug("Best-effort tool_discovery poll timestamp update failed: %s", poll_ts_err)
 
@@ -4410,16 +4586,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # First-Party
                     from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
 
-                    invalidate_passthrough_header_caches()
+                    after_import_commit_sync(invalidate_passthrough_header_caches)
 
                 # Notify subscribers
-                await self._notify_gateway_updated(gateway)
+                await after_import_commit(self._notify_gateway_updated, gateway)
 
                 logger.info("Updated gateway: %s", SecurityValidator.sanitize_log_message(gateway.name))
 
                 # Structured logging: Audit trail for gateway update
-                audit_trail.log_action(
-                    user_id=user_email or modified_by or "system",
+                after_import_commit_sync(
+                    audit_trail.log_action,
+                    user_id=user_id or user_email or modified_by or "system",
                     action="update_gateway",
                     resource_type="gateway",
                     resource_id=str(gateway.id),
@@ -4432,6 +4609,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "name": gateway.name,
                         "url": gateway.url,
                         "version": gateway.version,
+                        **sigv4_audit_values(getattr(gateway, "sigv4_config", None), original_sigv4_config),
                     },
                     context={
                         "modified_via": modified_via,
@@ -4537,6 +4715,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 resource_id=gateway_id,
                 error=e,
             )
+            if modified_via == "import":
+                raise
             raise GatewayError(f"Failed to update gateway: {unexpected_error_detail(e)}")
 
     async def _check_gateway_access(
@@ -4772,7 +4952,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return GatewayImpactPreview(gateway_id=canonical_gateway_id, servers=visible_servers)
 
     async def set_gateway_state(
-        self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None, last_error: Optional[str] = None
+        self,
+        db: Session,
+        gateway_id: str,
+        activate: bool,
+        reachable: bool = True,
+        only_update_reachable: bool = False,
+        user_email: Optional[str] = None,
+        last_error: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> GatewayRead:
         """
         Set the activation status of a gateway.
@@ -4788,6 +4976,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             atomically with the state change when reachability changes; written
             in a standalone commit when only the error text differs (no state
             transition occurred).
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             The updated GatewayRead object
@@ -4870,6 +5059,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             client_cert=act_client_cert,
                             client_key=act_client_key,
                             gateway_id=gateway.id,
+                            sigv4_config=getattr(gateway, "sigv4_config", None),
                         )
                         catalog_sync = self._sync_gateway_catalog(
                             db,
@@ -4986,7 +5176,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Structured logging: Audit trail for gateway state change
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=user_id or user_email or "system",
                     action="set_gateway_state",
                     resource_type="gateway",
                     resource_id=str(gateway.id),
@@ -5098,7 +5288,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         }
         await self._publish_event(event)
 
-    async def delete_gateway(self, db: Session, gateway_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_gateway(self, db: Session, gateway_id: str, user_email: Optional[str] = None, user_id: Optional[str] = None) -> None:
         """
         Delete a gateway by its ID.
 
@@ -5106,6 +5296,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db: Database session
             gateway_id: Gateway ID
             user_email: Email of user performing deletion (for ownership check)
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Raises:
             GatewayNotFoundError: If the gateway is not found
@@ -5194,7 +5385,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.info(f"Accepted gateway deletion for async cleanup: {gateway_name}")
 
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=user_id or user_email or "system",
                     action="delete_gateway",
                     resource_type="gateway",
                     resource_id=str(gateway_info["id"]),
@@ -5239,6 +5430,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway_team_id=gateway_team_id,
                 gateway_url=gateway_url,
                 user_email=user_email,
+                user_id=user_id,
             )
 
         except PermissionError as pe:
@@ -5314,6 +5506,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_team_id: Optional[str],
         gateway_url: str,
         user_email: Optional[str],
+        user_id: Optional[str] = None,
     ) -> None:
         """Run post-commit side effects for permanent gateway deletion."""
         await _evict_upstream_sessions_for_gateway(gateway_id)
@@ -5343,7 +5536,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         logger.info("Permanently deleted gateway: %s", gateway_name)
 
         audit_trail.log_action(
-            user_id=user_email or "system",
+            user_id=user_id or user_email or "system",
             action="delete_gateway",
             resource_type="gateway",
             resource_id=str(gateway_info["id"]),
@@ -5384,7 +5577,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if getattr(gateway, "lifecycle_claimed_by", self._instance_id) not in {None, self._instance_id}:
             return False
 
-        if gateway.status == "pending":
+        if gateway.status == "pending" and not gateway_requires_credentials(gateway):
             await self._process_pending_gateway(db, gateway)
             return True
 
@@ -5400,9 +5593,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         with cast(Any, SessionLocal)() as db:
             claim_filter = or_(DbGateway.lifecycle_claim_expires_at.is_(None), DbGateway.lifecycle_claim_expires_at <= now)
             deleting_ids = db.execute(select(DbGateway.id).where(DbGateway.status == "deleting").where(claim_filter)).scalars().all()
-            pending_ids = (
-                db.execute(select(DbGateway.id).where(DbGateway.status == "pending").where(or_(DbGateway.next_retry_at.is_(None), DbGateway.next_retry_at <= now)).where(claim_filter)).scalars().all()
-            )
+            pending_ids = db.scalars(
+                select(DbGateway.id)
+                .where(DbGateway.status == "pending", DbGateway.status_message.is_distinct_from(_IMPORT_CREDENTIALS_REQUIRED))
+                .where(or_(DbGateway.next_retry_at.is_(None), DbGateway.next_retry_at <= now), claim_filter)
+            ).all()
         return [*deleting_ids, *(f"pending:{gateway_id}" for gateway_id in pending_ids)]
 
     def _claim_due_gateway_lifecycle_ids(self, statuses: Set[str]) -> List[str]:
@@ -5416,7 +5611,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             due_filter = or_(DbGateway.lifecycle_claim_expires_at.is_(None), DbGateway.lifecycle_claim_expires_at <= now)
             query = select(DbGateway.id).where(DbGateway.status.in_(statuses)).where(due_filter)
             if "pending" in statuses:
-                query = query.where(or_(DbGateway.status != "pending", DbGateway.next_retry_at.is_(None), DbGateway.next_retry_at <= now))
+                query = query.where(
+                    or_(DbGateway.status != "pending", DbGateway.next_retry_at.is_(None), DbGateway.next_retry_at <= now),
+                    or_(DbGateway.status != "pending", DbGateway.status_message.is_distinct_from(_IMPORT_CREDENTIALS_REQUIRED)),
+                )
             if db.bind and db.bind.dialect.name == "postgresql":
                 query = query.with_for_update(skip_locked=True)
 
@@ -5576,6 +5774,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 client_key=connection_material.client_key,
                 initialize_timeout=settings.gateway_async_lifecycle_attempt_timeout,
                 gateway_id=gateway.id,
+                sigv4_config=getattr(gateway, "sigv4_config", None),
             )
 
             created_via = "update" if gateway.tools or gateway.resources or gateway.prompts else "federation"
@@ -5936,6 +6135,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 reference point for the refresh throttle and last_refresh_at to keep both
                 sides of the comparison on the same clock.
         """
+        if gateway_requires_credentials(gateway):
+            return
         # Extract gateway data upfront (gateway may be detached from session)
         gateway_id = gateway.id
         gateway_name = gateway.name
@@ -5949,6 +6150,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_oauth_config = gateway.oauth_config
         gateway_auth_value = gateway.auth_value
         gateway_auth_query_params = gateway.auth_query_params
+        gateway_sigv4_config = getattr(gateway, "sigv4_config", None)
         health_client_cert = getattr(gateway, "client_cert", None)
         health_client_key = getattr(gateway, "client_key", None)
 
@@ -6156,6 +6358,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         await self._handle_gateway_failure(gateway, error=pin_exc, auth_query_params=auth_query_params_decrypted)
                         return
 
+                    # SigV4 signs each probe afresh, so a long-lived health loop never reuses a stale signature
+                    health_sigv4_auth = None
+                    health_sigv4_mcp_auth = None
+                    if gateway_auth_type == "sigv4":
+                        try:
+                            health_sigv4_auth = build_stored_sigv4_httpx_auth(gateway_sigv4_config)
+                            health_sigv4_mcp_auth = build_stored_sigv4_auth(gateway_sigv4_config)
+                        except SigV4ConfigError as sigv4_exc:
+                            if span:
+                                set_span_attribute(span, "health.status", "unhealthy")
+                                set_span_error(span, sigv4_exc)
+                            await self._handle_gateway_failure(gateway, error=GatewayCredentialError("Stored SigV4 credentials could not be loaded"), auth_query_params=auth_query_params_decrypted)
+                            return
+
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway_transport).lower() == "sse":
                         timeout = httpx.Timeout(settings.health_check_timeout)
@@ -6165,6 +6381,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             headers=pinned_target.apply_headers(headers),
                             timeout=timeout,
                             extensions=pinned_target.extensions,
+                            auth=health_sigv4_auth if health_sigv4_auth is not None else httpx.USE_CLIENT_DEFAULT,
                         ) as response:
                             # This will raise immediately if status is 3xx/4xx/5xx
                             response.raise_for_status()
@@ -6179,7 +6396,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             url=gateway_url,
                             headers=headers,
                             timeout=settings.health_check_timeout,
-                            httpx_client_factory=get_httpx_client_factory,
+                            httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, health_sigv4_mcp_auth),
                         ) as client:
                             pass  # Client auto-initializes on first RPC call (health check only does initialize)
 
@@ -6204,6 +6421,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 should_auto_refresh = True
                         else:
                             should_auto_refresh = True
+
+                    if should_auto_refresh and self._skip_auto_refresh_without_user_token(gateway_id, gateway_name, gateway_auth_type, gateway_oauth_config, headers):
+                        should_auto_refresh = False
 
                     if should_auto_refresh:
                         try:
@@ -6451,6 +6671,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
         gateway_id: Optional[str] = None,
+        sigv4_config: Optional[Dict[str, Any]] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str], Optional[str]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -6476,6 +6697,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             client_key: Optional client private key path or PEM for mTLS
             gateway_id: Gateway identifier used to cache the token-exchange discovery token,
                 or ``None`` before the gateway row exists (registration).
+            sigv4_config: Stored (encrypted) SigV4 configuration when auth_type is "sigv4"
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str], Optional[str]]:
@@ -6572,6 +6794,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             prompts = []
             validation_errors: list[str] = []
             instructions: Optional[str] = None
+            signing_auth = None
+            if auth_type == "sigv4":
+                try:
+                    signing_auth = build_stored_sigv4_auth(sigv4_config)
+                except SigV4ConfigError as exc:
+                    raise GatewayCredentialError(f"Failed to initialize gateway at {sanitize_url_for_logging(url, auth_query_params)}: invalid SigV4 credentials -- {exc}") from exc
+                if signing_auth is None:
+                    raise GatewayCredentialError("Failed to initialize gateway: auth_type 'sigv4' requires sigv4_config")
             if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if authentication:
@@ -6582,11 +6812,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 authentication = {k: SecurityValidator.sanitize_credential_value(v) for k, v in authentication.items()}
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts, validation_errors, instructions = await self.connect_to_sse_server(
-                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
+                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key, signing_auth=signing_auth
                 )
             elif transport.lower() == "streamablehttp":
                 capabilities, tools, resources, prompts, validation_errors, instructions = await self.connect_to_streamablehttp_server(
-                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
+                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key, signing_auth=signing_auth
                 )
             else:
                 sanitized_url = sanitize_url_for_logging(url, auth_query_params)
@@ -6620,6 +6850,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Report it distinctly so it isn't mistaken for a network/connectivity failure.
             if isinstance(root_cause, (UnicodeEncodeError, UnicodeDecodeError)):
                 raise GatewayCredentialError(f"Failed to initialize gateway at {sanitized_url}: invalid credential -- {sanitized_error}") from root_cause
+
+            if auth_type == "sigv4" and isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)) and root_cause.response.status_code in (401, 403):
+                raise GatewayCredentialError(
+                    f"Failed to initialize gateway at {sanitized_url}: upstream rejected the SigV4 credentials (HTTP {root_cause.response.status_code}). Verify the access key, secret, region and service."
+                ) from root_cause
 
             raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}", classify_connection_failure(e)) from root_cause
 
@@ -7144,6 +7379,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_id=actor_email,
             resource_type="gateway",
             resource_id=gateway_id,
+            team_id=gateway.team_id,
             details={
                 "previous_owner": previous_owner,
                 "new_owner": target_owner_email,
@@ -8022,6 +8258,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_auth_type = None
         gateway_auth_value = None
         gateway_oauth_config = None
+        gateway_sigv4_config = None
         gateway_ca_certificate = None
         gateway_auth_query_params = None
         refresh_client_cert = None
@@ -8038,6 +8275,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_auth_type = gateway.auth_type
             gateway_auth_value = gateway.auth_value
             gateway_oauth_config = gateway.oauth_config
+            gateway_sigv4_config = getattr(gateway, "sigv4_config", None)
             gateway_ca_certificate = gateway.ca_certificate
             gateway_auth_query_params = gateway.auth_query_params
             refresh_client_cert = getattr(gateway, "client_cert", None)
@@ -8061,6 +8299,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway_auth_type = gateway_obj.auth_type
                 gateway_auth_value = gateway_obj.auth_value
                 gateway_oauth_config = gateway_obj.oauth_config
+                gateway_sigv4_config = getattr(gateway_obj, "sigv4_config", None)
                 gateway_ca_certificate = gateway_obj.ca_certificate
                 gateway_auth_query_params = gateway_obj.auth_query_params
                 refresh_client_cert = getattr(gateway_obj, "client_cert", None)
@@ -8132,6 +8371,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth_query_params=auth_query_params_decrypted,
                 client_cert=refresh_client_cert,
                 client_key=_refresh_key,
+                sigv4_config=gateway_sigv4_config,
             )
         except Exception as e:
             logger.warning("Failed to fetch tools from gateway %s: %s", gateway_name, e)
@@ -8295,6 +8535,58 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if gateway_id not in self._refresh_locks:
             self._refresh_locks[gateway_id] = asyncio.Lock()
         return self._refresh_locks[gateway_id]
+
+    def _skip_auto_refresh_without_user_token(
+        self,
+        gateway_id: str,
+        gateway_name: str,
+        auth_type: Optional[str],
+        oauth_config: Optional[Dict[str, Any]],
+        headers: Optional[Dict[str, str]],
+    ) -> bool:
+        """Decide whether background auto-refresh must skip an authorization_code gateway.
+
+        Background refresh has no request-scoped user, so it can only authenticate to an
+        authorization_code gateway with the stored token the health check already placed in
+        ``headers``. Without one the refresh would fetch nothing and change nothing, so it is
+        skipped and the operator is told, once per gateway, that the server needs a manual
+        refresh. The notice is re-armed once the gateway is reachable with a token again.
+
+        Args:
+            gateway_id: ID of the gateway being health-checked.
+            gateway_name: Name of the gateway, for the log message.
+            auth_type: The gateway's auth type.
+            oauth_config: The gateway's OAuth configuration, if any.
+            headers: Headers the health check built for this gateway.
+
+        Returns:
+            bool: True if auto-refresh should be skipped for this gateway.
+
+        Examples:
+            >>> from mcpgateway.services.gateway_service import GatewayService
+            >>> service = GatewayService()
+            >>> auth_code = {"grant_type": "authorization_code"}
+            >>> service._skip_auto_refresh_without_user_token("gw-1", "gw", "oauth", auth_code, {})
+            True
+            >>> service._skip_auto_refresh_without_user_token("gw-1", "gw", "oauth", auth_code, {"Authorization": "Bearer t"})
+            False
+            >>> service._skip_auto_refresh_without_user_token("gw-2", "gw", "oauth", {"grant_type": "client_credentials"}, {})
+            False
+            >>> service._skip_auto_refresh_without_user_token("gw-3", "gw", "basic", None, {})
+            False
+        """
+        is_auth_code = auth_type == "oauth" and isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "authorization_code"
+        has_authorization = any(key.lower() == "authorization" for key in (headers or {}))
+        if not is_auth_code or has_authorization:
+            self._manual_refresh_notified.discard(gateway_id)
+            return False
+        if gateway_id not in self._manual_refresh_notified:
+            self._manual_refresh_notified.add(gateway_id)
+            logger.info(
+                "Auto-refresh skipped for gateway %s: authorization_code servers require a manual refresh",
+                SecurityValidator.sanitize_log_message(gateway_name),
+            )
+        return True
 
     async def refresh_gateway_manually(
         self,
@@ -8726,6 +9018,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         auth_query_params: Optional[Dict[str, str]] = None,
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
+        signing_auth: Optional[httpx2.Auth] = None,
     ):
         """Connect to an MCP server running with SSE transport.
 
@@ -8738,6 +9031,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_query_params: Query param names for URL sanitization in error logs.
             client_cert: Optional client certificate path or PEM for mTLS.
             client_key: Optional client private key path or PEM for mTLS.
+            signing_auth: Optional SigV4 auth that signs every upstream request.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -8788,7 +9082,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
 
         # Client auto-initializes on entry; no manual initialize() needed.
-        async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory, transport="sse") as client:
+        async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, signing_auth), transport="sse") as client:
             # Read negotiated capabilities from the auto-initialized session
             capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
             raw_instructions = client.instructions or None
@@ -8901,6 +9195,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         auth_query_params: Optional[Dict[str, str]] = None,
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
+        signing_auth: Optional[httpx2.Auth] = None,
     ):
         """Connect to an MCP server running with Streamable HTTP transport.
 
@@ -8913,6 +9208,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             auth_query_params: Query param names for URL sanitization in error logs.
             client_cert: Optional client certificate path or PEM for mTLS.
             client_key: Optional client private key path or PEM for mTLS.
+            signing_auth: Optional SigV4 auth that signs every upstream request.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -8966,7 +9262,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         async with mcp_proxy_client(
             url=server_url,
             headers=authentication,
-            httpx_client_factory=get_httpx_client_factory,
+            httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, signing_auth),
         ) as client:
             # Client auto-initializes; get capabilities from the auto-initialized session
             capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
@@ -9778,7 +10074,7 @@ async def test_gateway_connectivity(
                 # For Client Credentials flow, get token directly
                 await _require_stored_credential_authority(user, gateway, db)
                 try:
-                    oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+                    oauth_manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
                     access_token: str = await oauth_manager.get_access_token(
                         gateway.oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
                     )
@@ -10059,6 +10355,7 @@ async def _test_gateway_handshake(
         and (
             (gateway.auth_type == "oauth" and gateway.oauth_config and gateway.oauth_config.get("grant_type", "client_credentials") != "authorization_code")
             or (gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value)
+            or (gateway.auth_type == "sigv4" and gateway.sigv4_config)
             or gateway.client_cert
         )
     )
@@ -10109,7 +10406,7 @@ async def _test_gateway_handshake(
                     )
                 headers["Authorization"] = f"Bearer {access_token}"
             else:
-                oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+                oauth_manager = OAuthManager(request_timeout=settings.oauth_request_timeout, max_retries=settings.oauth_max_retries)
                 access_token = await oauth_manager.get_access_token(gateway.oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
                 headers["Authorization"] = f"Bearer {access_token}"
             credential_source = "stored"
@@ -10126,6 +10423,16 @@ async def _test_gateway_handshake(
             headers.update(gateway.auth_value)
         elif isinstance(gateway.auth_value, str):
             headers.update(decode_auth(gateway.auth_value))
+        credential_source = "stored"
+
+    # SigV4 signs each request, so it adds no stored header. The signature replaces any form Authorization header.
+    handshake_sigv4_auth = None
+    if not candidate_only and gateway and gateway.auth_type == "sigv4" and gateway.sigv4_config:
+        try:
+            handshake_sigv4_auth = build_stored_sigv4_auth(gateway.sigv4_config)
+        except SigV4ConfigError:
+            return _failure("auth", "The stored SigV4 credentials could not be loaded. Re-enter the credentials on the gateway.")
+        form_headers = {key: value for key, value in form_headers.items() if key.lower() != "authorization"}
         credential_source = "stored"
 
     if form_headers:
@@ -10206,7 +10513,7 @@ async def _test_gateway_handshake(
             discover_result: Optional[Dict[str, Any]] = None
 
             # Skip server/discover probe in legacy mode — go straight to SDK initialize
-            if settings.mcp_client_connect_mode != "legacy":
+            if settings.mcp_client_connect_mode != "legacy" and handshake_sigv4_auth is None:
                 discover_headers = {
                     **headers,
                     "Host": target["original_authority"],
@@ -10353,11 +10660,11 @@ async def _test_gateway_handshake(
                 # with TLS verified against that hostname, closing the same DNS rebinding window
                 # as server/discover, on the follow-up requests too.
                 if gateway and str(gateway.transport).lower() == "sse":
-                    async with sse_client(url=hostname_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream):
+                    async with sse_client(url=hostname_url, headers=headers, httpx_client_factory=with_sigv4_auth(get_httpx_client_factory, handshake_sigv4_auth)) as (read_stream, write_stream):
                         async with ClientSession(read_stream, write_stream) as session:
                             return await _probe_session(session)
                 else:
-                    probe_http_client = get_httpx_client_factory(headers=headers, timeout=settings.health_check_timeout, auth=None)
+                    probe_http_client = get_httpx_client_factory(headers=headers, timeout=settings.health_check_timeout, auth=handshake_sigv4_auth)
                     async with probe_http_client:
                         async with streamable_http_client(url=hostname_url, http_client=probe_http_client) as (read_stream, write_stream):
                             async with ClientSession(read_stream, write_stream) as session:

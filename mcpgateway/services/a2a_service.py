@@ -12,36 +12,59 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
+import asyncio
 import base64
 import binascii
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+import time
+from types import SimpleNamespace
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import urlparse
+import uuid
 
 # Third-Party
+from fastapi import HTTPException
 import httpx
-from pydantic import ValidationError
-from sqlalchemy import and_, case, delete, desc, or_, select, update
+from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
+from sqlalchemy import and_, case, delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
+from mcpgateway.common.oauth import is_sensitive_oauth_key
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import A2AAgentCard
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session, get_for_update, server_tool_association
+from mcpgateway.db import fresh_db_session, get_for_update, server_tool_association, utc_now
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_protocol import is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
+from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
+    A2AAgentCreate,
+    A2AAgentMetrics,
+    A2AAgentRead,
+    A2AAgentUpdate,
+    A2ACardRefreshRequest,
+    A2ACardRefreshResponse,
+    A2AFetchCardRequest,
+    A2AFetchCardResponse,
+    A2AStoredCardRead,
+    A2ATestError,
+)
+from mcpgateway.services.a2a_card_import import apply_extended_result, fetch_agent_card, fetch_stored_extended_card, same_origin
+from mcpgateway.services.a2a_errors import A2AAgentError
+from mcpgateway.services.a2a_oauth import A2A_OAUTH_TOKEN_PURPOSE, forget_a2a_oauth_failures, resolve_a2a_agent_oauth_headers
+from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_terminal_task_state, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.gateway_service_token_cache import get_service_token_cache
 from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -57,7 +80,7 @@ from mcpgateway.utils.services_auth import decode_auth, encode_auth, rebuild_bas
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssrf_pinning import resolve_pinned_target
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
-from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
+from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationError, unexpected_error_detail
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -236,6 +259,36 @@ def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "
         )
 
 
+def _jsonrpc_error_message(response: Any) -> Optional[str]:
+    """Describe a JSON-RPC error carried in an A2A response.
+
+    A2A runs JSON-RPC over HTTP, so an agent can reject a call while the
+    transport still answers 200. Returns None for a response without an error.
+
+    Args:
+        response: The decoded A2A response body.
+
+    Returns:
+        A human-readable error message, or None when the response is not a
+        JSON-RPC error.
+    """
+    if not isinstance(response, dict):
+        return None
+    if response.get("jsonrpc") != "2.0":
+        return None
+    error = response.get("error")
+    if not error:
+        return None
+    detail = None
+    if isinstance(error, dict):
+        detail = error.get("message")
+        if not detail and "code" in error:
+            detail = f"code {error['code']}"
+    elif isinstance(error, str):
+        detail = error
+    return f"A2A agent returned a JSON-RPC error: {detail or 'unknown error'}"
+
+
 def _is_jwt_token(token: str) -> bool:
     """Check if a token looks like a JWT (has 2 dots, 3 base64url parts).
 
@@ -297,21 +350,170 @@ async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
         logger.warning("Failed to publish A2A cache invalidation: %s", e)
 
 
-class A2AAgentError(Exception):
-    """Base class for A2A agent-related errors.
+A2A_DISABLED_DETAIL = {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}
+
+
+def a2a_enabled() -> bool:
+    """Return whether A2A is enabled on this gateway.
+
+    Returns:
+        bool: ``True`` when ``MCPGATEWAY_A2A_ENABLED`` is set.
 
     Examples:
-        >>> try:
-        ...     raise A2AAgentError("Agent operation failed")
-        ... except A2AAgentError as e:
-        ...     str(e)
-        'Agent operation failed'
-        >>> try:
-        ...     raise A2AAgentError("Connection error")
-        ... except Exception as e:
-        ...     isinstance(e, A2AAgentError)
+        >>> isinstance(a2a_enabled(), bool)
         True
     """
+    return settings.mcpgateway_a2a_enabled
+
+
+def raise_if_a2a_disabled() -> None:
+    """Raise the typed 404 when A2A is disabled.
+
+    Raises:
+        HTTPException: 404 with ``detail.error == "a2a_disabled"`` when A2A is disabled.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with patch("mcpgateway.services.a2a_service.settings.mcpgateway_a2a_enabled", False):
+        ...     try:
+        ...         raise_if_a2a_disabled()
+        ...     except HTTPException as exc:
+        ...         exc.status_code, exc.detail["error"]
+        (404, 'a2a_disabled')
+    """
+    if not a2a_enabled():
+        logger.warning("A2A request rejected because A2A is disabled")
+        raise HTTPException(status_code=404, detail=dict(A2A_DISABLED_DETAIL))
+
+
+# Strong references to in-flight invalidation tasks. The event loop only keeps a
+# weak reference to a task, so without this a fire-and-forget task can be garbage
+# collected before it completes.
+_BACKGROUND_TASKS: Set["asyncio.Task[None]"] = set()
+
+
+def _log_invalidation_task_exception(task: "asyncio.Task[None]") -> None:
+    """Log an exception raised inside a background invalidation task.
+
+    `_publish_a2a_invalidation()` handles its own errors, so this callback is a guard
+    against unexpected failures and does not log in normal operation.
+
+    Args:
+        task: The completed invalidation task.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("A2A cache invalidation task failed: %s", exc)
+
+
+def _schedule_a2a_invalidation(agent_name: str) -> None:
+    """Schedule a best-effort A2A cache invalidation publish.
+
+    The coroutine is constructed only after a running loop is confirmed and the
+    task is retained until completion, so a scheduling failure cannot leak an
+    un-awaited coroutine and a live task cannot be garbage collected early.
+
+    Args:
+        agent_name: Name of the agent whose cache entry should be invalidated.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # No running event loop (e.g., in tests)
+
+    coro = _publish_a2a_invalidation("agent", name=agent_name)
+    try:
+        task = loop.create_task(coro)
+    except Exception as exc:  # pylint: disable=broad-except
+        coro.close()
+        logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent_name, exc)
+        return
+
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    task.add_done_callback(_log_invalidation_task_exception)
+
+
+def _require_secret_reentry_on_token_url_change(new_config: Optional[Dict[str, Any]], stored_config: Optional[Dict[str, Any]]) -> None:
+    """Refuse to reuse a stored client secret for a different token URL.
+
+    A masked placeholder keeps the stored secret. If the token URL also changes, the
+    gateway would send that secret to the new host, so the caller must send the secret again.
+
+    Args:
+        new_config: Incoming ``oauth_config`` of an update.
+        stored_config: ``oauth_config`` stored for the agent.
+
+    Raises:
+        PublicValidationError: If a masked secret is kept while ``token_url`` changes.
+
+    Examples:
+        >>> _require_secret_reentry_on_token_url_change({"token_url": "https://a/t", "client_secret": "new"}, {"token_url": "https://b/t"})  # pragma: allowlist secret
+        >>> _require_secret_reentry_on_token_url_change({"token_url": "https://a/t", "client_secret": "*****"}, {"token_url": "https://a/t"})  # pragma: allowlist secret
+        >>> _require_secret_reentry_on_token_url_change({"token_url": "https://a/t", "client_secret": "*****"}, {"token_url": "https://b/t"})  # pragma: allowlist secret
+        Traceback (most recent call last):
+            ...
+        mcpgateway.utils.error_formatter.PublicValidationError: Send the OAuth client secret again when you change the token URL.
+    """
+    if not isinstance(new_config, dict) or not isinstance(stored_config, dict):
+        return
+    if new_config.get("token_url") == stored_config.get("token_url"):
+        return
+    if any(is_sensitive_oauth_key(key) and value == settings.masked_auth_value for key, value in new_config.items()):
+        raise PublicValidationError("Send the OAuth client secret again when you change the token URL.")
+
+
+def _origin_of(url: Optional[str]) -> Optional[str]:
+    """Return the scheme, host, and port of a URL as an origin URL, parsed as the card fetch parses it.
+
+    The well-known card path belongs to the origin, not to the path of the agent endpoint.
+
+    Args:
+        url: Agent endpoint URL, or ``None``.
+
+    Returns:
+        The origin without path, query, or fragment, or ``None`` when ``url`` is missing or invalid.
+
+    Examples:
+        >>> _origin_of("https://agent.example.com/rpc/v1?x=1")
+        'https://agent.example.com'
+        >>> _origin_of("http://127.0.0.1:9100/rpc")
+        'http://127.0.0.1:9100'
+        >>> _origin_of("https://agent.example.com:443/rpc")
+        'https://agent.example.com'
+        >>> _origin_of("not a url") is None
+        True
+        >>> _origin_of(None) is None
+        True
+    """
+    if not url:
+        return None
+    try:
+        parsed = TypeAdapter(AnyHttpUrl).validate_python(url)
+    except ValidationError:
+        return None
+    default_port = 443 if parsed.scheme == "https" else 80
+    port = f":{parsed.port}" if parsed.port and parsed.port != default_port else ""
+    return f"{parsed.scheme}://{parsed.host}{port}"
+
+
+class A2ACardRefreshThrottledError(Exception):
+    """Raised when an agent card is re-fetched again before the minimum interval has passed.
+
+    Attributes:
+        retry_after: Seconds until the next re-fetch is allowed.
+    """
+
+    def __init__(self, retry_after: int):
+        """Store the wait time.
+
+        Args:
+            retry_after: Seconds until the next re-fetch is allowed.
+        """
+        super().__init__(f"Agent Card was re-fetched recently. Retry in {retry_after} seconds")
+        self.retry_after = retry_after
 
 
 class A2AAgentNotFoundError(A2AAgentError):
@@ -329,6 +531,35 @@ class A2AAgentNotFoundError(A2AAgentError):
         ...     isinstance(e, A2AAgentError)  # Should inherit from A2AAgentError
         True
     """
+
+
+class A2AAgentDisabledError(A2AAgentError):
+    """Raised when an invoked A2A agent is disabled."""
+
+
+DEFAULT_A2A_TEST_MESSAGE = "ContextForge A2A agent connectivity test"
+DEFAULT_A2A_TEST_INTERACTION_TYPE = "test"
+A2A_TEST_NOT_FOUND_MESSAGE = "A2A agent not found"
+A2A_TEST_AGENT_ERROR_MESSAGE = "A2A agent invocation failed"
+A2A_TEST_AGENT_DISABLED_MESSAGE = "A2A agent is disabled"
+
+
+@dataclass(frozen=True)
+class A2ATestOutcome:
+    """Classified result of an A2A agent test invocation.
+
+    Attributes:
+        status_code: HTTP status matching the outcome (200, 404, 502, 422 or 500).
+        body: Response envelope. Success carries ``success``, ``result``, ``agent_name`` and
+            ``test_timestamp``. Failure carries ``success``, ``error``, ``error_type`` and ``agent_id``.
+    """
+
+    status_code: int
+    body: Dict[str, Any]
+
+
+class A2ATaskStateError(A2AAgentError):
+    """Raised when an A2A task is in a state that does not allow the requested operation."""
 
 
 class A2AAgentNameConflictError(A2AAgentError):
@@ -507,6 +738,65 @@ def _build_security_scheme(agent: DbA2AAgent) -> tuple[Optional[Dict[str, Any]],
     return {scheme_name: scheme}, [{"schemes": {scheme_name: {}}}]
 
 
+def agent_visible_to(db: Session, agent: DbA2AAgent, user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
+    """Check if a caller can see an agent based on visibility rules.
+
+    Access rules (matching tools/resources/prompts):
+    - public visibility: Always allowed
+    - token_teams is None AND user_email is None: Admin bypass — public + team agents only (private excluded per PR #4341)
+    - No user context (but not admin): Deny access to non-public agents
+    - team visibility: Allowed if agent.team_id in token_teams
+    - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
+
+    Args:
+        db: Database session for admin lookup
+        agent: The agent to check access for
+        user_email: User's email for owner matching
+        token_teams: Teams from JWT. None = admin bypass ONLY when user_email is also None; [] = public-only
+
+    Returns:
+        True if access allowed, False otherwise.
+    """
+    # Public agents are accessible by everyone
+    if agent.visibility == "public":
+        return True
+
+    # Admin bypass (PR #4341 invariant): never reveal another user's private agents.
+    # Anonymous bypass sees public + team only; a DB-resolved admin session
+    # additionally sees their own private agents. Mirrors _check_*_access in
+    # tool/prompt/resource services for consistency.
+    if token_teams is None and user_email is None:
+        return agent.visibility != "private"
+    if token_teams is None and user_email and is_user_admin(db, user_email):
+        return agent.visibility != "private" or agent.owner_email == user_email
+
+    # No user context (but not admin) = deny access to non-public agents
+    if not user_email:
+        return False
+
+    # Public-only tokens (empty teams array) can ONLY access public agents
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+    if is_public_only_token:
+        return False  # Already checked public above
+
+    # Owner can access their own private agents
+    if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
+        return True
+
+    # Team agents: check team membership
+    # token_teams=None with user_email set → admin context, allow all team agents if caller is admin
+    # ([] already handled by public-only check above)
+    if agent.visibility == "team":
+        if token_teams is None:
+            # Upstream token normalization prevents non-admins from reaching
+            # this state, but defend-in-depth: only admins get the unscoped
+            # team bypass here.
+            return is_user_admin(db, user_email)
+        return agent.team_id in token_teams
+
+    return False
+
+
 class A2AAgentService(BaseService):
     """Service for managing A2A agents in the gateway.
 
@@ -520,6 +810,7 @@ class A2AAgentService(BaseService):
         """Initialize a new A2AAgentService instance."""
         self._initialized = False
         self._event_streams: List[AsyncGenerator[str, None]] = []
+        self._card_refresh_attempts: Dict[str, float] = {}
 
     async def initialize(self) -> None:
         """Initialize the A2A agent service."""
@@ -580,13 +871,6 @@ class A2AAgentService(BaseService):
     ) -> bool:
         """Check if user has access to agent based on visibility rules.
 
-        Access rules (matching tools/resources/prompts):
-        - public visibility: Always allowed
-        - token_teams is None AND user_email is None: Admin bypass — public + team agents only (private excluded per PR #4341)
-        - No user context (but not admin): Deny access to non-public agents
-        - team visibility: Allowed if agent.team_id in token_teams
-        - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
-
         Args:
             db: Database session for admin lookup
             agent: The agent to check access for
@@ -596,55 +880,18 @@ class A2AAgentService(BaseService):
         Returns:
             True if access allowed, False otherwise.
         """
-        # Public agents are accessible by everyone
-        if agent.visibility == "public":
-            return True
+        return agent_visible_to(db, agent, user_email, token_teams)
 
-        # Admin bypass (PR #4341 invariant): never reveal another user's private agents.
-        # Anonymous bypass sees public + team only; a DB-resolved admin session
-        # additionally sees their own private agents. Mirrors _check_*_access in
-        # tool/prompt/resource services for consistency.
-        if token_teams is None and user_email is None:
-            return agent.visibility != "private"
-        if token_teams is None and user_email and is_user_admin(db, user_email):
-            return agent.visibility != "private" or agent.owner_email == user_email
-
-        # No user context (but not admin) = deny access to non-public agents
-        if not user_email:
-            return False
-
-        # Public-only tokens (empty teams array) can ONLY access public agents
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        if is_public_only_token:
-            return False  # Already checked public above
-
-        # Owner can access their own private agents
-        if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
-            return True
-
-        # Team agents: check team membership
-        # token_teams=None with user_email set → admin context, allow all team agents if caller is admin
-        # ([] already handled by public-only check above)
-        if agent.visibility == "team":
-            if token_teams is None:
-                # Upstream token normalization prevents non-admins from reaching
-                # this state, but defend-in-depth: only admins get the unscoped
-                # team bypass here.
-                return is_user_admin(db, user_email)
-            return agent.team_id in token_teams
-
-        return False
-
-    def _visible_agent_ids(
+    def _visible_agent_filters(
         self,
         db: Session,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
-    ) -> List[str]:
-        """Return IDs of agents visible to the caller.
+        include_inactive: bool = False,
+    ) -> List[Any]:
+        """Return the SQL predicates that select agents visible to the caller.
 
-        Used by list_tasks and list_push_configs_for_dispatch.
-        Pushes visibility filtering into SQL to avoid loading all agents.
+        Disabled agents are excluded unless ``include_inactive`` is true.
 
         Note: admin bypass here requires BOTH token_teams=None AND
         user_email=None.  When token_teams=None but user_email is set
@@ -653,17 +900,27 @@ class A2AAgentService(BaseService):
         _check_agent_access's admin bypass to prevent list_tasks from
         returning private agents owned by other users.
 
-        PR #4341: Admin bypass (user_email=None AND token_teams=None) returns
-        agent IDs for public + team visibility only, explicitly excluding
-        private agents. This aligns with the post-#4341 invariant: admin bypass
-        must not grant visibility to another user's private resources.
-        """
-        # Admin bypass: return public + team agents only (exclude private)
-        if user_email is None and token_teams is None:
-            query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True), DbA2AAgent.visibility.in_(["public", "team"]))
-            return [row[0] for row in query.all()]
+        PR #4341: Admin bypass (user_email=None AND token_teams=None) selects
+        public + team visibility only, explicitly excluding private agents.
+        This aligns with the post-#4341 invariant: admin bypass must not grant
+        visibility to another user's private resources.
 
-        query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))
+        Args:
+            db: Database session.
+            user_email: Email of the caller for owner matching.
+            token_teams: Teams from the token.
+            include_inactive: Keep disabled agents when true.
+
+        Returns:
+            List[Any]: Predicates to combine with AND.
+        """
+        filters: List[Any] = []
+        if not include_inactive:
+            filters.append(DbA2AAgent.enabled.is_(True))
+
+        if user_email is None and token_teams is None:
+            filters.append(DbA2AAgent.visibility.in_(["public", "team"]))
+            return filters
 
         # Build visibility predicate matching _check_agent_access rules.
         visibility_filters = [DbA2AAgent.visibility == "public"]
@@ -676,14 +933,39 @@ class A2AAgentService(BaseService):
             elif token_teams is None and caller_is_admin:
                 # token_teams is None with user_email set → admin with email context
                 visibility_filters.append(DbA2AAgent.visibility == "team")
-            elif token_teams is None:
-                # Non-admin with token_teams=None should not see all team agents.
-                # The user_email check below still grants own-private access.
-                pass
+            # Non-admin with token_teams=None must not see all team agents;
+            # the own-private clause below still applies.
             if user_email:
                 visibility_filters.append(and_(DbA2AAgent.visibility == "private", DbA2AAgent.owner_email == user_email))
 
-        query = query.filter(or_(*visibility_filters))
+        filters.append(or_(*visibility_filters))
+        return filters
+
+    def _visible_agent_ids(
+        self,
+        db: Session,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        include_inactive: bool = False,
+    ) -> List[str]:
+        """Return IDs of agents visible to the caller.
+
+        Used by list_tasks and list_push_configs_for_dispatch.
+        Pushes visibility filtering into SQL to avoid loading all agents.
+        See ``_visible_agent_filters`` for the visibility rules.
+
+        Args:
+            db: Database session.
+            user_email: Email of the caller for owner matching.
+            token_teams: Teams from the token.
+            include_inactive: Keep disabled agents when true.
+
+        Returns:
+            List[str]: Visible agent IDs.
+        """
+        query = db.query(DbA2AAgent.id)
+        for predicate in self._visible_agent_filters(db, user_email, token_teams, include_inactive):
+            query = query.filter(predicate)
         return [row[0] for row in query.all()]
 
     async def _check_agent_access_by_id(
@@ -744,6 +1026,7 @@ class A2AAgentService(BaseService):
         Examples:
             # TODO
         """
+        fetched_card = await self._fetch_registration_card(agent_data.card_url, getattr(agent_data, "auth_type", None), getattr(agent_data, "auth_value", None), str(agent_data.endpoint_url))
         with create_span(
             "a2a.register",
             {
@@ -873,8 +1156,10 @@ class A2AAgentService(BaseService):
                     description=agent_data.description,
                     endpoint_url=agent_data.endpoint_url,
                     agent_type=agent_data.agent_type,
+                    protocol_binding=agent_data.protocol_binding,
                     protocol_version=agent_data.protocol_version,
                     capabilities=agent_data.capabilities,
+                    skills=dump_agent_skills(agent_data.skills) if agent_data.skills is not None else None,
                     config=agent_data.config,
                     auth_type=auth_type,
                     auth_value=auth_value,  # This should be encrypted in practice
@@ -903,6 +1188,9 @@ class A2AAgentService(BaseService):
                 db.commit()
                 db.refresh(new_agent)
 
+                if fetched_card is not None:
+                    self._store_agent_card(db, new_agent, fetched_card)
+
                 # Invalidate caches since agent count changed
                 # Wrapped in try/except to ensure cache failures don't fail the request
                 # when the agent is already successfully committed
@@ -922,19 +1210,7 @@ class A2AAgentService(BaseService):
                 except Exception as cache_error:
                     logger.warning("Cache invalidation failed after agent commit: %s", cache_error)
 
-                try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_publish_a2a_invalidation("agent", name=new_agent.name))
-                except RuntimeError:
-                    pass  # No running event loop (e.g., in tests)
-                except Exception as exc:
-                    # Best-effort, but log so a Redis outage stops being
-                    # invisible — stale Rust L1 caches silently serve old
-                    # agent data until TTL expires.
-                    logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", new_agent.name, exc)
+                _schedule_a2a_invalidation(new_agent.name)
 
                 # Automatically create a tool for the A2A agent if not already present
                 # Tool creation is wrapped in try/except to ensure agent registration succeeds
@@ -1013,6 +1289,356 @@ class A2AAgentService(BaseService):
                 set_span_error(span, e)
                 db.rollback()
                 raise A2AAgentError(f"Failed to register A2A agent: {unexpected_error_detail(e)}")
+
+    @staticmethod
+    async def _fetch_registration_card(
+        card_url: Optional[str], auth_type: Optional[str] = None, auth_value: Optional[str] = None, endpoint_url: Optional[str] = None
+    ) -> Optional[A2AFetchCardResponse]:
+        """Fetch the Agent Card named by ``card_url`` before any write happens.
+
+        The registration credentials of types ``basic``, ``bearer`` and ``authheaders`` go to the
+        card URL only when it shares an origin with ``endpoint_url``. A mistyped or hostile
+        ``card_url`` on another origin never receives them.
+
+        Args:
+            card_url: Agent endpoint or card URL from the registration request, or ``None``.
+            auth_type: Authentication type of the registration request.
+            auth_value: Encoded authentication value of the registration request.
+            endpoint_url: Agent endpoint URL of the registration request.
+
+        Returns:
+            The fetched card, or ``None`` when registration names no card.
+
+        Raises:
+            A2AAgentError: If a card URL is given and no valid card is found there.
+        """
+        if not card_url:
+            return None
+        card_base_url = A2AFetchCardRequest(base_url=card_url).base_url
+        headers: Optional[Dict[str, str]] = None
+        if auth_type in ("basic", "bearer", "authheaders") and auth_value and same_origin(card_base_url, endpoint_url):
+            headers = {str(key): str(value) for key, value in decode_auth(auth_value).items()}
+        request = A2AFetchCardRequest(base_url=card_base_url, headers=headers)
+        fetched = await fetch_agent_card(str(request.base_url), None, request.headers)
+        if fetched.found:
+            if fetched.extended_outcome == "auth_rejected":
+                raise A2AAgentError("The agent rejected the credentials when the extended Agent Card was requested. Supply valid credentials.")
+            return fetched
+        if fetched.outcome == "auth_required":
+            raise A2AAgentError("The Agent Card requires credentials. Supply valid credentials for the card URL.")
+        if fetched.outcome == "unreachable":
+            raise A2AAgentError("The Agent Card URL could not be reached")
+        raise A2AAgentError("No A2A Agent Card was found at the given card URL")
+
+    @staticmethod
+    def _store_agent_card(db: Session, agent: DbA2AAgent, fetched: A2AFetchCardResponse) -> None:
+        """Store the card as fetched as the next version for ``agent``.
+
+        A storage failure is logged and does not undo the committed agent.
+
+        Args:
+            db: Database session.
+            agent: The registered agent row.
+            fetched: The fetched card. ``raw_card`` is ``None`` for a card already in the 1.0 shape, so ``card`` is the document as fetched.
+        """
+        try:
+            latest = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent.id)).scalar() or 0
+            db.add(
+                A2AAgentCard(
+                    a2a_agent_id=agent.id,
+                    version=latest + 1,
+                    kind="public",
+                    card=fetched.raw_card if fetched.raw_card is not None else fetched.card,
+                    detected_version=fetched.detected_version,
+                    source_url=fetched.source_url,
+                    etag=fetched.etag,
+                    max_age=fetched.max_age,
+                )
+            )
+            if fetched.extended_outcome == "found" and fetched.extended_card is not None:
+                db.add(
+                    A2AAgentCard(
+                        a2a_agent_id=agent.id,
+                        version=latest + 2,
+                        kind="extended",
+                        card=fetched.extended_raw_card if fetched.extended_raw_card is not None else fetched.extended_card,
+                        detected_version=fetched.detected_version,
+                        source_url=fetched.source_url,
+                        etag=fetched.extended_etag,
+                        max_age=fetched.extended_max_age,
+                    )
+                )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning("Failed to store Agent Card for A2A agent %s", agent.id, exc_info=True)
+
+    def _reserve_card_refresh(self, agent_id: str) -> None:
+        """Reserve a card re-fetch slot for ``agent_id`` or raise when the interval has not passed.
+
+        Each re-fetch makes an outbound request, so one agent allows one attempt per
+        ``a2a_card_refresh_min_interval`` seconds, failed attempts included. The limit holds per worker.
+
+        Args:
+            agent_id: Agent ID.
+
+        Raises:
+            A2ACardRefreshThrottledError: If the last attempt is younger than the minimum interval.
+        """
+        interval = settings.a2a_card_refresh_min_interval
+        now = time.monotonic()
+        attempts = self._card_refresh_attempts
+        last = attempts.get(agent_id)
+        if interval and last is not None and now - last < interval:
+            raise A2ACardRefreshThrottledError(int(interval - (now - last)) + 1)
+        attempts[agent_id] = now
+        if len(attempts) > 10000:
+            for key in [key for key, value in attempts.items() if now - value >= interval]:
+                del attempts[key]
+
+    @staticmethod
+    def _card_credentials(agent: DbA2AAgent, url: str) -> Optional[Dict[str, str]]:
+        """Return the stored agent credential as headers when ``url`` shares the origin of the endpoint.
+
+        Args:
+            agent: Registered agent row.
+            url: Card URL about to be fetched.
+
+        Returns:
+            Credential headers, or ``None`` when the agent has none or ``url`` is another origin.
+        """
+        if agent.auth_type not in ("basic", "bearer", "authheaders") or not agent.auth_value:
+            return None
+        try:
+            card_url = TypeAdapter(AnyHttpUrl).validate_python(url)
+        except ValidationError:
+            return None
+        if not same_origin(card_url, agent.endpoint_url):
+            return None
+        return {str(key): str(value) for key, value in decode_auth(agent.auth_value).items()}
+
+    async def _fetch_refresh_card(self, agent: DbA2AAgent, latest: Optional[A2AAgentCard], payload: A2ACardRefreshRequest) -> A2AFetchCardResponse:
+        """Fetch the card from the first available URL: caller ``base_url``, stored ``source_url``, then the endpoint.
+
+        Args:
+            agent: Registered agent row.
+            latest: Current stored card, or ``None``.
+            payload: Caller request.
+
+        Returns:
+            The fetch result. The credential of the agent goes only to a URL on the endpoint origin.
+        """
+        if payload.base_url is not None:
+            request = A2AFetchCardRequest(base_url=payload.base_url, headers=payload.headers)
+            return await fetch_agent_card(str(request.base_url), None, request.headers)
+        if latest is not None:
+            fetched = await fetch_agent_card(latest.source_url, None, self._card_credentials(agent, latest.source_url), latest.etag)
+            if fetched.outcome != "no_card":
+                return fetched
+        origin = _origin_of(agent.endpoint_url)
+        if origin is None:
+            return A2AFetchCardResponse(found=False, outcome="no_card")
+        return await fetch_agent_card(origin, None, self._card_credentials(agent, origin))
+
+    @staticmethod
+    def _latest_card(db: Session, agent_id: str, kind: str = "public") -> Optional[A2AAgentCard]:
+        """Return the highest stored card version of one kind for an agent.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            kind: ``public`` or ``extended``.
+
+        Returns:
+            The current card row of that kind, or ``None``.
+        """
+        return db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == kind).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
+
+    async def refresh_card(
+        self,
+        db: Session,
+        agent_id: str,
+        payload: A2ACardRefreshRequest,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2ACardRefreshResponse:
+        """Re-fetch the Agent Card of a registered agent and store a changed card as the next version.
+
+        The caller must pass the ownership check first. The agent row is never written. A failed fetch
+        leaves the stored card unchanged. The database connection returns to the pool before the outbound fetch.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            payload: Optional ``base_url`` and request-only ``headers``.
+            user_email: Requester email for visibility checks.
+            token_teams: Token team scope for visibility checks.
+
+        Returns:
+            Whether the card is unchanged, updated, or created, with the changed top-level keys.
+
+        Raises:
+            A2AAgentError: If no card could be fetched, or the stored card changed during the fetch.
+        """
+        await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+        row = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one()
+        agent = SimpleNamespace(endpoint_url=row.endpoint_url, auth_type=row.auth_type, auth_value=row.auth_value)
+        stored = self._latest_card(db, agent_id)
+        latest = SimpleNamespace(version=stored.version, source_url=stored.source_url, etag=stored.etag, card=stored.card) if stored is not None else None
+        db.commit()
+        db.close()
+
+        self._reserve_card_refresh(agent_id)
+        fetched = await self._fetch_refresh_card(agent, latest, payload)
+        if fetched.outcome == "auth_required":
+            raise A2AAgentError("The Agent Card requires credentials")
+        if fetched.outcome == "unreachable":
+            raise A2AAgentError("The Agent Card URL could not be reached")
+        if not fetched.found and fetched.outcome != "not_modified":
+            raise A2AAgentError("No A2A Agent Card was found")
+        if fetched.outcome == "not_modified" and latest is not None:
+            result = await fetch_stored_extended_card(latest.card, latest.source_url, self._card_credentials(agent, latest.source_url))
+            if result is not None:
+                apply_extended_result(fetched, result)
+        return self._record_card_check(db, agent_id, fetched, latest.version if latest is not None else None)
+
+    @staticmethod
+    def _same_json(first: Any, second: Any) -> bool:
+        """Return whether two JSON values are equal, without treating ``true`` as ``1``.
+
+        Args:
+            first: First JSON value.
+            second: Second JSON value.
+
+        Returns:
+            ``True`` when both serialize to the same JSON.
+        """
+        return json.dumps(first, sort_keys=True, separators=(",", ":")) == json.dumps(second, sort_keys=True, separators=(",", ":"))
+
+    def _store_refreshed_extended_card(self, db: Session, agent_id: str, fetched: A2AFetchCardResponse, now: Any) -> None:
+        """Store a changed extended card as the next version, without committing.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            fetched: Fetch result. Only a ``found`` extended outcome stores a row.
+            now: Time of the check.
+        """
+        if fetched.extended_outcome != "found" or fetched.extended_card is None:
+            return
+        document = fetched.extended_raw_card if fetched.extended_raw_card is not None else fetched.extended_card
+        current = self._latest_card(db, agent_id, "extended")
+        if current is not None and self._same_json(current.card, document):
+            current.checked_at = now
+            return
+        top = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent_id)).scalar() or 0
+        db.add(
+            A2AAgentCard(
+                a2a_agent_id=agent_id,
+                version=top + 1,
+                kind="extended",
+                card=document,
+                detected_version=fetched.detected_version,
+                source_url=fetched.source_url,
+                etag=fetched.extended_etag,
+                max_age=fetched.extended_max_age,
+                fetched_at=now,
+                checked_at=now,
+            )
+        )
+
+    def _record_card_check(self, db: Session, agent_id: str, fetched: A2AFetchCardResponse, base_version: Optional[int] = None) -> A2ACardRefreshResponse:
+        """Store a changed card as the next version, or record the check of an unchanged card.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            fetched: Fetch result with outcome ``found`` or ``not_modified``.
+            base_version: Version of the public card when the fetch started, or ``None`` when none existed.
+
+        Returns:
+            The refresh outcome.
+
+        Raises:
+            A2AAgentError: If the write fails, or another refresh stored a card since the fetch started.
+        """
+        now = utc_now()
+        try:
+            get_for_update(db, DbA2AAgent, agent_id)
+            latest = self._latest_card(db, agent_id)
+            if (latest.version if latest is not None else None) != base_version:
+                db.rollback()
+                raise A2AAgentError("The stored Agent Card changed during the refresh. Try again.")
+            document = (fetched.raw_card if fetched.raw_card is not None else fetched.card) or {}
+            if latest is not None and (fetched.outcome == "not_modified" or self._same_json(latest.card, document)):
+                self._store_refreshed_extended_card(db, agent_id, fetched, now)
+                latest.checked_at = now
+                if fetched.outcome == "not_modified":
+                    if fetched.etag:
+                        latest.etag = fetched.etag
+                    if fetched.max_age is not None:
+                        latest.max_age = fetched.max_age
+                else:
+                    latest.source_url = fetched.source_url
+                    latest.etag = fetched.etag
+                    latest.max_age = fetched.max_age
+                db.commit()
+                return A2ACardRefreshResponse(status="unchanged", version=latest.version, changed_keys=[], source_url=latest.source_url, checked_at=now)
+            previous = latest.card if latest is not None else {}
+            changed = sorted(key for key in set(previous) | set(document) if (key in previous) != (key in document) or not self._same_json(previous.get(key), document.get(key)))
+            top = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent_id)).scalar() or 0
+            version = top + 1
+            db.add(
+                A2AAgentCard(
+                    a2a_agent_id=agent_id,
+                    version=version,
+                    kind="public",
+                    card=document,
+                    detected_version=fetched.detected_version,
+                    source_url=fetched.source_url,
+                    etag=fetched.etag,
+                    max_age=fetched.max_age,
+                    fetched_at=now,
+                    checked_at=now,
+                )
+            )
+            db.flush()
+            self._store_refreshed_extended_card(db, agent_id, fetched, now)
+            db.commit()
+            return A2ACardRefreshResponse(status="updated" if latest is not None else "created", version=version, changed_keys=changed, source_url=fetched.source_url, checked_at=now)
+        except A2AAgentError:
+            raise
+        except IntegrityError as exc:
+            db.rollback()
+            raise A2AAgentError("The stored Agent Card changed during the refresh. Try again.") from exc
+        except Exception as exc:
+            db.rollback()
+            logger.warning("Failed to store refreshed Agent Card for A2A agent %s", agent_id, exc_info=True)
+            raise A2AAgentError("Failed to store the Agent Card") from exc
+
+    async def get_stored_card(
+        self,
+        db: Session,
+        agent_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        kind: str = "public",
+    ) -> Optional[A2AStoredCardRead]:
+        """Return the current stored Agent Card of a visible agent.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Requester email for visibility checks.
+            token_teams: Token team scope for visibility checks.
+            kind: ``public`` for the card read without credentials, ``extended`` for the authenticated extended card.
+
+        Returns:
+            The highest stored card version of that kind, or ``None`` when the agent has none.
+        """
+        await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+        row = db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == kind).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
+        return A2AStoredCardRead.model_validate(row) if row else None
 
     async def list_agents(
         self,
@@ -1527,7 +2153,7 @@ class A2AAgentService(BaseService):
                 "pushNotifications": bool(capabilities.get("pushNotifications", False)),
                 "stateTransitionHistory": bool(capabilities.get("stateTransitionHistory", False)),
             },
-            "skills": capabilities.get("skills") or [],
+            "skills": get_agent_skills(agent),
             "supportsAuthenticatedExtendedCard": True,
         }
 
@@ -1576,7 +2202,7 @@ class A2AAgentService(BaseService):
             "capabilities": card_capabilities,
             "defaultInputModes": capabilities.get("defaultInputModes") or ["text"],
             "defaultOutputModes": capabilities.get("defaultOutputModes") or ["text"],
-            "skills": capabilities.get("skills") or [],
+            "skills": get_agent_skills(agent),
         }
         if agent.icon_url:
             card["iconUrl"] = agent.icon_url
@@ -1717,6 +2343,7 @@ class A2AAgentService(BaseService):
                     continue
 
                 if field == "oauth_config":
+                    _require_secret_reentry_on_token_url_change(value, agent.oauth_config)
                     value = await protect_oauth_config_for_storage(value, existing_oauth_config=agent.oauth_config)
 
                 # Validate team reassignment before persisting
@@ -1734,6 +2361,9 @@ class A2AAgentService(BaseService):
                 # auth_value is persisted by the credential block below, which preserves masked placeholders
                 if field == "auth_value":
                     continue
+
+                if field == "skills" and value is not None:
+                    value = dump_agent_skills(value)
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)
@@ -1917,16 +2547,7 @@ class A2AAgentService(BaseService):
 
             await admin_stats_cache.invalidate_tags()
 
-            try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                loop = asyncio.get_running_loop()
-                loop.create_task(_publish_a2a_invalidation("agent", name=agent.name))
-            except RuntimeError:
-                pass  # No running event loop (e.g., in tests)
-            except Exception as exc:
-                logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent.name, exc)
+            _schedule_a2a_invalidation(agent.name)
 
             # Update the associated tool if it exists
             # Wrap in try/except to handle tool sync failures gracefully - the agent
@@ -2016,6 +2637,8 @@ class A2AAgentService(BaseService):
                 a2a_stats_cache.invalidate()
                 cache = _get_registry_cache()
                 await cache.invalidate_agents()
+                await get_service_token_cache().invalidate(agent_id, A2A_OAUTH_TOKEN_PURPOSE)
+                forget_a2a_oauth_failures(agent_id)
 
                 # Cascade: update associated tool's enabled status to match agent.
                 # This mirrors gateway_service.set_gateway_state() which lets cascade
@@ -2126,22 +2749,15 @@ class A2AAgentService(BaseService):
                 a2a_stats_cache.invalidate()
                 cache = _get_registry_cache()
                 await cache.invalidate_agents()
+                await get_service_token_cache().invalidate(agent_id, A2A_OAUTH_TOKEN_PURPOSE)
+                forget_a2a_oauth_failures(agent_id)
                 # Also invalidate tags cache since agent tags may have changed
                 # First-Party
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
                 await admin_stats_cache.invalidate_tags()
 
-                try:
-                    # Standard
-                    import asyncio  # pylint: disable=import-outside-toplevel
-
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_publish_a2a_invalidation("agent", name=agent_name))
-                except RuntimeError:
-                    pass  # No running event loop (e.g., in tests)
-                except Exception as exc:
-                    logger.warning("Rust-cache invalidation scheduling failed for agent %s: %s", agent_name, exc)
+                _schedule_a2a_invalidation(agent_name)
 
                 logger.info("Deleted A2A agent: %s (ID: %s)", agent_name, agent_id)
 
@@ -2202,6 +2818,122 @@ class A2AAgentService(BaseService):
             downstream_headers = whitelisted_headers  # Include sensitive when flag ON
 
         return plugin_headers, downstream_headers
+
+    async def _load_accessible_agent(self, db: Session, agent_id: str, user_email: Optional[str], token_teams: Optional[List[str]]) -> DbA2AAgent:
+        """Load an agent row once and enforce visibility.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Email used for visibility checks.
+            token_teams: Teams from the token. None means admin bypass, [] means public-only.
+
+        Returns:
+            DbA2AAgent: The agent row.
+
+        Raises:
+            A2AAgentNotFoundError: If the agent is missing or the caller cannot see it.
+        """
+        agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
+        if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
+            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+        return agent
+
+    @staticmethod
+    def _test_failure(status_code: int, error: str, error_type: str, agent_id: str) -> A2ATestOutcome:
+        """Build a failure outcome whose envelope is validated through ``A2ATestError``.
+
+        Args:
+            status_code: HTTP status of the outcome.
+            error: Message returned to the caller.
+            error_type: One of the ``A2ATestError.error_type`` values.
+            agent_id: ID of the tested agent.
+
+        Returns:
+            A2ATestOutcome: Outcome carrying the validated failure envelope.
+        """
+        envelope = A2ATestError(error=error, error_type=error_type, agent_id=agent_id)  # type: ignore[arg-type]
+        return A2ATestOutcome(status_code, envelope.model_dump())
+
+    async def test_agent(
+        self,
+        db: Session,
+        agent_id: str,
+        *,
+        query: Optional[str] = None,
+        interaction_type: str = DEFAULT_A2A_TEST_INTERACTION_TYPE,
+        user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        include_agent_error_detail: bool = False,
+        hop_count: int = 0,
+        bearer_token: Optional[str] = None,
+        content_type: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
+    ) -> A2ATestOutcome:
+        """Invoke an A2A agent with a test message and classify the outcome.
+
+        Missing and inaccessible agents both classify as ``not_found`` so agent existence does not leak.
+        The 404 and 502 responses carry fixed messages unless ``include_agent_error_detail`` is true. The service always logs the exception detail.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            query: Test message. Falls back to ``DEFAULT_A2A_TEST_MESSAGE`` when empty.
+            interaction_type: Interaction source recorded for the invocation.
+            user_email: Email used for visibility checks. None with ``token_teams`` None means admin bypass.
+            user_id: Identity recorded for the invocation.
+            token_teams: Teams from the token. None means admin bypass, [] means public-only.
+            include_agent_error_detail: Return the exception text in the 404 and 502 responses. The Admin UI sets this so operators see the cause.
+            hop_count: Federation hop counter from the inbound request.
+            bearer_token: Bearer token to forward for cross-gateway calls.
+            content_type: Content-Type of the inbound request.
+            request_headers: Inbound request headers for passthrough and plugin context.
+
+        Returns:
+            A2ATestOutcome: HTTP status and response envelope.
+        """
+        log_agent_id = SecurityValidator.sanitize_log_message(agent_id)
+        try:
+            agent = await self._load_accessible_agent(db, agent_id, user_email, token_teams)
+            message = query or DEFAULT_A2A_TEST_MESSAGE
+            if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+                test_params: Dict[str, Any] = {"query": message}
+            else:
+                test_params = {"query": message, "message": message, "test": True, "timestamp": int(time.time())}
+
+            result = await self.invoke_agent(
+                db,
+                agent.name,
+                test_params,
+                interaction_type,
+                agent_id=agent.id,
+                user_email=user_email,
+                user_id=user_id,
+                token_teams=token_teams,
+                hop_count=hop_count,
+                bearer_token=bearer_token,
+                content_type=content_type,
+                request_headers=request_headers,
+            )
+            return A2ATestOutcome(200, {"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
+        except A2AAgentNotFoundError as e:
+            logger.warning("A2A agent not found or access denied for %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(404, str(e) if include_agent_error_detail else A2A_TEST_NOT_FOUND_MESSAGE, "not_found", agent_id)
+        except A2AAgentDisabledError as e:
+            logger.warning("A2A agent %s is disabled: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            if include_agent_error_detail:
+                return self._test_failure(502, str(e), "agent_error", agent_id)
+            return self._test_failure(502, A2A_TEST_AGENT_DISABLED_MESSAGE, "agent_disabled", agent_id)
+        except A2AAgentError as e:
+            logger.error("A2A agent error for %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(502, str(e) if include_agent_error_detail else A2A_TEST_AGENT_ERROR_MESSAGE, "agent_error", agent_id)
+        except ValidationError as e:
+            logger.warning("Validation error testing A2A agent %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(422, ErrorFormatter.format_validation_error(e)["message"], "validation_error", agent_id)
+        except Exception as e:
+            logger.error("Unexpected error testing A2A agent %s: %s", log_agent_id, SecurityValidator.sanitize_log_message(str(e)))
+            return self._test_failure(500, unexpected_error_detail(e), "internal_error", agent_id)
 
     async def invoke_agent(
         self,
@@ -2344,12 +3076,13 @@ class A2AAgentService(BaseService):
             raise A2AAgentNotFoundError(f"A2A Agent not found: {identifier}")
 
         if not agent.enabled:
-            raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
+            raise A2AAgentDisabledError(f"A2A Agent '{agent_name}' is disabled")
 
         # Extract all needed data to local variables before releasing DB connection
         agent_id = agent.id
         agent_endpoint_url = agent.endpoint_url
         agent_type = agent.agent_type
+        agent_protocol_binding = getattr(agent, "protocol_binding", None)
         agent_protocol_version = agent.protocol_version
         agent_auth_type = agent.auth_type
         agent_auth_value = agent.auth_value
@@ -2436,6 +3169,8 @@ class A2AAgentService(BaseService):
         from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
 
         correlation_id = get_correlation_id()
+        oauth_headers = await resolve_a2a_agent_oauth_headers(agent_id, agent_name, agent_endpoint_url, agent_auth_type, agent_oauth_config)
+
         try:
             prepared = prepare_a2a_invocation(
                 agent_type=agent_type,
@@ -2446,8 +3181,10 @@ class A2AAgentService(BaseService):
                 auth_type=agent_auth_type,
                 auth_value=agent_auth_value,
                 auth_query_params=agent_auth_query_params,
+                oauth_headers=oauth_headers,
                 base_headers=downstream_headers,
                 correlation_id=correlation_id,
+                protocol_binding=agent_protocol_binding,
             )
         except Exception as e:
             if agent_auth_type in ("basic", "bearer", "authheaders") and agent_auth_value:
@@ -2641,7 +3378,12 @@ class A2AAgentService(BaseService):
 
                 if status_code == 200:
                     response = response_json if response_json is not None else {"response": response_text}
-                    success = True
+                    jsonrpc_error = _jsonrpc_error_message(response)
+                    if jsonrpc_error is not None:
+                        success = False
+                        error_message = sanitize_exception_message(jsonrpc_error, prepared.sensitive_query_param_names)[: settings.rest_response_text_max_length]
+                    else:
+                        success = True
                     if span and is_output_capture_enabled("a2a.invoke"):
                         set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(response))
 
@@ -2700,7 +3442,7 @@ class A2AAgentService(BaseService):
                         user_email=user_email,
                         correlation_id=correlation_id,
                         duration_ms=call_duration_ms,
-                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": status_code, "success": True},
+                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": status_code, "success": success},
                     )
 
                 else:
@@ -2748,7 +3490,7 @@ class A2AAgentService(BaseService):
                             AgentHookType.AGENT_POST_INVOKE,
                             payload=AgentPostInvokePayload(
                                 agent_id=agent_id,
-                                messages=[{"role": "assistant", "content": response}] if response and success else [],
+                                messages=[{"role": "assistant", "content": response}] if response and isinstance(response, dict) else [],
                                 tool_calls=None,
                             ),
                             global_context=global_context,
@@ -3271,19 +4013,35 @@ class A2AAgentService(BaseService):
             logger.error("Cross-gateway routing transport failure: %s", e)
             raise A2AAgentError(f"Cross-gateway routing failed: {unexpected_error_detail(e)}")
 
-    async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:
-        """Aggregate metrics for all A2A agents.
+    async def aggregate_metrics(
+        self,
+        db: Session,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2AAgentAggregateMetrics:
+        """Aggregate metrics for A2A agents visible to the caller.
 
         Combines recent raw metrics (within retention period) with historical
         hourly rollups for complete historical coverage. Uses in-memory caching
         (10s TTL) to reduce database load under high request rates.
 
+        Calling with ``user_email`` and ``token_teams`` both None aggregates every agent
+        and is reserved for callers already gated on ``admin.metrics``. Any other
+        combination counts only the agents ``_visible_agent_ids`` returns for that
+        caller, including disabled ones, and bypasses the shared cache.
+
         Args:
             db: Database session.
+            user_email: Email of the caller for owner matching in visibility checks.
+            token_teams: Teams from the token. [] = public-only, [...] = team-scoped,
+                None with ``user_email`` set = admin context (public, team and own-private).
 
         Returns:
             A2AAgentAggregateMetrics: Aggregated metrics from raw + hourly rollup tables.
         """
+        if user_email is not None or token_teams is not None:
+            return self._aggregate_scoped_metrics(db, user_email, token_teams)
+
         # Check cache first (if enabled)
         # First-Party
         from mcpgateway.cache.metrics_cache import is_cache_enabled, metrics_cache  # pylint: disable=import-outside-toplevel
@@ -3304,27 +4062,63 @@ class A2AAgentService(BaseService):
 
         result = aggregate_metrics_combined(db, "a2a_agent")
 
-        total_interactions = result.total_executions
-        successful_interactions = result.successful_executions
-        failed_interactions = result.failed_executions
-
-        metrics = A2AAgentAggregateMetrics(
-            total_agents=total_agents,
-            active_agents=active_agents,
-            total_interactions=total_interactions,
-            successful_interactions=successful_interactions,
-            failed_interactions=failed_interactions,
-            success_rate=(successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
-            avg_response_time=float(result.avg_response_time or 0.0),
-            min_response_time=float(result.min_response_time or 0.0),
-            max_response_time=float(result.max_response_time or 0.0),
-        )
+        metrics = self._build_aggregate_metrics(result, total_agents, active_agents)
 
         # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
             metrics_cache.set("a2a", metrics.model_dump())
 
         return metrics
+
+    def _aggregate_scoped_metrics(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> A2AAgentAggregateMetrics:
+        """Aggregate metrics over the agents visible to the caller.
+
+        Visibility stays in SQL as a subquery, so the statement size does not
+        grow with the number of visible agents.
+
+        Args:
+            db: Database session.
+            user_email: Email of the caller for owner matching.
+            token_teams: Teams from the token.
+
+        Returns:
+            A2AAgentAggregateMetrics: Aggregated metrics for the visible agents.
+        """
+        # First-Party
+        from mcpgateway.services.metrics_query_service import aggregate_metrics_combined  # pylint: disable=import-outside-toplevel
+
+        filters = self._visible_agent_filters(db, user_email, token_teams, include_inactive=True)
+        total_agents, active_agents = db.execute(
+            select(func.count(DbA2AAgent.id), func.coalesce(func.sum(case((DbA2AAgent.enabled.is_(True), 1), else_=0)), 0)).where(*filters)  # pylint: disable=not-callable
+        ).one()
+        result = aggregate_metrics_combined(db, "a2a_agent", entity_ids=select(DbA2AAgent.id).where(*filters))
+        return self._build_aggregate_metrics(result, total_agents, int(active_agents))
+
+    @staticmethod
+    def _build_aggregate_metrics(result: Any, total_agents: int, active_agents: int) -> A2AAgentAggregateMetrics:
+        """Build the aggregate metrics model from a combined metrics result.
+
+        Args:
+            result: Combined raw and rollup metrics.
+            total_agents: Number of agents counted.
+            active_agents: Number of enabled agents counted.
+
+        Returns:
+            A2AAgentAggregateMetrics: The aggregate model.
+        """
+        total_interactions = result.total_executions
+        successful_interactions = result.successful_executions
+        return A2AAgentAggregateMetrics(
+            total_agents=total_agents,
+            active_agents=active_agents,
+            total_interactions=total_interactions,
+            successful_interactions=successful_interactions,
+            failed_interactions=result.failed_executions,
+            success_rate=(successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
+            avg_response_time=float(result.avg_response_time or 0.0),
+            min_response_time=float(result.min_response_time or 0.0),
+            max_response_time=float(result.max_response_time or 0.0),
+        )
 
     async def reset_metrics(self, db: Session, agent_id: Optional[str] = None) -> None:
         """Reset metrics for agents (raw + hourly rollups).
@@ -3432,6 +4226,7 @@ class A2AAgentService(BaseService):
         # Build dict from ORM model
         agent_data = {k: getattr(db_agent, k, None) for k in A2AAgentRead.model_fields.keys()}
         agent_data["metrics"] = metrics
+        agent_data["skills"] = get_agent_skills(db_agent)
         agent_data["team"] = getattr(db_agent, "team", None)
         # Include auth_query_params for the _mask_query_param_auth validator
         agent_data["auth_query_params"] = getattr(db_agent, "auth_query_params", None)
@@ -3496,7 +4291,7 @@ class A2AAgentService(BaseService):
             task.payload = payload
         if last_error is not None:
             task.last_error = last_error
-        if state in ("completed", "failed", "canceled"):
+        if is_terminal_task_state(state):
             task.completed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(task)
@@ -3560,13 +4355,165 @@ class A2AAgentService(BaseService):
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
         if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
-        if task.state in ("completed", "failed", "canceled"):
+        if is_terminal_task_state(task.state):
             return self._task_to_wire(task)
         task.state = "canceled"
         task.completed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(task)
         return self._task_to_wire(task)
+
+    async def continue_task(
+        self,
+        db: Session,
+        agent_id: str,
+        task_id: str,
+        message: Dict[str, Any],
+        *,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        hop_count: int = 0,
+        bearer_token: Optional[str] = None,
+        content_type: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Send a follow-up message that belongs to an existing task.
+
+        The message carries ``taskId`` and ``contextId`` in both A2A 0.3 and 1.0, so
+        the agent receives it as part of the stored task. ``invoke_agent`` persists the
+        task state from the agent response, and a ``task_continued`` event records the
+        continuation. The event keeps the message ID and the kind and size of each part, never the
+        content, because a reply to an ``auth-required`` task can carry credentials.
+
+        Two concurrent follow-ups to one task can both pass the state check, and
+        ``_record_task_event`` can then assign the same sequence number to both events.
+
+        Args:
+            db: Database session.
+            agent_id: ID of the agent that owns the task.
+            task_id: Agent-side task ID.
+            message: A2A message object. The gateway sets ``taskId``, ``contextId``, ``role`` and ``messageId``.
+            user_id: Identifier of the user initiating the call.
+            user_email: Email of the user initiating the call.
+            token_teams: Caller's teams for visibility scoping.
+            hop_count: Federation hop counter from the inbound request.
+            bearer_token: Bearer token to forward for cross-gateway RBAC.
+            content_type: Content-Type of the inbound request.
+            request_headers: Inbound request headers for plugin context.
+
+        Returns:
+            The agent response.
+
+        Raises:
+            A2AAgentNotFoundError: If the task does not exist or is not visible.
+            A2ATaskStateError: If the task is in a terminal state.
+            A2AAgentError: If ``message.taskId`` or ``message.contextId`` differs from the stored task,
+                or ``message.role`` is not a user role.
+        """
+        task = await self.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+        if task is None:
+            raise A2AAgentNotFoundError(f"Task '{task_id}' not found")
+        previous_state = task["status"]["state"]
+        if is_terminal_task_state(previous_state):
+            raise A2ATaskStateError(f"Task '{task_id}' is in terminal state '{previous_state}' and cannot accept follow-up messages")
+        follow_up = self._bind_follow_up_message(task, task_id, message)
+
+        response = await self.invoke_agent(
+            db,
+            "",
+            {"message": follow_up, "taskId": task_id},
+            "query",
+            agent_id=agent_id,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            hop_count=hop_count,
+            bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
+        )
+
+        try:
+            updated = await self.get_task(db, task_id, agent_id=agent_id, user_email=user_email, token_teams=token_teams)
+            self._record_task_event(
+                db,
+                agent_id,
+                task_id,
+                "task_continued",
+                {"message_id": follow_up["messageId"], "parts": self._summarize_message_parts(follow_up), "previous_state": previous_state, "state": updated["status"]["state"] if updated else None},
+            )
+        except Exception:
+            db.rollback()
+            logger.warning("Failed to record task_continued event for task_id=%s", task_id, exc_info=True)
+        return response
+
+    @staticmethod
+    def _summarize_message_parts(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Describe each part of a message by kind and size, without its content.
+
+        Args:
+            message: A2A message object.
+
+        Returns:
+            One ``{"kind", "length"}`` entry per part.
+
+        Examples:
+            >>> A2AAgentService._summarize_message_parts({"parts": [{"text": "secret"}, {"kind": "data", "data": {"a": 1}}, "odd"]})
+            [{'kind': 'text', 'length': 6}, {'kind': 'data', 'length': 8}, {'kind': 'unknown', 'length': 0}]
+        """
+        summary: List[Dict[str, Any]] = []
+        for part in message.get("parts") or []:
+            if not isinstance(part, dict):
+                summary.append({"kind": "unknown", "length": 0})
+                continue
+            kind = part.get("kind") or next((key for key in ("text", "raw", "url", "data", "file") if key in part), "unknown")
+            summary.append({"kind": kind, "length": len(str(part.get(kind, "")))})
+        return summary
+
+    @staticmethod
+    def _bind_follow_up_message(task: Dict[str, Any], task_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the follow-up message from the caller's message and the stored task.
+
+        The gateway owns the identity fields. The stored task supplies ``taskId`` and ``contextId``,
+        the gateway generates ``messageId``, and ``role`` is always the user role. A caller value
+        for ``taskId`` or ``contextId`` that differs from the stored task, or a ``role`` other than
+        the user role, is rejected. A caller ``messageId`` is replaced.
+
+        Args:
+            task: The stored task in wire format.
+            task_id: Agent-side task ID from the request path.
+            message: A2A message object from the caller.
+
+        Returns:
+            The message to send to the agent.
+
+        Raises:
+            A2AAgentError: If a caller value contradicts the stored task or the user role.
+        """
+        context_id = task.get("contextId")
+        for field, expected in (("taskId", task_id), ("contextId", context_id)):
+            supplied = message.get(field)
+            if supplied is not None and supplied != expected:
+                raise A2AAgentError(f"message.{field} does not match task '{task_id}'")
+        role = message.get("role")
+        if role is not None and str(role).strip().lower().removeprefix("role_") != "user":
+            raise A2AAgentError("message.role must be the user role")
+
+        follow_up = {**message, "messageId": f"contextforge-{uuid.uuid4().hex}", "role": "user", "taskId": task_id}
+        if context_id:
+            follow_up["contextId"] = context_id
+        return follow_up
+
+    @staticmethod
+    def _record_task_event(db: Session, agent_id: str, task_id: str, event_type: str, payload: Dict[str, Any]) -> None:
+        """Append an event to the task log with the next sequence number."""
+        # First-Party
+        from mcpgateway.db import A2ATaskEvent  # pylint: disable=import-outside-toplevel
+
+        last_sequence = db.query(func.max(A2ATaskEvent.sequence)).filter(A2ATaskEvent.task_id == task_id, A2ATaskEvent.a2a_agent_id == agent_id).scalar()
+        db.add(A2ATaskEvent(a2a_agent_id=agent_id, task_id=task_id, event_id=str(uuid.uuid4()), sequence=(last_sequence or 0) + 1, event_type=event_type, payload=payload))
+        db.commit()
 
     @staticmethod
     def _resolve_unique_task(db: Session, task_id: str, agent_id: Optional[str]) -> Optional[A2ATask]:

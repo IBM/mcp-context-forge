@@ -43,6 +43,16 @@ config:
   # MD033: false  # Inline HTML
   # MD041: false  # First line in file should be a heading
 
+# Issue templates are issue bodies, not documents. Accept the template
+# name (`name:`) in front matter as the title for MD041.
+overrides:
+  - filter:
+      - ".github/ISSUE_TEMPLATE/**"
+    config:
+      MD041:
+        front_matter_title: "^\\s*(name|title)\\s*[:=]"
+    combine: merge
+
 # Show progress while linting
 showProgress: true
 

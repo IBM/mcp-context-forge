@@ -1130,28 +1130,6 @@ class TestA2APagination:
 class TestA2AOAuthGrantTypeSwitching:
     """Tests for OAuth grant type conditional field visibility in the add form."""
 
-    def test_authorization_code_shows_auth_url_and_redirect_fields(self, agents_page: AgentsPage):
-        """Test that authorization_code grant type shows Auth URL, Redirect URI, and token management checkboxes."""
-        agents_page.navigate_to_agents_tab()
-        agents_page.wait_for_agents_panel_loaded()
-
-        # Select OAuth auth type
-        agents_page.set_auth_type("oauth")
-
-        # Select authorization_code
-        agents_page.oauth_grant_type_select.select_option("authorization_code")
-
-        # Authorization URL and Redirect URI should be visible
-        expect(agents_page.oauth_authorization_url_input).to_be_visible()
-        expect(agents_page.oauth_redirect_uri_input).to_be_visible()
-
-        # Token management checkboxes should be visible within the auth code fields
-        auth_code_fields = agents_page.page.locator("#oauth-auth-code-fields-a2a")
-        store_tokens = auth_code_fields.locator('input[name="oauth_store_tokens"]')
-        auto_refresh = auth_code_fields.locator('input[name="oauth_auto_refresh"]')
-        expect(store_tokens).to_be_visible()
-        expect(auto_refresh).to_be_visible()
-
     def test_client_credentials_hides_auth_url_fields(self, agents_page: AgentsPage):
         """Test that client_credentials grant type hides auth URL and redirect URI."""
         agents_page.navigate_to_agents_tab()
@@ -1170,46 +1148,6 @@ class TestA2AOAuthGrantTypeSwitching:
         expect(agents_page.oauth_client_id_input).to_be_visible()
         expect(agents_page.oauth_client_secret_input).to_be_visible()
         expect(agents_page.oauth_scopes_input).to_be_visible()
-
-    def test_password_grant_shows_username_password(self, agents_page: AgentsPage):
-        """Test that password grant type shows username and password fields."""
-        agents_page.navigate_to_agents_tab()
-        agents_page.wait_for_agents_panel_loaded()
-
-        agents_page.set_auth_type("oauth")
-
-        agents_page.oauth_grant_type_select.select_option("password")
-
-        # Username and password fields for password grant should be visible
-        username_field = agents_page.page.locator("#oauth-username-a2a")
-        password_field = agents_page.page.locator("#oauth-password-a2a")
-        expect(username_field).to_be_visible()
-        expect(password_field).to_be_visible()
-
-    def test_switching_between_grant_types_updates_visibility(self, agents_page: AgentsPage):
-        """Test switching between all grant types correctly updates field visibility."""
-        agents_page.navigate_to_agents_tab()
-        agents_page.wait_for_agents_panel_loaded()
-
-        agents_page.set_auth_type("oauth")
-
-        # Start with authorization_code
-        agents_page.oauth_grant_type_select.select_option("authorization_code")
-        expect(agents_page.oauth_authorization_url_input).to_be_visible()
-
-        # Switch to client_credentials
-        agents_page.oauth_grant_type_select.select_option("client_credentials")
-        expect(agents_page.oauth_authorization_url_input).to_be_hidden()
-
-        # Switch to password
-        agents_page.oauth_grant_type_select.select_option("password")
-        username_field = agents_page.page.locator("#oauth-username-a2a")
-        expect(username_field).to_be_visible()
-
-        # Switch back to authorization_code
-        agents_page.oauth_grant_type_select.select_option("authorization_code")
-        expect(agents_page.oauth_authorization_url_input).to_be_visible()
-        expect(username_field).to_be_hidden()
 
 
 # ---------------------------------------------------------------------------

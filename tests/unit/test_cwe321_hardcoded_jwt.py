@@ -70,7 +70,6 @@ class TestValidateSecretsRaisesInNonDev:
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
-PLACEHOLDER = "__REPLACE_ME__"
 
 
 class TestEnvExampleSanity:
@@ -89,9 +88,9 @@ class TestEnvExampleSanity:
         bad = [ln for ln in active if re.match(r"AUTH_ENCRYPTION_SECRET\s*=\s*my-test-salt", ln)]
         assert not bad, f"Live weak AUTH_ENCRYPTION_SECRET found in .env.example: {bad}"
 
-    def test_jwt_secret_key_line_has_placeholder(self):
-        content = ENV_EXAMPLE.read_text()
-        assert f"JWT_SECRET_KEY={PLACEHOLDER}" in content, f"Expected JWT_SECRET_KEY={PLACEHOLDER} in .env.example"
+    def test_jwt_secret_key_line_is_empty(self):
+        jwt_lines = [ln.strip() for ln in self._active_lines() if re.match(r"JWT_SECRET_KEY\s*=", ln)]
+        assert jwt_lines == ["JWT_SECRET_KEY="], f"Expected an empty JWT_SECRET_KEY in .env.example, found: {jwt_lines}"
 
 
 class TestBootstrapIsAdmin:

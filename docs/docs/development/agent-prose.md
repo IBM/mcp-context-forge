@@ -157,11 +157,13 @@ The content is complete: risk, rationale, and scope. Question framing and compou
 
 After — the same finding in the house format:
 
-```text
-suggestion | docker-compose.yml:1197 | The pinned tag …:0.2.1 is mutable at the registry; this BFF handles user sessions, so a retargeted tag silently changes deployed code | Pin the digest (…:0.2.1@sha256:…) in docker-compose.yml, the documented example, and the release verification step
+```markdown
+**suggestion** · `docker-compose.yml:1197`
+Problem: The pinned tag …:0.2.1 is mutable at the registry. This BFF handles user sessions, so a retargeted tag silently changes deployed code.
+Fix: Pin the digest (…:0.2.1@sha256:…) in docker-compose.yml, the documented example, and the release verification step.
 ```
 
-Nothing is lost: the retarget risk, the session sensitivity, and the three places to update all survive. Severity, location, problem, fix. One line. See *PR Review* in the root `AGENTS.md` for the severity taxonomy and blocking criteria.
+Nothing is lost: the retarget risk, the session sensitivity, and the three places to update all survive. Severity, location, problem, fix. Compact and readable. See the `pr-review` skill (`.agents/skills/pr-review/SKILL.md`) for the severity taxonomy and blocking criteria.
 
 ### Issue body
 

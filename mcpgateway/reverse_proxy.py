@@ -34,7 +34,6 @@ import asyncio
 from contextlib import suppress
 from enum import Enum
 import logging
-import os
 import shlex
 import signal
 import sys
@@ -65,6 +64,7 @@ except ImportError:
     yaml = None  # type: ignore[assignment]
 
 # First-Party
+from mcpgateway.config_sections import ReverseProxySettings
 from mcpgateway.services.logging_service import LoggingService
 
 # Type alias for the websocket client protocol to avoid hard dependency at type-check time
@@ -695,15 +695,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     if args.verbose:
         args.log_level = "DEBUG"
 
+    proxy_settings = ReverseProxySettings()
+
     # Get gateway from environment if not provided
     if not args.gateway:
-        args.gateway = os.getenv(ENV_GATEWAY)
+        args.gateway = proxy_settings.reverse_proxy_gateway
         if not args.gateway:
             parser.error("--gateway or REVERSE_PROXY_GATEWAY environment variable required")
 
     # Get token from environment if not provided
     if not args.token:
-        args.token = os.getenv(ENV_TOKEN)
+        args.token = proxy_settings.reverse_proxy_token.get_secret_value() if proxy_settings.reverse_proxy_token else None
 
     # Load configuration file if provided
     if args.config:

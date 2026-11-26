@@ -7,9 +7,11 @@ Comprehensive tests for Team Management Service functionality.
 """
 
 # Standard
+from collections.abc import Iterator
 import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -1898,7 +1900,7 @@ class TestTeamManagementService:
         """Test cancel_join_request returns False when missing."""
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        result = await service.cancel_join_request("req-1", "user@example.com")
+        result = await service.cancel_join_request("req-1", "user@example.com", "team-1")
 
         assert result is False
 
@@ -1910,7 +1912,7 @@ class TestTeamManagementService:
         join_request.team_id = "team-1"
         mock_db.query.return_value.filter.return_value.first.return_value = join_request
 
-        result = await service.cancel_join_request("req-1", "user@example.com")
+        result = await service.cancel_join_request("req-1", "user@example.com", "team-1")
 
         assert result is True
         assert join_request.status == "cancelled"
@@ -1921,7 +1923,7 @@ class TestTeamManagementService:
         """Test cancel_join_request handles database errors."""
         mock_db.query.side_effect = Exception("Database error")
 
-        result = await service.cancel_join_request("req-1", "user@example.com")
+        result = await service.cancel_join_request("req-1", "user@example.com", "team-1")
 
         assert result is False
         mock_db.rollback.assert_called_once()
@@ -3017,3 +3019,65 @@ class TestTransientTeamFromDict:
         assert rebuilt.is_active is True
         assert rebuilt.created_at is not None
         assert rebuilt.updated_at is not None
+
+
+@pytest.fixture
+def team_scope_database() -> Iterator[Session]:
+    """Provide an isolated database for persisted scope and target-binding checks."""
+    from sqlalchemy import create_engine
+    from mcpgateway.db import Base
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all([EmailUser(email=email, password_hash="", full_name="Scope Fixture") for email in ("owner@example.com", "other@example.com")])
+        db.flush()
+        db.add_all([
+            EmailTeam(id="a", name="Alpha", slug="alpha", created_by="owner@example.com", visibility="private", is_personal=False),
+            EmailTeam(id="b", name="Beta", slug="beta", created_by="owner@example.com", visibility="private", is_personal=False),
+            EmailTeam(id="inactive", name="Inactive", slug="inactive", created_by="owner@example.com", visibility="public", is_personal=False, is_active=False),
+            EmailTeam(id="personal", name="Personal", slug="personal", created_by="owner@example.com", is_personal=True),
+            EmailTeam(id="other-personal", name="Other", slug="other", created_by="other@example.com", is_personal=True),
+        ])
+        db.commit()
+        yield db
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope,filters,expected", [
+    (None, {}, {"a", "b", "personal"}),
+    (["a"], {}, {"a"}),
+    ([], {}, set()),
+    (["personal", "other-personal"], {}, {"personal"}),
+    (["inactive"], {}, set()),
+    (["inactive"], {"include_inactive": True, "visibility_filter": "public"}, {"inactive"}),
+    (["a", "b"], {"search_query": "Alpha"}, {"a"}),
+    (["a", "b"], {"visibility_filter": "public"}, set()),
+])
+async def test_team_id_scope_preserves_existing_filters(team_scope_database: Session, scope: list[str] | None, filters: dict[str, Any], expected: set[str]) -> None:
+    """SQL filtering respects narrowing, personal teams, visibility, activity, and search."""
+    ids = await TeamManagementService(team_scope_database).get_all_team_ids(team_ids=scope, personal_owner_email="owner@example.com", **filters)
+    assert set(ids) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url_team,caller,initial,allowed", [
+    ("a", "owner@example.com", "pending", False),
+    ("missing", "owner@example.com", "pending", False),
+    ("b", "other@example.com", "pending", False),
+    ("b", "owner@example.com", "approved", False),
+    ("b", "owner@example.com", "pending", True),
+])
+async def test_cancellation_binds_team_caller_and_pending_state(team_scope_database: Session, url_team: str, caller: str, initial: str, allowed: bool) -> None:
+    """A requester can withdraw only their matching pending record without team membership."""
+    db = team_scope_database
+    db.add(EmailTeamJoinRequest(id="request-b", team_id="b", user_email="owner@example.com", status=initial, expires_at=datetime.now(timezone.utc) + timedelta(days=1)))
+    db.commit()
+    result = await TeamManagementService(db).cancel_join_request("request-b", caller, url_team)
+    assert result is allowed
+    with Session(db.get_bind()) as independent:
+        stored = independent.get(EmailTeamJoinRequest, "request-b")
+        assert stored.status == ("cancelled" if allowed else initial)
+        assert stored.reviewed_by == (caller if allowed else None)
+        assert independent.query(EmailTeamMember).filter_by(user_email=caller, team_id="b").count() == 0

@@ -956,6 +956,7 @@ class SessionRegistry(SessionBackend):
             try:
 
                 def _db_get_owner() -> Optional[str]:
+                    """Read the session owner's email from the stored record."""
                     db_session = next(get_db())
                     try:
                         record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
@@ -2083,11 +2084,12 @@ class SessionRegistry(SessionBackend):
         # First-Party
         from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
         from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.server_oauth import server_oauth_is_approved  # pylint: disable=import-outside-toplevel
 
         db = SessionLocal()
         try:
             server = db.get(DbServer, server_id)
-            if server and getattr(server, "oauth_enabled", False) and getattr(server, "oauth_config", None):
+            if server_oauth_is_approved(server) and getattr(server, "oauth_config", None):
                 # Filter oauth_config to RFC 9728-safe fields only (never expose secrets)
                 oauth_config = server.oauth_config
                 safe_oauth: Dict[str, Any] = {}

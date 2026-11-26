@@ -116,7 +116,7 @@ Importing configuration from my-first-export.json
 # Test skip strategy (won't modify existing entities)
 mcpgateway import my-first-export.json --conflict-strategy skip --dry-run
 
-# Test rename strategy (creates new entities with timestamp)
+# Test rename strategy (creates new entities with a numbered suffix)
 mcpgateway import my-first-export.json --conflict-strategy rename --dry-run
 
 # Test fail strategy (stops on first conflict)
@@ -169,12 +169,7 @@ mcpgateway import production-config.json --include "tools:weather_api;servers:*"
 
 ## 🌍 Tutorial 4: Cross-Environment Migration
 
-Migrate configuration from staging to production with different encryption keys.
-
-### Scenario Setup
-
-- **Staging**: `AUTH_ENCRYPTION_SECRET=staging-secret-123`
-- **Production**: `AUTH_ENCRYPTION_SECRET=prod-secret-xyz`
+Migrate configuration from staging to production. Configure credentials on production after import.
 
 ### Step 1: Export from Staging
 
@@ -189,13 +184,11 @@ mcpgateway export --tags production-ready --out staging-to-prod.json
 # On production environment
 # First, validate with dry-run
 mcpgateway import staging-to-prod.json \
-  --rekey-secret prod-secret-xyz \
   --conflict-strategy update \
   --dry-run
 
 # If validation passes, perform actual import
 mcpgateway import staging-to-prod.json \
-  --rekey-secret prod-secret-xyz \
   --conflict-strategy update
 ```
 
@@ -211,6 +204,8 @@ Importing configuration from staging-to-prod.json
    • Skipped: 0
    • Failed: 0
 ```
+
+If you use the import API, check `credentials_required` in its response. Configure credentials for the listed entities before using them. A gateway that needs credentials stays pending until you configure them.
 
 ---
 
@@ -299,7 +294,6 @@ fi
 set -e
 
 STAGING_CONFIG="staging-export.json"
-PROD_SECRET="${PROD_ENCRYPTION_SECRET:-prod-secret-key}"
 
 echo "🚀 Promoting staging configuration to production"
 
@@ -314,7 +308,6 @@ echo "📊 Exported $ENTITY_COUNT entities from staging"
 # Dry run import to production
 echo "🔍 Validating import to production..."
 mcpgateway import "$STAGING_CONFIG" \
-  --rekey-secret "$PROD_SECRET" \
   --conflict-strategy update \
   --dry-run
 
@@ -324,7 +317,6 @@ echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "📥 Importing to production..."
     mcpgateway import "$STAGING_CONFIG" \
-      --rekey-secret "$PROD_SECRET" \
       --conflict-strategy update \
       --verbose
     echo "✅ Production promotion completed!"

@@ -1,4 +1,5 @@
 import { getAuthHeaders } from "./auth.js";
+import { escapeHtml } from "./security.js";
 import {
   displayImportResults,
   refreshCurrentTabData,
@@ -89,14 +90,14 @@ export const displayImportPreview = function (preview) {
                                 <label class="flex items-start cursor-pointer">
                                     <input type="checkbox"
                                         class="gateway-checkbox mt-1 mr-3"
-                                        data-gateway="${gatewayName}"
+                                        data-gateway="${escapeHtml(gatewayName)}"
                                         data-action="update-count">
                                     <div class="flex-1">
                                         <div class="font-medium text-gray-900 dark:text-white">
-                                            ${bundle.gateway.name}
+                                            ${escapeHtml(bundle.gateway.name)}
                                         </div>
                                         <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">
-                                            ${bundle.gateway.description || "No description"}
+                                            ${escapeHtml(bundle.gateway.description || "No description")}
                                         </div>
                                         <div class="text-xs text-blue-600 dark:text-blue-400">
                                             Bundle includes: ${bundle.total_items} items
@@ -142,11 +143,11 @@ export const displayImportPreview = function (preview) {
                                         <input type="checkbox"
                                             class="item-checkbox mt-1 mr-3"
                                             data-type="${entityType}"
-                                            data-id="${item.id}"
+                                            data-id="${escapeHtml(item.id)}"
                                             data-action="update-count">
                                         <div class="flex-1">
                                             <div class="text-sm font-medium text-gray-900 dark:text-white">
-                                                ${item.name}
+                                                ${escapeHtml(item.name)}
                                                 ${
   item.conflicts_with
     ? '<span class="text-orange-600 text-xs ml-1">⚠️ Conflict</span>'
@@ -154,7 +155,7 @@ export const displayImportPreview = function (preview) {
 }
                                             </div>
                                             <div class="text-xs text-gray-500 dark:text-gray-400">
-                                                ${item.description || `Custom ${entityType} item`}
+                                                ${escapeHtml(item.description || `Custom ${entityType} item`)}
                                             </div>
                                         </div>
                                     </label>
@@ -273,14 +274,14 @@ export const handleSelectiveImport = async function (dryRun = false) {
 
     const conflictStrategy =
       safeGetElement("import-conflict-strategy")?.value || "update";
-    const rekeySecret = safeGetElement("import-rekey-secret")?.value || null;
+    const teamName = safeGetElement("import-team-name")?.value.trim() || null;
 
     const requestData = {
       import_data: window.Admin.currentImportData,
       conflict_strategy: conflictStrategy,
       dry_run: dryRun,
-      rekey_secret: rekeySecret,
-      selectedEntities,
+      team_name: teamName,
+      selected_entities: selectedEntities,
     };
 
     console.log("🎯 Selected entities for import:", selectedEntities);

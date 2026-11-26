@@ -640,13 +640,26 @@ class CatalogService:
                 # First-Party
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
-                # Carry any OAuth credentials the caller supplied (issuer, scopes, and
-                # optionally client_id/client_secret/token_url/authorization_url) onto the
-                # gateway up front, so a second PUT /gateways/{id} is never required (#5967).
+                # Start with catalog OAuth defaults and apply caller overrides.
+                # Persist the result up front so registration needs no second PUT /gateways/{id}.
                 # Whatever is left blank (client_id/secret, token/authorization URLs) is filled
                 # in later - automatically for providers that support discovery/DCR - by the
                 # existing GET /oauth/authorize/{gateway_id} flow.
-                gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(request.oauth_credentials if request else None)
+                # Blank submitted values (None, "", [] - e.g. optional URL fields the web form sends
+                # empty) must not mask a non-empty catalog default, so drop them before merging.
+                submitted_credentials = {k: v for k, v in ((request.oauth_credentials if request else None) or {}).items() if v not in (None, "", [])}
+                catalog_oauth = dict(server_data.get("oauth") or {})
+                # A submitted issuer that differs from the catalog one names another authorization server,
+                # so the catalog endpoints (which belong to the catalog issuer) must not be paired with it.
+                if submitted_credentials.get("issuer") and submitted_credentials["issuer"] != catalog_oauth.get("issuer"):
+                    catalog_oauth.pop("authorization_url", None)
+                    catalog_oauth.pop("token_url", None)
+                # Without a client_id, an issuer routes /oauth/authorize through DCR; skip the catalog
+                # issuer for providers that do not support it so they keep failing on the missing client_id.
+                if catalog_oauth.get("supports_dcr") is False and not submitted_credentials.get("client_id") and "issuer" not in submitted_credentials:
+                    catalog_oauth.pop("issuer", None)
+                oauth_credentials = {**catalog_oauth, **submitted_credentials}
+                gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(oauth_credentials)
 
                 # Runs the same URL/SSRF and grant-type validation normal gateway registration
                 # applies (GatewayCreate.validate_oauth_config); oauth_config round-trips through

@@ -40,6 +40,8 @@ from mcpgateway.schemas import (
     AuthenticationResponse,
     AuthEventResponse,
     ChangePasswordRequest,
+    CurrentUserResponse,
+    FeatureFlags,
     CursorPaginatedUsersResponse,
     EmailLoginRequest,
     EmailUserResponse,
@@ -49,6 +51,7 @@ from mcpgateway.schemas import (
     ResetPasswordRequest,
     SuccessResponse,
 )
+from mcpgateway.services.a2a_service import a2a_enabled
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
@@ -97,23 +100,15 @@ def get_db():
 def get_client_ip(request: Request) -> str:
     """Extract client IP address from request.
 
+    ``request.client`` is already resolved from X-Forwarded-For by
+    ``ProxyHeadersMiddleware`` for peers in ``FORWARDED_ALLOW_IPS``.
+
     Args:
         request: FastAPI request object
 
     Returns:
         str: Client IP address
     """
-    # Check for X-Forwarded-For header (proxy/load balancer)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-
-    # Check for X-Real-IP header
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip
-
-    # Fall back to direct client IP
     return request.client.host if request.client else "unknown"
 
 
@@ -550,7 +545,7 @@ async def complete_password_reset(token: str, reset_request: ResetPasswordReques
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-@email_auth_router.get("/me", response_model=EmailUserResponse)
+@email_auth_router.get("/me", response_model=CurrentUserResponse)
 async def get_current_user_profile(current_user: EmailUser = Depends(get_current_user)):
     """Get current user's profile information.
 
@@ -558,7 +553,7 @@ async def get_current_user_profile(current_user: EmailUser = Depends(get_current
         current_user: Currently authenticated user
 
     Returns:
-        EmailUserResponse: User profile information
+        CurrentUserResponse: User profile information and deployment feature flags
 
     Raises:
         HTTPException: If user authentication fails
@@ -567,7 +562,8 @@ async def get_current_user_profile(current_user: EmailUser = Depends(get_current
         >>> # GET /auth/email/me
         >>> # Headers: Authorization: Bearer <token>
     """
-    return EmailUserResponse.from_email_user(current_user)
+    profile = EmailUserResponse.from_email_user(current_user)
+    return CurrentUserResponse(**profile.model_dump(), features=FeatureFlags(a2a=a2a_enabled()))
 
 
 @email_auth_router.get("/events", response_model=list[AuthEventResponse])

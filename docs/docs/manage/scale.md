@@ -1027,6 +1027,19 @@ REDIS_LEADER_TTL=10
 REDIS_LEADER_HEARTBEAT_INTERVAL=3
 ```
 
+### Redis Cluster Mode
+
+Set `REDIS_CLUSTER_MODE=true` to use `redis.asyncio.RedisCluster` and stop `MOVED`/`ASK` crash-loops in leader election. `/0` in `REDIS_URL` is stripped; any other database number fails at startup. `REDIS_SSL*` settings apply to the cluster client.
+
+Cluster mode has these limitations:
+
+- **Cross-slot `MGET`.** `RedisCluster` rejects an `MGET` whose keys map to different slots. Two callers batch untagged keys: `plugins/gateway_plugin_manager.py` (plugin mode overrides) and `services/team_management_service.py` (team member counts). Both catch the error and fall back to non-Redis data.
+- **Clients outside the shared factory.** Only the client from `get_redis_client()` honors `REDIS_CLUSTER_MODE`. These code paths create their own standalone client from `REDIS_URL` and can still receive `MOVED`: `auth.py` (sync and rate-limiter clients), `services/token_blocklist_service.py`, `services/token_exchange_cache.py`, and the `primary_worker_multiinstance`, `unified_pdp`, and `llmguard` plugins. Do not enable these paths on a Redis Cluster.
+- **Ignored settings.** `REDIS_PARSER` and `REDIS_RETRY_ON_TIMEOUT` have no effect, because `RedisCluster` does not accept them.
+- **Pool size per node.** `REDIS_MAX_CONNECTIONS` applies to each cluster node. The total number of sockets grows with the number of nodes.
+- **One seed node.** `REDIS_URL` names one seed node, and the client discovers the other nodes from it. Startup fails when that node is down. When nodes announce internal addresses that the gateway cannot reach (NAT, containers), discovery fails.
+- **TLS.** The URL password goes to every discovered node. Enable `REDIS_SSL=true` in production. Use `REDIS_SSL_CHECK_HOSTNAME=false` only with self-signed test certificates.
+
 ### Hiredis High-Performance Parser
 
 ContextForge uses `redis[hiredis]` for significantly faster Redis protocol parsing, especially beneficial for large responses.

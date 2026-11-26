@@ -9,11 +9,147 @@
 
 ## [Unreleased]
 
+=======
+
+- **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.
+  Configure credentials again after restoring into an empty registry. A gateway that needs credentials stays pending.
+  The CLI removes `--rekey-secret`, and the import API rejects `rekey_secret` with HTTP 400.
+  Use `python -m mcpgateway.scripts.migrate_enc_secret` to [rotate the encryption secret](docs/docs/operations/auth-encryption-secret-rotation.md).
+- **Admin config endpoint masks all connection URLs** - `GET /admin/config/settings` now returns `settings.masked_auth_value` (`*****`) for any non-empty `database_url` or `redis_url`. Previously, URLs without credentials (such as default `sqlite:///./mcp.db` or `redis://localhost:6379/0`) appeared in cleartext. Clients and operators can no longer inspect backend hostnames or database types through this endpoint.
+- **Virtual-server OAuth requires administrator approval** - Only unrestricted platform administrators can submit
+  `oauth_enabled` or `oauth_config`. Non-admin clients must omit both fields, including unchanged values and defaults,
+  or receive HTTP 403. Migration `b7e291a4c630` marks existing configurations unapproved while retaining their settings.
+  Tokens from a pending server issuer receive HTTP 503. Protected-resource metadata excludes pending issuers.
+  Deploy the migration and application together. Restart all workers to stop existing authenticated streams.
+  Review each issuer with unrestricted administrator credentials, then approve the reviewed server version through
+  `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
+  See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
+
+
+## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
+
+### Overview
+
+Release 1.1.2 adds **MCP subscriptions**, **A2A Agent Cards**, **AWS Signature V4 authentication**, and **Redis Cluster support**. It also changes tool response filters to CEL and adds approval for virtual-server OAuth. This section covers **78 PRs merged directly into `main`**.
+
+- **Protocol & Transport** - Modern MCP clients can receive catalog and resource updates. The gateway relays client input requests for prompts and resources.
+- **API & Platform** - A2A gains Agent Card fetch and storage, task follow-ups, agent testing, scoped metrics, and virtual-server interfaces.
+- **Security & Auth** - SigV4 signs gateway and REST tool requests. Expiring JWS signatures cover propagated identity claims. Virtual-server OAuth requires administrator approval.
+- **Operations & Tooling** - Redis Cluster support, upstream session tracing, and startup warnings help operators manage deployments.
+
+### Deprecation Notice
+
+- The Rust MCP and A2A runtime sidecars are removed. Use the Python MCP transport and Python A2A invocation path.
+
+- ValidationMiddleware remains deprecated since 2026-06-11, past its 2026-07-07 sunset. Use endpoint-level Pydantic or protocol-specific validation. See [Deprecations](../docs/docs/deprecations.md).
+
 ### Added
 
-- **`subscriptions/listen` server support** ([#6573](https://github.com/IBM/mcp-context-forge/issues/6573)) - 2026-07-28 clients on streamable HTTP can open a `subscriptions/listen` stream and receive `tools`, `prompts`, and `resources` list-changed events. Each requested kind passes the same token-scope gate as its `*/list` call. Streams end at the token expiry or after `MCP_LISTEN_MAX_LIFETIME_SECONDS` (default `3600`); the gateway sends `notifications/cancelled` naming the listen request, then the completion result. Each worker limits concurrent streams to `MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL` (default `32`) per authenticated principal and `MCP_LISTEN_MAX_ANONYMOUS_STREAMS` (default `256`, `0` refuses anonymous streams) for all anonymous callers together; a stream past a limit gets `-32603` `Subscription limit reached`. Events cross workers only with `CACHE_TYPE=redis`. `POST /rpc` returns `-32601` for `subscriptions/listen`.
+#### **Protocol & Transport**
+
+- **`subscriptions/listen` server support** ([#6573](https://github.com/IBM/mcp-context-forge/issues/6573), [#7414](https://github.com/IBM/mcp-context-forge/pull/7414)) - 2026-07-28 clients on streamable HTTP can open a `subscriptions/listen` stream and receive `tools`, `prompts`, and `resources` list-changed events. Each requested kind passes the same token-scope gate as its `*/list` call. Streams end at the token expiry or after `MCP_LISTEN_MAX_LIFETIME_SECONDS` (default `3600`); the gateway sends `notifications/cancelled` naming the listen request, then the completion result. Each worker limits concurrent streams to `MCP_LISTEN_MAX_STREAMS_PER_PRINCIPAL` (default `32`) per authenticated principal and `MCP_LISTEN_MAX_ANONYMOUS_STREAMS` (default `256`, `0` refuses anonymous streams) for all anonymous callers together; a stream past a limit gets `-32603` `Subscription limit reached`. Events cross workers only with `CACHE_TYPE=redis`. `POST /rpc` returns `-32601` for `subscriptions/listen`.
+
+- **Upstream input requests for prompts and resources** ([#7487](https://github.com/IBM/mcp-context-forge/pull/7487)) - Relay requests for client input during `prompts/get` and `resources/read`.
+
+#### **API & Platform**
+
+- **`mcpServerId` in responses** ([#6544](https://github.com/IBM/mcp-context-forge/issues/6544), [#7457](https://github.com/IBM/mcp-context-forge/pull/7457)) - Tool, resource, and prompt records, the MCP-server refresh result, and the impact preview now carry `mcpServerId` next to `gatewayId`. Both keys hold the same value. `gatewayId` stays until a later release announces its removal. A client that rejects unknown response fields must accept `mcpServerId` on `ToolRead`, `ResourceRead`, `PromptRead`, `GatewayRefreshResponse`, and `GatewayImpactPreview`.
+
+- **A2A agent test endpoint** ([#6696](https://github.com/IBM/mcp-context-forge/issues/6696), [#7362](https://github.com/IBM/mcp-context-forge/pull/7362)) - `POST /v1/a2a/{agent_id}/test` sends a test message to an agent and returns `result`, `agent_name`, and `test_timestamp`. It requires `a2a.invoke`. The optional body field `query` sets the message. Failures return 404, 502, 422, or 500 with a `detail` object holding `success`, `error`, `error_type` (`not_found`, `agent_error`, `agent_disabled`, `validation_error`, or `internal_error`), and `agent_id`. The Admin UI test route calls the same `A2AAgentService.test_agent()` method.
+
+- **A2A aggregate metrics endpoint** ([#6697](https://github.com/IBM/mcp-context-forge/issues/6697), [#7363](https://github.com/IBM/mcp-context-forge/pull/7363)) - `GET /v1/a2a/metrics` returns `A2AAgentAggregateMetrics` for the agents the caller can see. It requires `a2a.read`, not `admin.metrics`. `A2AAgentService.aggregate_metrics()` now accepts `user_email` and `token_teams` and counts only visible agents, including disabled ones. The unscoped call used by `GET /v1/metrics` is unchanged. The route returns 404 when `MCPGATEWAY_A2A_METRICS_ENABLED` is `false`. The result can be lower than `a2aAgents` on `GET /v1/metrics`, because an admin context never counts the private agents of other users.
+
+- **A2A agent `skills` field** ([#7349](https://github.com/IBM/mcp-context-forge/issues/7349), [#7433](https://github.com/IBM/mcp-context-forge/pull/7433)) - `A2AAgentCreate`, `A2AAgentUpdate`, and `A2AAgentRead` accept a typed top-level `skills` list. Each skill needs `id`, `name`, `description`, and `tags`; the API rejects a skill without them, markup in `id`, `name`, `description`, and `tags`, duplicate `id` values, more than 100 skills, and deeply nested extra fields. An update that sends only `skills` no longer touches `capabilities`. Agent cards and server cards read `skills` first and fall back to `capabilities["skills"]` for existing agents. Migration `e5a1c7b9d3f2` adds the `a2a_agents.skills` column.
+
+- **A2A Agent Card fetch route** ([#4734](https://github.com/IBM/mcp-context-forge/issues/4734), [#7377](https://github.com/IBM/mcp-context-forge/pull/7377)) - `POST /a2a/fetch-card` (also `/v1/a2a/fetch-card`) fetches an Agent Card from an unregistered endpoint. It tries `/.well-known/agent-card.json`, then `/.well-known/agent.json`, and moves to the second path on any answer that is not a card, a 401/403, or a failed connection. It returns the card normalized to the A2A 1.0 shape, the card as fetched (`rawCard`, omitted when identical to `card`), and a suggested mapping onto `A2AAgentCreate` fields. The route needs `a2a.create` and applies the outbound URL policy with DNS pinning. A failed fetch returns `found: false` with an `outcome` of `no_card` (no card, or an invalid card), `auth_required` (401 or 403, with the `WWW-Authenticate` scheme name) or `unreachable`. A blocked address and a network failure share the identical `unreachable` response. An unsafe `path`, or a `baseUrl` with userinfo, a query or a fragment, returns 422. The card is not stored yet.
+
+- **Continue an A2A task with a follow-up message** ([#6703](https://github.com/IBM/mcp-context-forge/issues/6703), [#7374](https://github.com/IBM/mcp-context-forge/pull/7374)) - `POST /v1/a2a/{agent_id}/tasks/{task_id}/messages` sends a follow-up message, such as the answer to an `input-required` or `auth-required` task. The body holds either `message` (an A2A message object) or `text`. The gateway sets `taskId` and `contextId` from the stored task, sets `role` to the user role, and generates `messageId`. It converts the message for 0.3 and 1.0 agents, and sends it with the normal invoke path. The stored task row takes the state from the agent response, and a `task_continued` event records the previous and new state. The route requires `a2a.invoke` and returns the agent response unchanged. An unknown or invisible task returns 404, a task in a terminal state returns 409, and a message with a different `taskId` or `contextId`, or a role other than the user role, returns 400. The caller must own the agent, as on the cancel route, so a non-owner gets 404. The route writes an audit entry. The `task_continued` event stores the message ID and the kind and length of each part, never the content. `message` accepts only message fields, at most 50 parts, and 65536 characters per text part.
+
+- **Stored A2A Agent Cards** ([#4734](https://github.com/IBM/mcp-context-forge/issues/4734), [#7378](https://github.com/IBM/mcp-context-forge/pull/7378)) - `POST /a2a` accepts an optional `card_url`. The gateway fetches the card itself, sends the registration credentials to the card URL only when it shares an origin with `endpoint_url`, rejects the registration with a specific error when the card is missing, needs credentials, or cannot be reached, and stores the card as fetched in the new `a2a_agent_cards` table, with source URL, detected card version, `ETag`, `Cache-Control` max-age, and fetch time. A card sent by the client is never accepted. `GET /a2a/{agent_id}/stored-card` returns the current stored card to every caller with `a2a.read` who can see the agent, including when the card was fetched with credentials. `POST /a2a/fetch-card` also returns `etag` and `max_age`. Registration without `card_url` is unchanged. Alembic revision `a4c8e2f1b7d9` adds the table.
+
+- **A2A extended Agent Card** ([#4734](https://github.com/IBM/mcp-context-forge/issues/4734), [#7533](https://github.com/IBM/mcp-context-forge/pull/7533)) - When a card declares `capabilities.extendedAgentCard` and credentials are present, `POST /a2a/fetch-card` and `POST /a2a` request the authenticated extended card through the JSON-RPC interface, only when that interface shares an origin with the card URL. `POST /a2a/fetch-card` returns `extendedOutcome`, `extendedCard`, and `extendedAdditions`. A rejected credential fails `POST /a2a` with 400. A returned extended card is stored with `kind` `extended`, and `GET /a2a/{agent_id}/stored-card/extended` returns it to callers with `a2a.update` who own the agent. Alembic revision `7a3a6305ddb6` adds the `kind` column.
+
+- **OAuth for A2A agents** ([#5815](https://github.com/IBM/mcp-context-forge/issues/5815), [#7391](https://github.com/IBM/mcp-context-forge/pull/7391), [#7510](https://github.com/IBM/mcp-context-forge/pull/7510)) - An A2A agent with `auth_type="oauth"` now gets an agent-level `client_credentials` token on invocation. The token request carries the RFC 8707 `resource`: the configured value, else the origin of the agent endpoint. The gateway validates token audience, scopes, and issuer before it forwards the token, with the same rules as gateways, and `OAUTH_REQUIRE_CONFIGURED_RESOURCE` applies. The gateway caches the token per agent and drops it when the agent is deleted, disabled, or enabled. A token failure is not retried for 10 seconds, so an IdP outage costs one retry cycle for all waiting callers. Agent create and update reject an `oauth_config` with a grant type other than `client_credentials`, and validate `token_url` against the outbound URL policy, with a `422`. The Admin UI A2A create and edit forms again offer the **Resource (Audience)** field, and the grant type defaults to Client Credentials.
+
+- **Virtual servers publish A2A interfaces through the API** ([#7028](https://github.com/IBM/mcp-context-forge/issues/7028), [#7438](https://github.com/IBM/mcp-context-forge/pull/7438)) - `POST /v1/virtual-servers` and `PUT /v1/virtual-servers/{server_id}` (and the same handlers on `/servers`) accept an `interfaces` list of at most 10 entries with `protocol`, `binding`, `version`, `tenant`, and `enabled`. `binding` is the agent endpoint URL that cards publish, and the API validates it like `A2AAgentCreate.endpoint_url`, including the SSRF hostname block. `ServerRead` returns the list. A server with an enabled `a2a` interface resolves as an agent. A disabled interface stops the resolution. An update that omits `interfaces` keeps the stored interfaces, and a list replaces them. Interfaces use the permissions and team scoping of the server.
+
+#### **Security & Auth**
+
+- **SigV4 credential hygiene, audit, and access-control tests** ([#7626](https://github.com/IBM/mcp-context-forge/issues/7626), [#6810](https://github.com/IBM/mcp-context-forge/issues/6810), [#7631](https://github.com/IBM/mcp-context-forge/pull/7631)) - ContextForge redacts SigV4 credentials in logs, traces, and SIEM exports, and audits SigV4 registration and rotation.
+    - Redaction covers `secret_access_key`, `session_token`, `X-Amz-Security-Token`, `X-Amz-Signature`, and `X-Amz-Credential` in headers, query parameters, request logs, trace payloads, and SIEM events. The `OTEL_REDACT_FIELDS` and `SIEM_EXPORT_REDACT_FIELDS` defaults list these names. An existing explicit setting keeps its value, so add the names to it. SIEM redaction now matches field names without regard to letter case, so a configured name such as `token` also redacts `Token`. The request models of a gateway and a tool no longer print `sigv4_config` in `repr()` or `str()`, so the debug line for a gateway registration no longer shows the secret access key, the session token, or the access key ID. Free-text redaction also removes a SigV4 `Authorization` header value in any parameter order, and the value of `x-amz-signature`, `x-amz-credential`, and `x-amz-security-token` pairs outside a URL.
+    - Gateway and tool create and update audit entries carry `sigv4_key_fingerprint`. A credential rotation adds `sigv4_credential_rotated` and `sigv4_previous_key_fingerprint`. A removal, such as a switch to another auth type, adds `sigv4_credential_removed` and `sigv4_previous_key_fingerprint`. A bulk import with `conflict_strategy=update` lists each changed tool as `tool_id`, `name`, and the same fields in the `sigv4_tools` list of the `bulk_update_tools` entry. The fingerprint is the first 12 hex characters of the SHA-256 of the access key ID. The entries never hold the access key ID, the secret, or the session token.
+    - Header filtering now removes `X-Amz-Security-Token`, `X-Amz-Signature`, and `X-Amz-Credential` from plugin input. With `ENABLE_SENSITIVE_HEADER_PASSTHROUGH=false`, the default, it also removes them from downstream A2A agent calls, even when a passthrough allowlist names them. Set `ENABLE_SENSITIVE_HEADER_PASSTHROUGH=true` to forward them.
+    - ContextForge audits registration and rotation only, not each signed request or health check. No role changes: the `developer` role keeps `gateways.create`, `gateways.update`, `tools.create`, and `tools.update`.
+    - Adds deny-path tests for create, update, and the stored-credential handshake, a plaintext-at-rest regression test, a signing p99 benchmark, and live gateway deny tests. See [AWS SigV4 Gateway Authentication](../docs/docs/using/sigv4-gateway-auth.md#security-properties).
+
+- **AWS Signature V4 signing for REST tools** ([#7561](https://github.com/IBM/mcp-context-forge/issues/7561), [#6810](https://github.com/IBM/mcp-context-forge/issues/6810), [#7586](https://github.com/IBM/mcp-context-forge/pull/7586)) - A REST tool accepts `auth_type: "sigv4"`. A standalone tool carries its own `sigv4_config`. A tool under a SigV4 gateway inherits the gateway credential.
+    - ContextForge signs the final request, so the body hash covers the exact bytes sent and URL templates are substituted first. The tool `sigv4_config` takes precedence over the gateway one.
+    - `unsigned_payload: true` in `sigv4_config` sends `UNSIGNED-PAYLOAD` for services that accept it. After an HTTP 401, the request is signed again once. A 403 is not retried.
+    - The tool `sigv4_config` is stored encrypted and read back masked. A masked value on update keeps the stored secret. Export skips SigV4 tools.
+    - A tool inherits a gateway credential only when the caller owns the gateway, holds the team owner role for it, or is a platform admin. A public gateway does not grant its credential.
+    - The check fails closed without a caller identity. An unknown gateway and a hidden gateway return the same error. Bulk registration applies the check to each inheriting tool.
+    - Both sends of a 401 re-sign share the tool timeout. The downgrade of `f6b8d3e1a5c2` disables tools with `auth_type: "sigv4"` and clears their `auth_type` before it drops the column.
+    - A gateway `sigv4_config` rejects `unsigned_payload` with HTTP 422. A tool with `auth_type: "sigv4"` rejects a presigned URL.
+    - Behavior change for gateways: a masked `secret_access_key` with no stored secret now fails with HTTP 400. Before, the gateway stored nothing.
+    - A new migration, `f6b8d3e1a5c2`, adds the `tools.sigv4_config` column. See [AWS SigV4 Gateway Authentication](../docs/docs/using/sigv4-gateway-auth.md#sign-rest-tool-calls).
+
+- **AWS Signature V4 gateway authentication** ([#6810](https://github.com/IBM/mcp-context-forge/issues/6810), [#6408](https://github.com/IBM/mcp-context-forge/issues/6408), [#7522](https://github.com/IBM/mcp-context-forge/pull/7522)) - A gateway accepts `auth_type: "sigv4"` with a `sigv4_config` object (`access_key_id`, `secret_access_key`, optional `session_token`, `region`, `service`). ContextForge signs each upstream request for SSE and StreamableHTTP gateways, including session traffic, tool discovery, and health checks. The `secret_access_key` and `session_token` fields are encrypted at rest and masked in API responses. An update that changes `sigv4_config` evicts pooled upstream sessions. An inbound `Authorization` header never overrides the signature. Adds migration `e5a7c2d9b4f1`.
+    - Register a SigV4 gateway with `POST /gateways`. Set `auth_type` to `sigv4` and add a `sigv4_config` object. Use the API, not the Admin UI. See [AWS SigV4 Gateway Authentication](../docs/docs/using/sigv4-gateway-auth.md).
+
+      ```bash
+      curl -sS -X POST "$GW/gateways" \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+        -d '{
+          "name": "aws-lambda-sigv4",
+          "url": "https://<id>.lambda-url.<region>.on.aws/mcp",
+          "transport": "STREAMABLEHTTP",
+          "auth_type": "sigv4",
+          "sigv4_config": {
+            "access_key_id": "<access-key-id>",
+            "secret_access_key": "<secret-access-key>",
+            "session_token": "<optional, temporary credentials only>",
+            "region": "<region>",
+            "service": "<service, for example lambda or execute-api>"
+          }
+        }'
+      ```
+
+    - `transport` is `STREAMABLEHTTP` or `SSE`. `region` and `service` use lowercase letters, digits, and hyphens. `sigv4_config` rejects unknown keys.
+    - Registration signs the initialize call and tool discovery. An upstream 401 or 403 fails registration with `GatewayCredentialError`, and no gateway is saved.
+    - Rotate credentials with `PUT /gateways/{id}` and a new `sigv4_config`. Send the masked value as `secret_access_key` to keep the stored secret. The update evicts pooled upstream sessions.
+    - No new environment variable is needed. The gateway encrypts `secret_access_key` and `session_token` with `AUTH_ENCRYPTION_SECRET`.
+
+    - Limits: the gateway stores static credentials and does not refresh an expired STS session token. The Admin UI edit form keeps the stored SigV4 settings when you save but cannot change them. Export skips SigV4 gateways, so signing credentials never reach an export file. The modern listener skips SigV4 gateways, so they get no list-changed push events.
+
+- **OAuth access token retrieval** ([#6966](https://github.com/IBM/mcp-context-forge/issues/6966), [#7381](https://github.com/IBM/mcp-context-forge/pull/7381)) - `GET /oauth/token/{gateway_id}` returns the caller's own access token and requires `gateways.token_read`. `OAUTH_TOKEN_RETRIEVAL_ENABLED` defaults to `false`. `OAUTH_TOKEN_REFRESH_THRESHOLD_SECONDS` controls refresh timing, defaults to `600`, and accepts `0`–`3600`. The response excludes refresh tokens. A disabled endpoint returns 404.
+
+- **Per-provider CA bundle for SSO/OIDC** ([#4026](https://github.com/IBM/mcp-context-forge/issues/4026), [#7558](https://github.com/IBM/mcp-context-forge/pull/7558)) - An SSO provider accepts an optional `ca_certificate` (PEM, at most 65536 characters). Set it on `POST /auth/sso/admin/providers` or `PUT /auth/sso/admin/providers/{id}`. The gateway trusts that CA, plus the system store, for requests to that provider. This covers OIDC discovery, token exchange, userinfo, JWKS, and external-IdP bearer-token verification. An invalid PEM returns 400 with the reason. An empty string on update clears the CA. A provider with a CA stays verified when `SKIP_SSL_VERIFY=true`. The gateway logs each CA change with the SHA-256 fingerprint, never the PEM. Metadata and JWKS caches key on the CA, so providers never share trust. A CA change drops the old cache entries. `mcpgateway/services/oidc_tls.py` now owns all SSO/OIDC TLS decisions, and a guard test fails if SSO or OIDC code builds its own `httpx` client. The Admin UI has no field for the CA yet. Adds migration `a7c3e9d1b5f2`.
+
+- **OAuth client metadata** ([#7443](https://github.com/IBM/mcp-context-forge/pull/7443)) - Prefer Client ID Metadata Documents over Dynamic Client Registration when supported.
+
+#### **Operations & Tooling**
+
+- **Redis Cluster mode** ([#6490](https://github.com/IBM/mcp-context-forge/issues/6490), [#7559](https://github.com/IBM/mcp-context-forge/pull/7559)) - Set `REDIS_CLUSTER_MODE=true` to make the shared Redis client a `redis.asyncio.RedisCluster`, which follows `MOVED` and `ASK` redirects. The default is `false`. Cluster mode accepts only database 0 in `REDIS_URL`; any other value fails at startup. Clients that do not use the shared factory stay standalone. See [Redis Cluster Mode](../docs/docs/manage/scale.md#redis-cluster-mode).
+
+- **Persistent upstream MCP session tracing** ([#7454](https://github.com/IBM/mcp-context-forge/pull/7454)) - Trace persistent MCP sessions to upstream servers.
+
+- **Environment variable warnings** ([#7585](https://github.com/IBM/mcp-context-forge/pull/7585)) - Warn at startup when the environment sets deprecated or removed variables.
+
+- **Agent Card re-fetch** ([#7540](https://github.com/IBM/mcp-context-forge/issues/7540)) - `POST /a2a/{agent_id}/card` fetches the card of a registered agent again. It uses the `base_url` of the request, then the stored `source_url` with its `ETag` in `If-None-Match`, then the URLs derived from `endpoint_url`. A `base_url` in the request also needs `a2a.create`. An unchanged card adds no version and sets `checked_at`. A changed card becomes the next version, and the response lists the changed top-level keys. The agent credential goes only to a URL on the origin of `endpoint_url`. The route does not change the agent row. `A2A_CARD_REFRESH_MIN_INTERVAL` limits calls per agent. Alembic revision `b9d2f4a6c8e1` adds `checked_at`.
 
 ### Changed
+
+- **Team-management authorization** ([#7593](https://github.com/IBM/mcp-context-forge/pull/7593)) - Protected team-management operations require a token that includes the target team and the required RBAC permissions. A personal-team token does not authorize management of other teams. For automation, create the token with the target `team_id`.
+    - Admin UI edit, update, and delete require team ownership or platform-administrator permission. Platform-administrator permission also controls the member-limit exemption, matching REST behavior.
+    - Requester cancellation requires the caller's pending request and matching URL team. An unavailable request returns `404` instead of `400`.
+    - Invitation cancellation returns the same generic `404` for missing and out-of-scope invitations. Existing authentication and action-permission denials remain unchanged.
+
+- **A2A agents with `auth_type="oauth"` need `client_credentials`** ([#5815](https://github.com/IBM/mcp-context-forge/issues/5815)) - Before this change the gateway ignored `oauth_config` and called these agents without credentials. Now it requests a token for every call. An agent with another grant type, or with an empty `oauth_config`, fails at invocation with an error instead of getting an anonymous `200`. A `passthrough_headers` entry for `Authorization` no longer reaches the agent: the minted token replaces it. Each configured `token_url` now receives outbound requests with the client secret. **Upgrade:** before you upgrade, list the affected agents with `SELECT id, name FROM a2a_agents WHERE auth_type = 'oauth' AND (oauth_config IS NULL OR CAST(oauth_config AS TEXT) IN ('null', '{}') OR (CAST(oauth_config AS TEXT) LIKE '%"grant_type"%' AND CAST(oauth_config AS TEXT) NOT LIKE '%"client_credentials"%'));`. Change each agent to `client_credentials`, or set its `auth_type` to `none`. Editing an agent that has another grant type fails with a `422` until you change the grant. An update that changes `oauth_config.token_url` must also send the client secret; a masked placeholder is refused with `400`, so the stored secret never goes to a new host. Registration also needs a `token_url` host that the gateway can resolve; an unresolvable host returns `422` when `SSRF_DNS_FAIL_CLOSED` is on.
+
+- **`X-Forwarded-For` and `X-Forwarded-Proto` are trusted only from configured proxies** ([#7555](https://github.com/IBM/mcp-context-forge/pull/7555)) - The gateway sets the request client address and `request.url` scheme from `X-Forwarded-For` and `X-Forwarded-Proto` only for peers listed in the new `FORWARDED_ALLOW_IPS` setting. The default is `127.0.0.1,::1`, the same as uvicorn and gunicorn. Requests from other peers use the socket address and scheme for token IP restrictions, rate limits, and login and admin audit records. `X-Forwarded-Host` handling (`ForwardedHostMiddleware`) does not use `FORWARDED_ALLOW_IPS`. `run-gunicorn.sh` no longer passes `--forwarded-allow-ips="*"`. The login, admin, metadata, rate-limit and header-size helpers no longer read `X-Forwarded-For` or `X-Real-IP` directly, including when `TRUST_PROXY_AUTH` is set.
+    - Behind a proxy that is not on loopback, set `FORWARDED_ALLOW_IPS` to the proxy address range. Otherwise client IPs show as the proxy address, so all clients share one per-IP rate-limit bucket, and `request.url` uses `http`.
+    - The bundled Docker Compose stack defaults to loopback plus the RFC 1918 ranges, so every peer in those ranges is a trusted proxy. Narrow the value to the proxy address range. When you publish port 4444 directly, set it to `127.0.0.1,::1`.
+    - The Helm chart defaults to loopback only. Set `mcpContextForge.config.FORWARDED_ALLOW_IPS` to the ingress or proxy CIDR to keep client IPs.
 
 - **Per-resource subscriptions on `subscriptions/listen`** ([#6644](https://github.com/IBM/mcp-context-forge/issues/6644)) - A 2026-07-28 listen request can name resource URIs in `resourceSubscriptions`. The ack lists the URIs the caller can see that come from an enabled upstream server a standing stream can reach (not SSE, OAuth, query-parameter auth, private CA, or mTLS); they need `resources.read`. On `/servers/{id}/mcp` the resource must belong to that virtual server. An upstream `notifications/resources/updated` reaches the stream with the URI and the subscription ID in `_meta`. The worker that holds the stream keeps one shared upstream listen per server and URI, at most 256 per worker. A stream gets updates only from the upstream servers it was granted, even when two servers share a URI. One request considers at most 64 distinct URIs. 2026-07-28 capabilities advertise `resources.subscribe`.
 
@@ -23,13 +159,121 @@
 
 - **Modern listeners run on the primary worker** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - With `GATEWAY_MODERN_LISTENERS_ENABLED=true`, only the primary worker holds `subscriptions/listen` streams to upstream servers. `PRIMARY_WORKER_ELECTION_BACKEND=filelock` elects one primary per host or pod. `PRIMARY_WORKER_ELECTION_BACKEND=redis` elects one primary per cluster.
 
+- **Provider relinking requires a verified-email claim** ([#7564](https://github.com/IBM/mcp-context-forge/pull/7564)) - With `SSO_ALLOW_PROVIDER_LINKING=true`, the gateway rebinds an account to a different SSO provider only when that provider sends an explicit verified-email claim. Before, a login without the claim also relinked. GitHub and most Entra ID tenants send no claim, so relinking to them is now refused; ADFS identities count as verified. Sign-in through the account's own provider does not change. The gateway log records each refusal. See [SSO](../docs/docs/manage/sso.md).
+
+- **Upstream elicitation capabilities** ([#7488](https://github.com/IBM/mcp-context-forge/pull/7488)) - Advertise the caller's elicitation support to upstream servers. Refuse undeclared input requests.
+
+- **Canonical user identity** ([#6726](https://github.com/IBM/mcp-context-forge/pull/6726), [#6728](https://github.com/IBM/mcp-context-forge/pull/6728), [#6730](https://github.com/IBM/mcp-context-forge/pull/6730), [#6731](https://github.com/IBM/mcp-context-forge/pull/6731), [#7508](https://github.com/IBM/mcp-context-forge/pull/7508), [#6733](https://github.com/IBM/mcp-context-forge/pull/6733)) - Use the canonical user ID in authentication, RBAC, audit records, observability, and session team resolution. Key authentication caches by user ID and mode.
+
+- **Unified configuration** ([#7576](https://github.com/IBM/mcp-context-forge/pull/7576)) - Organize settings into configuration sections and share settings across gateway components and CLI entry points.
+
+### Removed
+
+- **Remaining Rust sidecar code and configuration** ([#7449](https://github.com/IBM/mcp-context-forge/pull/7449)) - Remove the remaining internal runtime routes and sidecar deployment configuration. Preserve session affinity for the Python transport.
+
+### Breaking Changes
+
+- **Admin config endpoint masks all connection URLs** ([#7527](https://github.com/IBM/mcp-context-forge/pull/7527)) - `GET /admin/config/settings` now returns `settings.masked_auth_value` (`*****`) for any non-empty `database_url` or `redis_url`. Previously, URLs without credentials (such as default `sqlite:///./mcp.db` or `redis://localhost:6379/0`) appeared in cleartext. Clients and operators can no longer inspect backend hostnames or database types through this endpoint.
+
+- **Virtual-server OAuth requires administrator approval** ([#7641](https://github.com/IBM/mcp-context-forge/pull/7641)) - Only unrestricted platform administrators can submit
+  `oauth_enabled` or `oauth_config`. Non-admin clients must omit both fields, including unchanged values and defaults,
+  or receive HTTP 403. Migration `b7e291a4c630` marks existing configurations unapproved while retaining their settings.
+  Tokens from a pending server issuer receive HTTP 503. Protected-resource metadata excludes pending issuers.
+  Deploy the migration and application together. Restart all workers to stop existing authenticated streams.
+  Review each issuer with unrestricted administrator credentials, then approve the reviewed server version through
+  `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
+  See [OAuth approval and upgrade steps](../docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
+
+- **disabled A2A returns one typed 404, and `/auth/email/me` reports feature flags** ([#6698](https://github.com/IBM/mcp-context-forge/issues/6698), [#7368](https://github.com/IBM/mcp-context-forge/pull/7368)) - With `MCPGATEWAY_A2A_ENABLED=false`, every A2A route returns 404 with `{"detail": {"error": "a2a_disabled", "message": "A2A is disabled on this gateway"}}`. Before, `/a2a/*` and `/v1/a2a/*` returned a generic 404 because the router was not mounted. The router is now always mounted behind a dependency that runs after authentication, and OpenAPI omits its operations when A2A is off. The admin routes `GET /admin/a2a`, `GET /admin/a2a/{agent_id}`, `/admin/a2a/ids`, `/admin/a2a/search`, `/admin/a2a/partial`, `POST /admin/a2a`, `POST /admin/a2a/{agent_id}/edit`, `/admin/a2a/plugin-bindings*`, and `POST /admin/a2a/{agent_id}/test`, and `POST /metrics/reset` for entity `a2a`, return the same response. They returned an empty page, 500, 200, 403 with `success: false`, 403 with `success: false`, and 400 with "A2A features are disabled" before. The admin state and delete form routes still redirect to the A2A tab. Token scoping now lets any token read `GET /auth/email/me`. That route adds `features`, for example `{"a2a": true}`, so any authenticated user can read whether A2A is enabled. A disabled-metrics reset still returns 400, now with the message "A2A metrics are disabled".
+
+- **tool response filters are CEL expressions, not jq** ([#6899](https://github.com/IBM/mcp-context-forge/issues/6899), [#7562](https://github.com/IBM/mcp-context-forge/pull/7562)) - `jsonpath_filter` is now a CEL expression. It sees the tool response as `response` and returns any JSON value, for example `response.items.map(i, i.name)`. Filters run in their own forked sandbox under `CEL_FILTER_TIMEOUT_SECONDS` (default 2.0) and `CEL_FILTER_WORKERS`, separate from the policy pool. jq is no longer called, and the `JQ_FILTER_*` settings are deprecated and ignored until #6900 removes them. A filter that starts with `.` or `$` is rejected on create, update and import with "jq or JSONPath filter, which is no longer supported". A filter that does not compile, or names anything other than `response`, is rejected with `jsonpath_filter is not a valid CEL expression`. Migration `f2c3d4e5a6b7` rewrites stored jq filters of the shapes `.`, `.a.b`, `.[0]`, `.items[]` and `.items[].name` into CEL. It keeps jq's list wrapping, so `.a` becomes `[response.a]` and a migrated tool answers as before. Downgrading restores those jq filters. Any other stored filter is listed in a migration warning and left as stored. Its tool returns an error result on every call until the filter is rewritten. Find them before upgrading with `SELECT id, name, jsonpath_filter FROM tools WHERE jsonpath_filter <> '' AND jsonpath_filter NOT LIKE 'response%' AND jsonpath_filter NOT LIKE '[response%'`. jq filters that parse JSON held in a text block, such as `.[0].text | fromjson | .a`, have no CEL equivalent, because CEL has no JSON parser. A missing field, and `.[]` over an object, now return an error result instead of jq's `[null]` or the object's values. On the MCP path a filter replaces the whole response, structured content included. A filter result that is not a list of content blocks reaches an MCP client as one text block holding its JSON. Response filters and tool validation policies may use the CEL comprehension macros `map`, `filter`, `exists`, `exists_one` and `all`.
+
+- **platform administration permissions are global-only** ([#7554](https://github.com/IBM/mcp-context-forge/pull/7554)) - `admin.user_management`, `admin.security_audit` and `admin.sso_providers:*` now come only from global or personal roles. A team-scoped grant of these permissions no longer takes effect on any route. **Migration:** move these grants to a global-scope role. See [RBAC](../docs/docs/manage/rbac.md).
+
+- **a password change revokes all API tokens of the user** ([#7632](https://github.com/IBM/mcp-context-forge/pull/7632)) - A password reset, a password change, and an admin password reset now revoke every active API token of that user. Session tokens issued before the change are rejected. Automation that uses these tokens fails with `401` until you create new tokens. `PASSWORD_RESET_INVALIDATE_SESSIONS` controls both actions and defaults to `true`. Set it to `false` to disable the session check and the API token revocation. See [Configuration](../docs/docs/manage/configuration.md).
+
+### Security
+
+- **Identity claim signing covers every claim** ([#7625](https://github.com/IBM/mcp-context-forge/pull/7625)) - With `IDENTITY_SIGN_CLAIMS=true`, `X-Forwarded-User-Claims-Signature` and `_meta.user.claims_signature` now carry an HS256 JWS over all propagated identity claims, including the admin flag, teams, roles, groups, and delegation chain. The token has `iss`, `aud` (target gateway id), a 60-second `exp`, and a `jti`. Signing requires a dedicated `IDENTITY_CLAIMS_SECRET`; the gateway no longer falls back to `JWT_SECRET_KEY` and refuses to start without the secret or with a secret equal to `JWT_SECRET_KEY`. **Breaking:** upstream verifiers of the old hex HMAC must switch to JWS verification. See [Identity Propagation](../docs/docs/manage/identity-propagation.md#claim-signing). If an earlier deployment ran with signing on and no `IDENTITY_CLAIMS_SECRET`, rotate `JWT_SECRET_KEY`.
+
+- **Elicitation session ownership** ([#7553](https://github.com/IBM/mcp-context-forge/pull/7553)) - Restrict `elicitation/create` to sessions owned by the caller.
+
+- **Scoped tokens on import and export** ([#7552](https://github.com/IBM/mcp-context-forge/pull/7552)) - Apply route scope checks to configuration import and export.
+
+- **Selective export authorization** ([#7633](https://github.com/IBM/mcp-context-forge/pull/7633)) - Apply visibility checks when resolving items for selective export.
+
+- **Outbound MCP connections in LLM Chat** ([#7658](https://github.com/IBM/mcp-context-forge/pull/7658)) - Apply outbound URL checks and DNS pinning to MCP connections from LLM Chat.
+
 ### Fixed
+
+- **An A2A agent on a virtual server exposes its tool** ([#7672](https://github.com/IBM/mcp-context-forge/issues/7672)) - Adding an A2A agent to a virtual server now also adds the tool derived from the agent (`a2a_{slug}`), so the server lists it and MCP clients can call it. Before, only `server_a2a_association` changed, and the server listed no tool for the agent. A `PUT` that replaces `associated_tools` without the derived tool no longer detaches it. This includes a client that sends back the `associated_tools` of a read, where a disabled derived tool is hidden. A `PUT` that removes an agent also removes its derived tool, even when the same request lists that tool in `associated_tools`. Another agent on the server that uses the same tool keeps it attached. A tool that an operator attached by hand and that belongs to a removed agent leaves with the agent. A `PUT` that changes `associated_tools` or `associated_a2a_agents` attaches the derived tool of each remaining agent again, including one that the Admin UI form cleared. A `PUT` that changes neither field leaves the tools unchanged. Each attach and detach logs one INFO line. A caller can attach only the agents that the caller can see. `POST /servers` and `PUT /servers/{id}` return 400 for an agent ID that is missing or not visible to the caller, with the same message for both. An agent that is already attached stays allowed. `A2AAgentRead` gains `tool_id`. It is empty when registration did not create a tool.
+
+- **Cancelled tool calls are no longer recorded as failures** ([#6646](https://github.com/IBM/mcp-context-forge/issues/6646), [#7530](https://github.com/IBM/mcp-context-forge/pull/7530)) - A tool call cancelled with no known failure, for example a client disconnect or `notifications/cancelled`, now logs `Tool '<name>' invocation cancelled` at INFO instead of an ERROR failure. Its `tool.invoke` database span ends with status `cancelled`, and it records no tool or server execution metric. Known failures, such as timeouts, upstream error results, and exceptions, keep the ERROR log, the `error` span status, and the failure metric, even when a cancel arrives later, for example during a plugin retry backoff or the timeout post-invoke hook. The OpenTelemetry `tool.invoke` span of a cancelled call ends with status OK, not ERROR, and gains a `cancelled` attribute. A cancel after a known failure keeps the ERROR status. A client disconnect cancels a running tool call only on `/rpc`, SSE `/message`, `/mcp` SSE streams (requests with a progress token), and stateful `/mcp` sessions (`notifications/cancelled`). On default `/mcp` (JSON responses, stateless), a disconnect does not cancel the call, so the call records its real outcome.
+
+- **Auto-refresh reports the authorization_code gateways it cannot refresh** ([#7015](https://github.com/IBM/mcp-context-forge/issues/7015), [#7327](https://github.com/IBM/mcp-context-forge/pull/7327)) - With `AUTO_REFRESH_SERVERS` enabled, background refresh now skips an OAuth `authorization_code` gateway when the health check has no stored user token for it, and logs once per gateway at `info`: "Auto-refresh skipped for gateway <name>: authorization_code servers require a manual refresh". Before, the refresh fetched nothing and logged nothing, so the gateway's catalog went stale without a signal. The notice shows at `LOG_LEVEL=INFO` and repeats if the token is lost again after it was available. Gateways where the health check finds a stored token still refresh.
+
+- **Terminal task states are recognised in both spellings** ([#6703](https://github.com/IBM/mcp-context-forge/issues/6703)) - `rejected` and the `TASK_STATE_*` spellings now count as terminal. `upsert_task` sets `completed_at` for them, and `cancel_task` returns such a task unchanged instead of moving it to `canceled`.
 
 - **Gateway `refresh_interval_seconds` is persisted** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Gateway create and update now store `refresh_interval_seconds`. Before, the API accepted the field and ignored it. Gateways with the field set now refresh on that schedule.
 
 - **Stale catalog lists after writes** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - Resource, prompt, and server create, gateway update, delete, and ownership transfer, import team assignment, and gRPC service tool changes now invalidate the registry cache. Before, lists stayed stale for up to the cache TTL.
 
 - **Debounced upstream `list_changed` no longer dropped** ([#6571](https://github.com/IBM/mcp-context-forge/issues/6571)) - An upstream `list_changed` notification inside the 5-second debounce window now schedules one trailing refresh. Before, the gateway dropped the notification and missed the change.
+
+- **Team scope in audit records** ([#7212](https://github.com/IBM/mcp-context-forge/pull/7212)) - Use the persisted resource team for team-scoped audit events.
+
+- **OAuth token issuer behind a gateway authorization server** ([#7519](https://github.com/IBM/mcp-context-forge/pull/7519)) - Support `token_issuer` for tokens signed by an external identity provider.
+
+- **OAuth authorization flow** ([#7526](https://github.com/IBM/mcp-context-forge/pull/7526)) - Improve validation during the authorization flow.
+
+- **A2A cache invalidation** ([#5912](https://github.com/IBM/mcp-context-forge/pull/5912)) - Supervise scheduled cache-invalidation tasks.
+
+- **A2A invocation metrics** ([#7405](https://github.com/IBM/mcp-context-forge/pull/7405)) - Record JSON-RPC error responses as failed invocations.
+
+- **A2A 0.3 task states** ([#7125](https://github.com/IBM/mcp-context-forge/pull/7125)) - Use hyphenated state names for tasks that require input or authentication.
+
+- **A2A protocol binding** ([#7516](https://github.com/IBM/mcp-context-forge/pull/7516)) - Store the protocol binding and use it for agent requests.
+
+- **Catalog OAuth defaults** ([#7470](https://github.com/IBM/mcp-context-forge/pull/7470)) - Preserve catalog OAuth defaults when registering a gateway.
+
+### Documentation
+
+- **Documentation style and secret scan findings** ([#7548](https://github.com/IBM/mcp-context-forge/pull/7548)) - Apply ASD-STE100 guidance and resolve documentation secret scan findings.
+
+- **Contributor guidance** ([#7547](https://github.com/IBM/mcp-context-forge/pull/7547)) - Move task-specific contributor guidance into skills.
+
+- **Documentation dependencies** ([#7598](https://github.com/IBM/mcp-context-forge/pull/7598)) - Move documentation dependency declarations into `pyproject.toml`.
+
+### Testing
+
+- **Application assembly tests** ([#7234](https://github.com/IBM/mcp-context-forge/pull/7234)) - Call assembly functions directly in tests that previously reloaded modules.
+
+- **Unit tests in CI** ([#7563](https://github.com/IBM/mcp-context-forge/pull/7563)) - Reduce unit test runtime in CI.
+
+- **Modern protocol benchmark** ([#7597](https://github.com/IBM/mcp-context-forge/pull/7597)) - Align the tool benchmark with a stateless gateway.
+
+### Chores
+
+| PR | Description |
+|----|-------------|
+| [#7504](https://github.com/IBM/mcp-context-forge/pull/7504) | Update the Web UI container image. |
+| [#7506](https://github.com/IBM/mcp-context-forge/pull/7506) | Audit unaudited secret scan findings. |
+| [#7480](https://github.com/IBM/mcp-context-forge/pull/7480) | Prevent pre-commit from changing the merged secret baseline. |
+| [#7515](https://github.com/IBM/mcp-context-forge/pull/7515) | Add manual Web UI lint runs and use `actions/setup-node`. |
+| [#7528](https://github.com/IBM/mcp-context-forge/pull/7528) | Update pinned UBI 10 image tags. |
+| [#7531](https://github.com/IBM/mcp-context-forge/pull/7531) | Temporarily suppress `krb5-libs` scan findings pending a base image update. |
+| [#7534](https://github.com/IBM/mcp-context-forge/pull/7534) | Update UBI 10 images. |
+| [#7535](https://github.com/IBM/mcp-context-forge/pull/7535) | Update dependencies to address security findings. |
+| [#7458](https://github.com/IBM/mcp-context-forge/pull/7458) | Remove obsolete Go license scanning. |
+| [#6892](https://github.com/IBM/mcp-context-forge/pull/6892) | Adopt GitHub Issue Types in issue templates. |
+| [#7556](https://github.com/IBM/mcp-context-forge/pull/7556) | Use `actions/setup-node` in lint and test workflows. |
+| [#7520](https://github.com/IBM/mcp-context-forge/pull/7520) | Stage the refreshed secret baseline after rebase and install hooks with `prek`. |
+| [#7578](https://github.com/IBM/mcp-context-forge/pull/7578) | Exclude contributor skills from the source distribution. |
+| [#7580](https://github.com/IBM/mcp-context-forge/pull/7580) | Allowlist token-type URNs in the Admin UI template and refresh the secret baseline. |
+| [#7582](https://github.com/IBM/mcp-context-forge/pull/7582) | Remove secret placeholders from `.env.example`. |
+| [#7646](https://github.com/IBM/mcp-context-forge/pull/7646) | Update Python, Node.js, and UBI container dependencies. |
+| [#7587](https://github.com/IBM/mcp-context-forge/pull/7587) | Remove the `krb5-libs` exceptions from Grype. |
+
 
 ## [1.1.1] - 2026-11-10 - Token Exchange Delegation, CEL Tool Validation, A2A v1 Routes, and Security Hardening
 
@@ -116,8 +360,10 @@ Release 1.1.1 delivers **token exchange delegation and Admin UI support**, **CEL
 
 ### Fixed
 
+- **A2A invocation metrics count JSON-RPC errors as failures** ([#7348](https://github.com/IBM/mcp-context-forge/issues/7348)) - A 200 response with `"jsonrpc": "2.0"` and a non-empty `error` member now records `success=False` and the error message. `a2aAgents.successRate` from `GET /v1/metrics` and `GET /v1/a2a/metrics` no longer counts these calls as successes. The `agent_post_invoke` hook now receives the JSON-RPC error envelope.
 - **OIDC JWKS fetches honor `SKIP_SSL_VERIFY`** ([#4026](https://github.com/IBM/mcp-context-forge/issues/4026), [#7217](https://github.com/IBM/mcp-context-forge/pull/7217)) - JWKS retrieval for SSO and external-IdP token verification now uses the shared TLS verification setting, like OIDC discovery, token exchange, and user info. Before, an identity provider with a self-signed certificate failed at JWKS retrieval even with `SKIP_SSL_VERIFY=true`. With the flag set, the gateway logs a warning on each JWKS fetch, because unverified JWKS keys let a network attacker forge tokens. Use the flag in development only. Per-provider CA bundles remain open under #4026.
 - **External-IdP tokens on `/mcp`** ([#7435](https://github.com/IBM/mcp-context-forge/issues/7435), [#7450](https://github.com/IBM/mcp-context-forge/pull/7450)) - Trusted external-IdP bearer tokens now authenticate on `/mcp`, matching `/rpc`. An `oauth_enabled` virtual server now also accepts trusted-provider tokens whose issuer is outside its `authorization_servers`. The gateway checks the audience against the provider `api_audience`, not the server `resource`. No per-server opt-out exists.
+- **Persistent MCP sessions with tracing** ([#7434](https://github.com/IBM/mcp-context-forge/issues/7434)) - With `USE_STATEFUL_SESSIONS=true` and OTEL active, Python SSE and Streamable HTTP calls now reuse eligible upstream sessions. Before, traced calls opened a new upstream session each time and lost upstream state. Per-call spans include `gateway.upstream.session_id` when the upstream assigns an ID. The attribute holds the first 16 hex characters of the SHA-256 digest of the upstream ID, never the raw ID. Reused sessions no longer send `X-Correlation-ID` or the HTTP `traceparent`, `tracestate`, and `baggage` headers. Before, traced calls sent all four. Each call now carries fresh `traceparent`, `tracestate`, and policy-filtered `baggage` in MCP `_meta`. **Upgrade note:** upstream servers must read trace context from MCP `_meta` to join the gateway trace. Servers that read only HTTP headers lose trace linkage and `X-Correlation-ID` on reused sessions. Per-call connections keep the HTTP headers. The gateway keeps a caller `_meta.traceparent` and `_meta.tracestate` when gateway OTEL is off, and always drops caller `_meta.baggage`.
 - **REST URL template reuses a placeholder** ([#7387](https://github.com/IBM/mcp-context-forge/pull/7387)) - A REST tool URL template that uses the same placeholder twice, such as `/{id}/x/{id}`, now fills both occurrences. Before, it failed with "Required URL parameter 'id' not found in arguments".
 - **Actionable error when an upstream MCP server redirects** ([#7163](https://github.com/IBM/mcp-context-forge/issues/7163), [#7416](https://github.com/IBM/mcp-context-forge/pull/7416)) - Health checks, gateway registration, Test Connection, and the handshake test now report `Upstream redirected to <scheme://host/path>; update the gateway URL to the redirect target.` for an upstream 301, 302, 303, 307, or 308 response. The message drops the query string, fragment, and userinfo of the `Location` header. Before, the gateway showed a generic error. The gateway still does not follow the redirect, to keep SSRF and credential-forwarding protection. Register the redirect target URL directly, for example `https://host/mcp/` instead of `https://host/mcp`.
 - **Observability sessions** ([#5073](https://github.com/IBM/mcp-context-forge/pull/5073)) - Reuse one observability session per HTTP trace lifecycle, instead of four to six, while preserving independent span and trace completion. Recover trace completion after span persistence failures and redact credentials from HTTP trace URLs and exception stack traces.

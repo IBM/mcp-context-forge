@@ -3,12 +3,12 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Per-request scope resolution and Rust-runtime trust-layer helpers.
+Per-request scope resolution and Python affinity trust-layer helpers.
 
 Purpose (for future implementers)
 ---------------------------------
 ``mcpgateway`` keeps token primitives, request scope resolution, and the
-trusted Rust-runtime hop in three logical groups, even though only two
+trusted Python affinity hop in three logical groups, even though only two
 modules currently exist:
 
 - ``mcpgateway.auth`` (the larger sibling) - the **token / session / team
@@ -23,7 +23,7 @@ modules currently exist:
   pattern unless it is part of the dependency chain.
 
 - ``mcpgateway.auth_context`` (this module) - the **per-request scope
-  resolution layer** plus the **Rust-runtime trust-header helpers**. The
+  resolution layer** plus the **Python affinity trust-header helpers**. The
   scope-resolution helpers take a FastAPI ``Request`` plus the ``user``
   produced by the auth dependency and compute what the caller is allowed
   to see on this specific request - this is Layer 1 in the two-layer model
@@ -32,7 +32,7 @@ modules currently exist:
   DO"). The trust-header helpers (``decode_internal_mcp_auth_context``,
   ``has_valid_internal_mcp_runtime_auth_header``, the
   ``_expected_internal_mcp_runtime_auth_header*`` family) implement the
-  HMAC contract between the Rust MCP runtime and the Python gateway. They
+  HMAC contract between Python affinity workers. They
   live here, not in ``auth.py``, because the trusted forwarded context
   produces a synthetic ``user`` that the per-request helpers consume; the
   two responsibilities are coupled at the request boundary. A future
@@ -62,7 +62,7 @@ The names below are the **module's public API**. Callers in ``main.py``,
         get_jwt_user_email_from_payload(payload) -> str | None
         resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=None) -> str | None
 
-    Trust-layer headers forwarded from the Rust MCP runtime
+    Trust-layer headers forwarded by Python affinity workers
         decode_internal_mcp_auth_context(header_value) -> dict
         get_internal_mcp_auth_context(request) -> dict | None
         has_valid_internal_mcp_runtime_auth_header(request) -> bool
@@ -124,7 +124,7 @@ from typing import Any, Dict, List, Optional
 import uuid
 
 # Third-Party
-from fastapi import Request
+from fastapi import HTTPException, Request
 import orjson
 from sqlalchemy.orm import Session
 
@@ -143,6 +143,12 @@ _INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
 
 def get_user_email(user: Any) -> str:
     """Extract email from user object, handling both string and dict formats.
+
+    This function is the e-mail-attribute accessor: it answers "what is the
+    e-mail of this user". ``get_user_id`` is the identity accessor: it
+    answers "who is this user". The e-mail-over-sub order stays for the
+    ATTRIBUTE in phase 1; later stories separate the attribute from the
+    identity.
 
     Args:
         user: User object, can be either a dict (new RBAC format) or string (legacy format)
@@ -205,6 +211,67 @@ def get_user_email(user: Any) -> str:
         if isinstance(sub, str) and sub:
             return sub
         return "unknown"
+    # Fallback to string conversion for other types
+    return str(user) if user else "unknown"
+
+
+def get_user_id(user: Any) -> str:
+    """Extract the canonical user ID from a user object.
+
+    The canonical user ID is the stable identity of a user. The explicit
+    ``user_id`` value wins when it is present. The e-mail value is the
+    fallback. Phase 1 populates ``user_id`` with the e-mail value, so the
+    two stay identical until later stories separate them.
+
+    Args:
+        user: User object, can be either a dict (new RBAC format), an object
+            with attributes (ORM model), or a string (legacy format)
+
+    Returns:
+        str: Canonical user ID extracted from the user object
+
+    Examples:
+        >>> get_user_id({'user_id': 'u-1', 'email': 'admin@example.com'})
+        'u-1'
+        >>> get_user_id({'email': 'admin@example.com'})
+        'admin@example.com'
+        >>> get_user_id({'sub': 'user@example.com'})
+        'user@example.com'
+        >>> get_user_id({})
+        'unknown'
+        >>> get_user_id(None)
+        'unknown'
+        >>> get_user_id('')
+        'unknown'
+        >>> import types
+        >>> get_user_id(types.SimpleNamespace(user_id='u-1', email='admin@example.com'))
+        'u-1'
+        >>> get_user_id(types.SimpleNamespace(user_id=None, email='admin@example.com'))
+        'admin@example.com'
+        >>> get_user_id('legacy_user')
+        'legacy_user'
+    """
+    if user is None:
+        return "unknown"
+    # Handle dict-like objects
+    if isinstance(user, dict):
+        user_id = user.get("user_id")
+        if isinstance(user_id, str) and user_id:
+            return user_id
+        email = user.get("email")
+        if isinstance(email, str) and email:
+            return email
+        sub = user.get("sub")
+        if isinstance(sub, str) and sub:
+            return sub
+        return "unknown"
+    # Handle objects with attributes (e.g., ORM models, dataclasses)
+    user_id = getattr(user, "user_id", None)
+    if isinstance(user_id, str) and user_id:
+        return user_id
+    email = getattr(user, "email", None)
+    if isinstance(email, str) and email:
+        return email
     # Fallback to string conversion for other types
     return str(user) if user else "unknown"
 
@@ -493,12 +560,8 @@ def has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
 # the response cannot be redirected) and the consumer verifies the envelope
 # before dispatch.
 #
-# These helpers are deliberately separate from the general header-encoding
-# contract (encode/decode_internal_mcp_auth_context), which must stay
-# byte-compatible for the Rust runtime. The forward signature is Redis-only
-# Python transit metadata: it is stripped by the owning worker before the
-# in-process dispatch and never reaches the Rust runtime, so it does not affect
-# the encoded auth-context wire format.
+# Envelope signatures bind Redis transit metadata before the owner worker
+# constructs the header-borne context for in-process affinity dispatch.
 FORWARD_SIG_FIELD = "forward_sig"
 _REDIS_FORWARD_ENVELOPE_SIG_DOMAIN = b"mcpgw.redis-fwd-envelope.v1"
 _REDIS_FORWARD_ENVELOPE_SIG_DELIMITER = b"\x1f"  # ASCII unit separator; never present in canonical JSON
@@ -567,92 +630,37 @@ def verify_redis_forward_envelope(envelope: Dict[str, Any]) -> bool:
     return hmac.compare_digest(signature, expected)
 
 
-# Internal-dispatch trust gate, defined once and shared by all callers.
+# Internal-dispatch trust gate shared by the route and authentication middleware.
 INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
-INTERNAL_A2A_PATH_PREFIX = "/_internal/a2a"
 INTERNAL_RUNTIME_MARKER_HEADER = "x-contextforge-mcp-runtime"
 INTERNAL_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
-TRUSTED_INTERNAL_RUNTIME_MARKERS = frozenset({"rust", "affinity"})
-
-
-def _internal_path_requires_auth_context(path: str) -> bool:
-    """Whether an internal route requires an auth context.
-
-    Only ``*/authenticate`` is exempt, since it creates the context; every
-    other internal route must carry one.
-
-    Args:
-        path: The request path to classify.
-
-    Returns:
-        ``False`` for ``*/authenticate``, otherwise ``True``.
-    """
-    return not path.rstrip("/").endswith("/authenticate")
-
-
-def is_trusted_internal_runtime_request(
-    request: Request,
-    *,
-    allowed_prefixes: tuple[str, ...],
-    require_auth_context: bool,
-    path: Optional[str] = None,
-) -> bool:
-    """Return whether a request is a trusted in-process internal-runtime hop.
-
-    The trust boundary is the HMAC header and, when required, the encoded
-    ``x-contextforge-auth-context``. The loopback check is defense in depth,
-    not an independent gate: ProxyHeaders(trusted_hosts="*") lets a direct
-    external caller influence ``request.client.host`` (the replay is hardened
-    separately by stripping forwarded / client-IP headers).
-
-    Args:
-        request: Incoming request to inspect.
-        allowed_prefixes: Internal path prefixes this caller trusts.
-        require_auth_context: Require a non-empty ``x-contextforge-auth-context``.
-        path: Explicit path override for callers that strip a ``root_path``;
-            defaults to ``request.url.path``.
-
-    Returns:
-        ``True`` only when prefix, runtime marker, HMAC, optional auth context,
-        and loopback all hold; otherwise ``False``.
-    """
-    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
-    if not any(p == prefix or p.startswith(f"{prefix}/") for prefix in allowed_prefixes):
-        return False
-    if request.headers.get(INTERNAL_RUNTIME_MARKER_HEADER) not in TRUSTED_INTERNAL_RUNTIME_MARKERS:
-        return False
-    if not has_valid_internal_mcp_runtime_auth_header(request):
-        return False
-    if require_auth_context and not request.headers.get(INTERNAL_AUTH_CONTEXT_HEADER):
-        return False
-    client_host = getattr(getattr(request, "client", None), "host", None)
-    return client_host in ("127.0.0.1", "::1")
 
 
 def is_trusted_internal_mcp_request(request: Request, *, path: Optional[str] = None) -> bool:
-    """MCP + A2A internal trust gate with a path-aware auth-context requirement.
+    """Accept only authenticated Python affinity dispatch to the internal RPC route.
 
-    ``*/authenticate`` routes are exempt from the auth-context requirement;
-    every other internal route requires it. ``/_internal/a2a/*`` is trusted
-    only when the A2A feature is enabled.
+    The HMAC and forwarded auth context form the trust boundary. The loopback
+    check adds defense in depth. Forwarded client-IP headers cannot establish trust.
 
     Args:
         request: Incoming request to inspect.
-        path: Explicit path override (e.g. a ``root_path``-stripped path);
-            defaults to ``request.url.path``.
+        path: Optional request path after removing the deployment root path.
 
     Returns:
-        ``True`` when the request is a trusted internal MCP/A2A hop.
+        ``True`` only for the affinity marker, RPC path, valid HMAC, non-empty
+        auth context, and a loopback client address.
     """
-    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
-    if p.startswith(f"{INTERNAL_A2A_PATH_PREFIX}/") and not settings.mcpgateway_a2a_enabled:
+    request_path = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
+    if request_path.rstrip("/") != f"{INTERNAL_MCP_PATH_PREFIX}/rpc":
         return False
-    return is_trusted_internal_runtime_request(
-        request,
-        allowed_prefixes=(INTERNAL_MCP_PATH_PREFIX, INTERNAL_A2A_PATH_PREFIX),
-        require_auth_context=_internal_path_requires_auth_context(p),
-        path=p,
-    )
+    if request.headers.get(INTERNAL_RUNTIME_MARKER_HEADER) != "affinity":
+        return False
+    if not has_valid_internal_mcp_runtime_auth_header(request):
+        return False
+    if not request.headers.get(INTERNAL_AUTH_CONTEXT_HEADER):
+        return False
+    client_host = getattr(getattr(request, "client", None), "host", None)
+    return client_host in ("127.0.0.1", "::1")
 
 
 def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
@@ -911,6 +919,53 @@ async def is_unrestricted_platform_admin(request: Request, user: Any, db: Sessio
     return await PermissionService(db).check_platform_admin_permission(user_email, token_teams=None)
 
 
+async def require_server_oauth_admin(request: Request, user: Any, db: Session, fields: Any) -> bool:
+    """Authorize explicitly submitted virtual-server OAuth fields.
+
+    Args:
+        request: Authenticated request.
+        user: Authenticated principal.
+        db: Permission lookup session.
+        fields: Submitted field names before form normalization.
+
+    Returns:
+        Whether this submission contains authorized OAuth settings.
+
+    Raises:
+        HTTPException: If a caller submits OAuth fields without unrestricted administrator authority.
+    """
+    protected = {"oauth_enabled", "oauth_config", "oauth_authorization_server", "oauth_scopes", "oauth_token_endpoint", "oauth_audience", "oauth_controls"}
+    if not protected.intersection(fields):
+        return False
+    if not await is_unrestricted_platform_admin(request, user, db):
+        logger.warning(
+            "Virtual-server OAuth configuration denied",
+            extra={"security_event": True, "event_type": "server_oauth_authorization_denied", "user_id": get_user_id(user), "oauth_fields": sorted(protected.intersection(fields))},
+        )
+        raise HTTPException(status_code=403, detail="Virtual-server OAuth settings require unrestricted platform-admin authority")
+    return True
+
+
+async def get_import_request_scope(request: Request | None, user: Any, db: Session) -> tuple[str, Optional[List[str]], bool]:
+    """Resolve the authenticated actor and authorization scope for import.
+
+    Args:
+        request: Current request.
+        user: Authenticated user.
+        db: Database session for permission checks.
+
+    Returns:
+        Actor email, team scope, and unrestricted platform authority.
+    """
+    if request is None:
+        return get_user_email(user), [], False
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    unrestricted_admin = await is_unrestricted_platform_admin(request, user, db)
+    if not unrestricted_admin and token_teams is None:
+        token_teams = []
+    return user_email or get_user_email(user), token_teams, unrestricted_admin
+
+
 def configuration_export_includes_roots(include_types: Optional[List[str]], exclude_types: Optional[List[str]]) -> bool:
     """Return whether full export selection includes roots."""
     normalized_include = {item.strip().lower() for item in include_types or [] if item and item.strip()}
@@ -921,26 +976,22 @@ def configuration_export_includes_roots(include_types: Optional[List[str]], excl
 
 
 def selective_selection_includes_roots(entity_selections: Any) -> bool:
-    """Return whether selective export/import selection includes roots."""
+    """Return whether selective export selection includes roots."""
     if not isinstance(entity_selections, dict) or "roots" not in entity_selections:
         return False
     roots_selection = entity_selections.get("roots")
     return roots_selection is None or (isinstance(roots_selection, list) and bool(roots_selection))
 
 
-def import_envelope_includes_roots(import_data: Any, selected_entities: Any = None) -> bool:
-    """Return whether import data and selection would touch roots."""
+def import_envelope_includes_roots(import_data: Any) -> bool:
+    """Return whether the import file contains roots."""
     if not isinstance(import_data, dict):
         return False
     entities = import_data.get("entities")
-    if not isinstance(entities, dict) or "roots" not in entities:
+    if not isinstance(entities, dict):
         return False
     roots = entities.get("roots")
-    if not isinstance(roots, list) or not roots:
-        return False
-    if selected_entities is None:
-        return True
-    return selective_selection_includes_roots(selected_entities)
+    return isinstance(roots, list) and bool(roots)
 
 
 def _has_verified_jwt_payload(request: Request) -> bool:

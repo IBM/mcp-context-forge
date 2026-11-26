@@ -202,6 +202,7 @@ Use markers to categorize tests:
 - `api` - API endpoint tests
 - `smoke` - Smoke tests
 - `e2e` - End-to-end tests
+- `real_sandbox_pools` - Keep the real jq, validation and CEL worker pools in `main.lifespan`. Unit tests under `tests/unit/mcpgateway/` stub the pool hooks by default.
 
 Filter with `-m`: `rstest -m "not slow"`, `rstest -m "api and not e2e"`
 

@@ -589,7 +589,7 @@ For HTTP request processing and authentication, see the dedicated guide:
 The agent hooks allow plugins to intercept and modify Agent-to-Agent (A2A) interactions:
 
 - **`agent_pre_invoke`**: Receives agent invocation details before the agent processes the request. Can filter messages, restrict tools, override model settings, or block the request entirely.
-- **`agent_post_invoke`**: Receives the agent's response after processing. Can filter response content, redact sensitive information, or add audit metadata.
+- **`agent_post_invoke`**: Receives the agent's response after processing. Can filter response content, redact sensitive information, or add audit metadata. The `agent_post_invoke` hook now receives the JSON-RPC error envelope.
 
 Example Use Cases:
 

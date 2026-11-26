@@ -484,7 +484,7 @@ class AgentsPage(BasePage):
         """Fill OAuth configuration fields.
 
         Args:
-            grant_type: OAuth grant type (authorization_code, client_credentials, password)
+            grant_type: OAuth grant type. A2A agents support only client_credentials.
             issuer: OAuth issuer URL
             client_id: OAuth client ID
             client_secret: OAuth client secret

@@ -146,6 +146,7 @@ except ImportError:
     httpx = None  # type: ignore[assignment]
 
 # First-Party
+from mcpgateway.config_sections import TransportSettings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.translate_header_utils import extract_env_vars_from_headers, NormalizedMappings, parse_header_mappings
 
@@ -156,7 +157,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 # Initialize logging service first
 logging_service = LoggingService()
 LOGGER = logging_service.get_logger("mcpgateway.translate")
-CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
+CONTENT_TYPE = TransportSettings().forge_content_type
 # headers = {"Content-Type": CONTENT_TYPE}
 # Import settings for default keepalive interval.
 try:

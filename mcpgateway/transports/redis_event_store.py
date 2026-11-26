@@ -9,6 +9,9 @@ Design goals:
 - Multi-worker safe: store+evict is atomic (Lua), so concurrent writers do not corrupt meta/count.
 - Bounded memory: per-stream ring buffer with eviction.
 - Bounded index growth: event_id index entries expire with the stream TTL.
+- Redis Cluster safe: the three stream keys share the ``{stream_id}`` hash tag, so the
+  Lua scripts touch one slot. The event_id index is looked up by event id alone, so it
+  lives in another slot and is written by the client after the script returns.
 """
 
 # Future
@@ -44,8 +47,6 @@ _STORE_EVENT_LUA = r"""
 --  2) message_json (orjson encoded; "null" for priming)
 --  3) ttl_seconds
 --  4) max_events
---  5) index_prefix (string, eg "mcpgw:eventstore:event_index:")
---  6) stream_id
 
 local meta_key = KEYS[1]
 local events_key = KEYS[2]
@@ -55,8 +56,6 @@ local event_id = ARGV[1]
 local message_json = ARGV[2]
 local ttl = tonumber(ARGV[3])
 local max_events = tonumber(ARGV[4])
-local index_prefix = ARGV[5]
-local stream_id = ARGV[6]
 
 local seq_num = redis.call('HINCRBY', meta_key, 'next_seq', 1)
 local count = redis.call('HINCRBY', meta_key, 'count', 1)
@@ -67,9 +66,6 @@ end
 redis.call('ZADD', events_key, seq_num, event_id)
 redis.call('HSET', messages_key, event_id, message_json)
 
-local index_key = index_prefix .. event_id
-redis.call('SET', index_key, cjson.encode({stream_id=stream_id, seq_num=seq_num}), 'EX', ttl)
-
 if count > max_events then
   local to_evict = count - max_events
   local evicted_ids = redis.call('ZRANGE', events_key, 0, to_evict - 1)
@@ -77,9 +73,6 @@ if count > max_events then
 
   if #evicted_ids > 0 then
     redis.call('HDEL', messages_key, unpack(evicted_ids))
-    for _, ev_id in ipairs(evicted_ids) do
-      redis.call('DEL', index_prefix .. ev_id)
-    end
   end
 
   redis.call('HSET', meta_key, 'count', max_events)
@@ -100,7 +93,7 @@ return seq_num
 
 
 # Same as ``_STORE_EVENT_LUA`` but appends a ``PUBLISH`` to a supplied
-# channel (ARGV[7]) with a payload (ARGV[8]). Because Redis runs Lua
+# channel (ARGV[5]) with a payload (ARGV[6]). Because Redis runs Lua
 # atomically (no other client commands execute while the script runs),
 # the store and publish are atomic from a reader's perspective — a
 # concurrent ``replay_after_with_ids`` can't observe the stored event
@@ -113,7 +106,7 @@ return seq_num
 # of replacements would produce an obviously-broken script).
 _STORE_AND_NOTIFY_EVENT_LUA = _STORE_EVENT_LUA.replace(
     "return seq_num",
-    "redis.call('PUBLISH', ARGV[7], ARGV[8])\nreturn seq_num",
+    "redis.call('PUBLISH', ARGV[5], ARGV[6])\nreturn seq_num",
     1,  # exactly one occurrence expected
 )
 
@@ -132,13 +125,11 @@ _EVICT_EVENT_LUA = r"""
 --  3) messages_key
 -- ARGV:
 --  1) event_id
---  2) index_prefix
 
 local meta_key = KEYS[1]
 local events_key = KEYS[2]
 local messages_key = KEYS[3]
 local event_id = ARGV[1]
-local index_prefix = ARGV[2]
 
 -- Only evict if the event is actually present. Returning 0 tells the
 -- caller the entry was already gone (idempotent).
@@ -147,7 +138,6 @@ if removed == 0 then
   return 0
 end
 redis.call('HDEL', messages_key, event_id)
-redis.call('DEL', index_prefix .. event_id)
 local count = redis.call('HINCRBY', meta_key, 'count', -1)
 if count < 0 then
   redis.call('HSET', meta_key, 'count', 0)
@@ -185,7 +175,7 @@ class RedisEventStore(EventStore):
         Returns:
             Redis key string.
         """
-        return f"{self.key_prefix}:{stream_id}:meta"
+        return f"{self.key_prefix}:{{{stream_id}}}:meta"
 
     def _get_stream_events_key(self, stream_id: str) -> str:
         """Return Redis key for stream events sorted set.
@@ -196,7 +186,7 @@ class RedisEventStore(EventStore):
         Returns:
             Redis key string.
         """
-        return f"{self.key_prefix}:{stream_id}:events"
+        return f"{self.key_prefix}:{{{stream_id}}}:events"
 
     def _get_stream_messages_key(self, stream_id: str) -> str:
         """Return Redis key for stream messages hash.
@@ -207,7 +197,7 @@ class RedisEventStore(EventStore):
         Returns:
             Redis key string.
         """
-        return f"{self.key_prefix}:{stream_id}:messages"
+        return f"{self.key_prefix}:{{{stream_id}}}:messages"
 
     def _event_index_prefix(self) -> str:
         """Return prefix for per-event index keys.
@@ -227,6 +217,17 @@ class RedisEventStore(EventStore):
             Redis key string.
         """
         return f"{self._event_index_prefix()}{event_id}"
+
+    async def _write_event_index(self, redis: Redis, stream_id: str, event_id: str, seq_num: int) -> None:
+        """Record which stream and sequence an event belongs to.
+
+        Args:
+            redis: Redis client.
+            stream_id: Stream the event was stored on.
+            event_id: Event identifier to index.
+            seq_num: Sequence number returned by the store script.
+        """
+        await redis.set(self._event_index_key(event_id), orjson.dumps({"stream_id": stream_id, "seq_num": int(seq_num)}), ex=int(self.ttl))
 
     async def store_event(self, stream_id: str, message: JSONRPCMessage | None) -> str:
         """Store an event in Redis atomically.
@@ -255,7 +256,7 @@ class RedisEventStore(EventStore):
         events_key = self._get_stream_events_key(stream_id)
         messages_key = self._get_stream_messages_key(stream_id)
 
-        await redis.eval(
+        seq_num = await redis.eval(
             _STORE_EVENT_LUA,
             3,
             meta_key,
@@ -265,9 +266,8 @@ class RedisEventStore(EventStore):
             message_json,
             int(self.ttl),
             int(self.max_events),
-            self._event_index_prefix(),
-            stream_id,
         )
+        await self._write_event_index(redis, stream_id, event_id, seq_num)
 
         return event_id
 
@@ -321,7 +321,7 @@ class RedisEventStore(EventStore):
         events_key = self._get_stream_events_key(stream_id)
         messages_key = self._get_stream_messages_key(stream_id)
 
-        await redis.eval(
+        seq_num = await redis.eval(
             _STORE_AND_NOTIFY_EVENT_LUA,
             3,
             meta_key,
@@ -331,11 +331,10 @@ class RedisEventStore(EventStore):
             message_json,
             int(self.ttl),
             int(self.max_events),
-            self._event_index_prefix(),
-            stream_id,
             channel,
             payload,
         )
+        await self._write_event_index(redis, stream_id, event_id, seq_num)
 
         return event_id
 
@@ -552,8 +551,9 @@ class RedisEventStore(EventStore):
             events_key,
             messages_key,
             event_id,
-            self._event_index_prefix(),
         )
+        if result:
+            await redis.delete(self._event_index_key(event_id))
         return bool(result)
 
     async def fetch_event(self, stream_id: str, event_id: str) -> Optional[JSONRPCMessage]:

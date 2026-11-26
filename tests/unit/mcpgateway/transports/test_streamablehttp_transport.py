@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import collections
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import json
 import time
 from types import SimpleNamespace
@@ -11908,6 +11909,43 @@ async def test_streamable_http_auth_rejects_inactive_user(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_session_issued_before_password_change(monkeypatch):
+    """Session tokens older than password_changed_at are rejected on the fallback lookup path."""
+    changed_at = datetime.now(timezone.utc)
+
+    async def fake_verify(_token):
+        return {
+            "sub": "stale@example.com",
+            "jti": "stale-jti",
+            "token_use": "session",
+            "iat": int(changed_at.timestamp()) - 60,
+            "teams": [],
+        }
+
+    stale_user = MagicMock()
+    stale_user.is_active = True
+    stale_user.password_changed_at = changed_at
+
+    monkeypatch.setattr(tr, "verify_credentials_cached", fake_verify)
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=stale_user),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is False
+    assert any(m.get("type") == "http.response.start" and m.get("status") == 401 for m in sent)
+    assert any(b"Token has been revoked" in m.get("body", b"") for m in sent)
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_revocation_check_exception_fails_open(monkeypatch):
     """Revocation-check backend failures should fail open and allow the request."""
 
@@ -12286,6 +12324,7 @@ class TestProxyFunctions:
 
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -12313,6 +12352,7 @@ class TestProxyFunctions:
         mock_result.cache_scope = "public"
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
         tr.request_headers_var.set({})
@@ -12341,6 +12381,8 @@ class TestProxyFunctions:
 
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.send_request = AsyncMock(return_value=mock_result)  # _meta goes through send_request
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -12353,8 +12395,9 @@ class TestProxyFunctions:
 
         assert len(result) == 1
         # Verify read_resource was called with meta kwarg
-        mock_session.read_resource.assert_called_once_with("file:///test.txt", meta=meta_data)
-        mock_session.send_request.assert_not_called()
+        request = mock_session.send_request.call_args[0][0]
+        assert request.params.uri == "file:///test.txt"
+        assert request.params.meta == meta_data
 
     @pytest.mark.asyncio
     async def test_proxy_read_resource_forwards_gateway_id_header(self):
@@ -12369,6 +12412,7 @@ class TestProxyFunctions:
 
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -12393,6 +12437,7 @@ class TestProxyFunctions:
 
         mock_session = AsyncMock()
         mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -12475,6 +12520,7 @@ class TestProxyUpstreamAuthorizationRename:
             mock_session.list_resources = AsyncMock(return_value=mock_result)
         else:
             mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.session = mock_session  # the helper reads through the low-level session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
         return mock_session
@@ -12911,6 +12957,42 @@ class TestDirectProxyMode:
                 result = await tr.list_resources()
 
         assert result == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("handler", ["list_tools", "list_resources", "read_resource"])
+    async def test_direct_proxy_identity_signing_failure_reaches_client(self, handler):
+        """A signing failure is an MCP configuration error, never an empty catalog."""
+        # Third-Party
+        from mcp.shared.exceptions import MCPError
+
+        # First-Party
+        from mcpgateway.utils.identity_propagation import IdentitySigningError
+
+        mock_gateway = MagicMock(id="gw-direct", gateway_mode="direct_proxy", url="http://remote.example.com/mcp", passthrough_headers=[], auth_type=None)
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@example.com", "teams": ["team1"], "is_authenticated": True})
+        identity_token = tr.user_identity_var.set(MagicMock())
+        call = {"list_tools": tr.list_tools, "list_resources": tr.list_resources, "read_resource": lambda: tr.read_resource("file:///test.txt")}[handler]
+
+        try:
+            with (
+                patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db),
+                patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", return_value=True),
+                patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
+                patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", side_effect=IdentitySigningError("no secret")),
+            ):
+                with pytest.raises(MCPError, match="misconfigured"):
+                    await call()
+        finally:
+            tr.user_identity_var.reset(identity_token)
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_mode_success_text(self):
@@ -14353,7 +14435,27 @@ async def test_normalize_jwt_payload_api_token(monkeypatch):
 
     raw = {"sub": "user@example.com", "token_use": "api", "teams": ["team-a"], "exp": 1_800_000_000}
     result = await _normalize_jwt_payload(raw)
-    assert result == {"email": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True, "token_use": "api", "exp": 1_800_000_000}
+    assert result == {"email": "user@example.com", "user_id": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True, "token_use": "api", "exp": 1_800_000_000}
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_carries_user_id(monkeypatch):
+    """Contract: the normalized user context carries user_id equal to the e-mail (issue #5887)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.get_team_membership_valid_sync.return_value = True
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
+
+    raw = {"sub": "user@example.com", "token_use": "api", "teams": ["team-a"], "exp": 1_800_000_000}
+    user_ctx = await _normalize_jwt_payload(raw)
+    assert user_ctx["user_id"] == user_ctx["email"]
 
 
 @pytest.mark.asyncio
@@ -14365,7 +14467,7 @@ async def test_normalize_jwt_payload_session_token_admin():
     raw = {"sub": "admin@example.com", "token_use": "session", "is_admin": True}
     with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=None):
         result = await _normalize_jwt_payload(raw)
-    assert result == {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True, "token_use": "session"}
+    assert result == {"email": "admin@example.com", "user_id": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True, "token_use": "session"}
 
 
 @pytest.mark.asyncio
@@ -14377,7 +14479,7 @@ async def test_normalize_jwt_payload_session_token_non_admin():
     raw = {"sub": "dev@example.com", "token_use": "session"}
     with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=["team-x"]):
         result = await _normalize_jwt_payload(raw)
-    assert result == {"email": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True, "token_use": "session"}
+    assert result == {"email": "dev@example.com", "user_id": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True, "token_use": "session"}
 
 
 @pytest.mark.asyncio
@@ -14415,7 +14517,7 @@ async def test_normalize_jwt_payload_session_no_email():
     # resolve_session_teams returns [] for no-email
     with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=[]):
         result = await _normalize_jwt_payload(raw)
-    assert result == {"email": None, "teams": [], "is_admin": False, "is_authenticated": True, "token_use": "session"}
+    assert result == {"email": None, "user_id": None, "teams": [], "is_admin": False, "is_authenticated": True, "token_use": "session"}
 
 
 @pytest.mark.asyncio
@@ -14522,7 +14624,7 @@ async def test_normalize_jwt_payload_warms_cache_after_batched_miss(monkeypatch)
 
     assert first["is_admin"] is True
     assert second["is_admin"] is True
-    batch_lookup.assert_called_once_with("batched@example.com", "jti-2")
+    batch_lookup.assert_called_once_with("batched@example.com", "jti-2", {"sub": "batched@example.com", "token_use": "session", "jti": "jti-2"})
     auth_cache.set_auth_context.assert_awaited_once()
     assert isinstance(cached[("batched@example.com", "jti-2")], CachedAuthContext)
 
@@ -14708,7 +14810,7 @@ async def test_auth_jwt_session_token_keys_cache_and_lookups_by_email(monkeypatc
 
     monkeypatch.setattr(
         "mcpgateway.auth._get_auth_context_batched_sync",
-        lambda email, jti: {"user": {"email": email, "is_admin": False, "is_active": True}, "team_ids": ["team-x"], "is_token_revoked": False, "personal_team_id": None},
+        lambda email, jti, payload=None: {"user": {"email": email, "is_admin": False, "is_active": True}, "team_ids": ["team-x"], "is_token_revoked": False, "personal_team_id": None},
     )
     monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team-x"]))
     monkeypatch.setattr("mcpgateway.auth.resolve_trace_team_name", AsyncMock(return_value=None))
@@ -15439,6 +15541,8 @@ async def test_oauth_access_token_context_preserves_exp(monkeypatch):
     token_exp = 1_800_000_000
     mock_server = MagicMock()
     mock_server.oauth_enabled = True
+    mock_server.oauth_config_approved = True
+    mock_server.oauth_config_generation = "approved-generation"
     mock_server.oauth_config = {
         "authorization_servers": ["https://issuer.example.com"],
         "resource": "https://gateway.example.com/servers/oauth-server/mcp",

@@ -17,23 +17,22 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-11-09T23:59:59Z"
-cpex-url-reputation = "2026-11-09T23:59:59Z"
-cpex-rate-limiter = "2026-11-09T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-11-09T23:59:59Z"
-cpex-pii-filter = "2026-11-09T23:59:59Z"
-cpex-retry-with-backoff = "2026-11-09T23:59:59Z"
-cpex-output-length-guard = "2026-11-09T23:59:59Z"
-cpex-secrets-detection = "2026-11-09T23:59:59Z"
-cpex-sql-sanitizer = "2026-11-09T23:59:59Z"
-oauthlib = "2026-11-09T23:59:59Z"
+cpex = "2026-11-20T23:59:59Z"
+cpex-url-reputation = "2026-11-20T23:59:59Z"
+cpex-rate-limiter = "2026-11-20T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-11-20T23:59:59Z"
+cpex-pii-filter = "2026-11-20T23:59:59Z"
+cpex-retry-with-backoff = "2026-11-20T23:59:59Z"
+cpex-output-length-guard = "2026-11-20T23:59:59Z"
+cpex-secrets-detection = "2026-11-20T23:59:59Z"
+cpex-sql-sanitizer = "2026-11-20T23:59:59Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.1.1"
+version = "1.1.2"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -206,6 +205,27 @@ dev = [
 ]
 
 # ----------------------------------------------------------------
+# Documentation dependencies (MkDocs site build: `make -C docs venv|serve|build`)
+# Install with: make install-docs
+# ----------------------------------------------------------------
+docs = [
+    "mike>=2.2.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-awesome-pages-plugin>=2.10.1",
+    "mkdocs-git-authors-plugin>=0.10.0",
+    "mkdocs-git-revision-date-localized-plugin>=1.7.0",
+    "mkdocs-glightbox>=0.5.3",
+    "mkdocs-material>=9.8.1",
+    "mkdocs-material-extensions>=1.3.1",
+    "mkdocs-minify-plugin>=0.8.0",
+    "mkdocs-pdf-export-plugin>=0.5.10",
+    "mkdocs-rss-plugin>=1.20.0",
+    "mkdocs-table-reader-plugin>=4.0.2",
+    "mkdocs-with-pdf>=0.9.3",
+    "pymdown-extensions>=12.3",
+]
+
+# ----------------------------------------------------------------
 # Optional dependency groups (extras)
 # ----------------------------------------------------------------
 [project.optional-dependencies]
@@ -233,7 +253,7 @@ llmchat = [
     "langchain-core<=1.5.1",
     "langchain-ollama>=1.1.0",
     "langchain-openai<=1.4.1",
-    "langgraph<=1.2.12",
+    "langgraph<=1.2.14",
     "langsmith>=0.10.10", # Transitive pin (langchain-core)
 ]
 
@@ -298,11 +318,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.1.1",
+    "mcp-contextforge-gateway[redis]>=1.1.2",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.1.1",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.1.2",
 ]
 
 # --------------------------------------------------------------------
@@ -729,6 +749,7 @@ markers = [
     "mcp_utilities: marks ping/cancel/progress/pagination checks",
     "mcp_tasks: marks tasks capability checks",
     "mcp_auth: marks authorization discovery checks", # pragma: allowlist secret
+    "real_sandbox_pools: keeps the real validation and CEL worker pools in main.lifespan (unit tests stub them by default)",
     "regression: marks regression tests for previously-fixed bugs",
     "proxy: marks tests that run through a simulated proxy prefix",
     "iframe: marks tests that run inside an iframe host page",

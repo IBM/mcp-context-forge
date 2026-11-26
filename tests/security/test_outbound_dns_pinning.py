@@ -1138,7 +1138,7 @@ async def test_tool_invoke_mcp_pins_the_validated_address(fake_resolver, monkeyp
 
     monkeypatch.setattr("mcpgateway.services.tool_service.mcp_proxy_client", _capture_client_factory(captured))
     monkeypatch.setattr("mcpgateway.services.tool_service.decode_auth", lambda *_a, **_k: {"Authorization": "Bearer xyz"})
-    monkeypatch.setattr("mcpgateway.services.tool_service.extract_using_jq", lambda data, _filt: data)
+    monkeypatch.setattr("mcpgateway.services.tool_service.apply_response_filter", lambda data, _filt: data)
     monkeypatch.setattr("mcpgateway.services.tool_service.metrics_buffer", Mock(record_tool_metric=Mock()))
 
     result = await service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)

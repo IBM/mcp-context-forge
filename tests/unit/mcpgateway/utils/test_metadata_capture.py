@@ -50,8 +50,8 @@ class TestMetadataCapture:
         assert context["from_ip"] == "10.0.0.1"
         assert context["via"] == "ui"
 
-    def test_extract_request_context_proxy_headers(self):
-        """Test IP extraction with proxy headers."""
+    def test_extract_request_context_ignores_proxy_headers(self):
+        """Raw X-Forwarded-For is ignored; ProxyHeadersMiddleware resolves request.client."""
         request = SimpleNamespace()
         request.client = SimpleNamespace()
         request.client.host = "127.0.0.1"
@@ -61,8 +61,7 @@ class TestMetadataCapture:
 
         context = MetadataCapture.extract_request_context(request)
 
-        # Should use first IP from X-Forwarded-For
-        assert context["from_ip"] == "203.0.113.1"
+        assert context["from_ip"] == "127.0.0.1"
         assert context["user_agent"] == "curl/7.68.0"
 
     def test_extract_request_context_no_client(self):
@@ -274,8 +273,7 @@ class TestMetadataCapture:
 
         context = MetadataCapture.extract_request_context(request)
 
-        # Should still extract the forwarded IP even if malformed
-        assert context["from_ip"] == "malformed"
+        assert context["from_ip"] == "127.0.0.1"
 
     def test_extract_username_string(self):
         """Test username extraction from string."""

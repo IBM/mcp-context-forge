@@ -13,11 +13,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.common.models import Root
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.db import Base, EmailUser
+from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource
 from mcpgateway.schemas import GatewayRead, PromptMetrics, PromptRead, ResourceMetrics, ResourceRead, ServerMetrics, ServerRead, ToolMetrics, ToolRead
 from mcpgateway.services.export_service import _exportable_resource_base, ExportError, ExportService, ExportValidationError
@@ -64,6 +69,12 @@ def export_service():
 def mock_db():
     """Create a mock database session."""
     return MagicMock()
+
+
+def executed_bound_values(db: MagicMock) -> list[str]:
+    """Return the flattened bound parameter values of the last statement passed to ``db.execute``."""
+    params = db.execute.call_args[0][0].compile().params
+    return [value for bound in params.values() for value in (bound if isinstance(bound, (list, tuple)) else [bound])]
 
 
 @pytest.fixture
@@ -423,8 +434,9 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
 
     # Should get raw auth value from database via batch query
     assert len(tools) == 1
-    assert tools[0]["auth_type"] == "bearer"
-    assert tools[0]["auth_value"] == "encrypted_raw_auth_value"
+    assert tools[0]["credentials_required"] is True
+    assert "auth_type" not in tools[0]
+    assert "auth_value" not in tools[0]
 
 
 @pytest.mark.asyncio
@@ -577,8 +589,9 @@ async def test_export_tools_with_non_masked_auth(export_service, mock_db):
 
     # Should use auth value directly (not masked)
     assert len(tools) == 1
-    assert tools[0]["auth_type"] == "bearer"
-    assert tools[0]["auth_value"] == "encrypted_auth_value"
+    assert tools[0]["credentials_required"] is True
+    assert "auth_type" not in tools[0]
+    assert "auth_value" not in tools[0]
 
 
 @pytest.mark.asyncio
@@ -610,7 +623,7 @@ async def test_export_gateways_with_tag_filtering(export_service, mock_db):
         passthrough_headers=None,
     )
 
-    gateway_without_matching_tags = GatewayRead(
+    _gateway_without_matching_tags = GatewayRead(
         id="gw2",
         name="gateway_no_tags",
         url="https://gateway2.example.com",
@@ -691,8 +704,9 @@ async def test_export_gateways_with_masked_auth(export_service, mock_db):
 
     # Should get raw auth value from database via batch query
     assert len(gateways) == 1
-    assert gateways[0]["auth_type"] == "bearer"
-    assert gateways[0]["auth_value"] == "encrypted_raw_gateway_auth"
+    assert gateways[0]["credentials_required"] is True
+    assert "auth_type" not in gateways[0]
+    assert "auth_value" not in gateways[0]
 
 
 @pytest.mark.asyncio
@@ -733,8 +747,9 @@ async def test_export_gateways_with_non_masked_auth(export_service, mock_db):
 
     # Should use auth value directly
     assert len(gateways) == 1
-    assert gateways[0]["auth_type"] == "bearer"
-    assert gateways[0]["auth_value"] == "encrypted_auth_value"
+    assert gateways[0]["credentials_required"] is True
+    assert "auth_type" not in gateways[0]
+    assert "auth_value" not in gateways[0]
 
 
 @pytest.mark.asyncio
@@ -753,6 +768,7 @@ async def test_export_servers_with_data(export_service, mock_db):
     export_service.server_service.list_servers.return_value = ([mock_server], None)
 
     # Execute export
+    mock_db.execute.return_value.__iter__.return_value = [("server1", "tool1", "first", None, None, None, None), ("server1", "tool2", "second", None, None, None, None)]
     servers = await export_service._export_servers(mock_db, None, False)
 
     # Verify server data structure
@@ -1398,8 +1414,9 @@ async def test_export_selected_tools_success_and_empty_list(export_service, mock
     assert len(exported) == 1
     assert exported[0]["name"] == "local_tool"
     assert exported[0]["displayName"] == "Local Tool"
-    assert exported[0]["auth_type"] == "bearer"
-    assert exported[0]["auth_value"] == "secret"
+    assert exported[0]["credentials_required"] is True
+    assert "auth_type" not in exported[0]
+    assert "auth_value" not in exported[0]
 
 
 @pytest.mark.asyncio
@@ -1424,9 +1441,10 @@ async def test_export_selected_gateways_success_and_empty_list(export_service, m
     mock_db.execute.return_value.scalars.return_value.all.return_value = [db_gateway]
 
     exported = await export_service._export_selected_gateways(mock_db, ["gw1"])
-    assert exported[0]["auth_type"] == "query_param"
-    assert exported[0]["auth_value"] == "secret"
-    assert exported[0]["auth_query_params"] == {"api_key": "k"}
+    assert exported[0]["credentials_required"] is True
+    assert "auth_type" not in exported[0]
+    assert "auth_value" not in exported[0]
+    assert "auth_query_params" not in exported[0]
 
 
 @pytest.mark.asyncio
@@ -1449,6 +1467,7 @@ async def test_export_selected_servers_success_and_empty_list(export_service, mo
 
     mock_db.execute.return_value.scalars.return_value.all.return_value = [db_server]
 
+    mock_db.execute.return_value.__iter__.return_value = [(db_server.id, "tool1", "first", None, None, None, None), (db_server.id, "tool2", "second", None, None, None, None)]
     exported = await export_service._export_selected_servers(mock_db, ["server1"], root_path="/api")
     assert exported[0]["tool_ids"] == ["tool1", "tool2"]
     assert exported[0]["sse_endpoint"] == "/api/servers/server1/sse"
@@ -1478,6 +1497,7 @@ async def test_export_selected_prompts_success_and_empty_list(export_service, mo
     exported = await export_service._export_selected_prompts(mock_db, ["p1"])
     assert exported[0]["input_schema"]["properties"]["a"]["type"] == "string"
     assert exported[0]["is_active"] is True
+    assert executed_bound_values(mock_db) == ["p1", "p1"]
 
 
 @pytest.mark.asyncio
@@ -1502,6 +1522,7 @@ async def test_export_selected_resources_success_and_empty_list(export_service, 
     exported = await export_service._export_selected_resources(mock_db, ["file:///x"])
     assert exported[0]["uri"] == "file:///x"
     assert exported[0]["last_modified"] == now.isoformat()
+    assert executed_bound_values(mock_db) == ["file:///x"]
 
 
 @pytest.mark.asyncio
@@ -1682,19 +1703,7 @@ async def test_export_selected_prompts_scoped_visibility_filters_non_visible(exp
     visible_prompt.tags = []
     visible_prompt.enabled = True
 
-    hidden_prompt = MagicMock()
-    hidden_prompt.id = "p2"
-    hidden_prompt.name = "hidden-prompt"
-    hidden_prompt.original_name = "hidden-prompt"
-    hidden_prompt.custom_name = "hidden-prompt-custom"
-    hidden_prompt.display_name = "Hidden Prompt"
-    hidden_prompt.template = "hidden"
-    hidden_prompt.description = "hidden"
-    hidden_prompt.argument_schema = {"type": "object", "properties": {}, "required": []}
-    hidden_prompt.tags = []
-    hidden_prompt.enabled = True
-
-    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_prompt, hidden_prompt]
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_prompt]
 
     exported = await export_service._export_selected_prompts(
         mock_db,
@@ -1704,6 +1713,46 @@ async def test_export_selected_prompts_scoped_visibility_filters_non_visible(exp
     )
     assert len(exported) == 1
     assert exported[0]["name"] == "visible-prompt"
+    assert executed_bound_values(mock_db) == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_export_selected_prompts_scoped_name_collision_queries_visible_ids_only(export_service, mock_db):
+    """A hidden prompt sharing a name with a visible prompt must not enter the query."""
+    export_service._fetch_all_prompts = AsyncMock(return_value=[SimpleNamespace(id="reader-p", name="shared-name")])
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    await export_service._export_selected_prompts(mock_db, ["shared-name"], user_email="reader@example.com", token_teams=[])
+
+    assert executed_bound_values(mock_db) == ["reader-p"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("requested", "expected_ids"),
+    [
+        (["p1"], ["p1"]),
+        (["visible-prompt"], ["p1"]),
+        (["p1", "visible-prompt"], ["p1"]),
+        (["p2"], None),
+        (["hidden-prompt"], None),
+        (["p2", "hidden-prompt"], None),
+        (["p1", "hidden-prompt"], ["p1"]),
+        (["visible-prompt", "p2"], ["p1"]),
+    ],
+    ids=["id-only", "name-only", "id-and-name", "hidden-id", "hidden-name", "hidden-id-and-name", "visible-id-hidden-name", "visible-name-hidden-id"],
+)
+async def test_export_selected_prompts_scoped_id_name_lookup_matrix(export_service, mock_db, requested, expected_ids):
+    """Scoped prompt lookup resolves visible prompts by ID or name and never queries hidden ones."""
+    export_service._fetch_all_prompts = AsyncMock(return_value=[SimpleNamespace(id="p1", name="visible-prompt")])
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    await export_service._export_selected_prompts(mock_db, requested, user_email="user@example.com", token_teams=["team-1"])
+
+    if expected_ids is None:
+        mock_db.execute.assert_not_called()
+    else:
+        assert executed_bound_values(mock_db) == expected_ids
 
 
 @pytest.mark.asyncio
@@ -1724,10 +1773,11 @@ async def test_export_selected_prompts_scoped_no_visible_match_returns_empty(exp
 @pytest.mark.asyncio
 async def test_export_selected_resources_scoped_visibility_filters_non_visible(export_service, mock_db):
     """Ensure selective resource export enforces visibility scoping when context is provided."""
-    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(uri="file:///visible.txt")])
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(id="r1", uri="file:///visible.txt")])
 
     now = datetime.now(timezone.utc)
     visible_resource = MagicMock()
+    visible_resource.id = "r1"
     visible_resource.uri = "file:///visible.txt"
     visible_resource.name = "visible"
     visible_resource.gateway_id = None
@@ -1737,16 +1787,7 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
     visible_resource.enabled = True
     visible_resource.updated_at = now
 
-    hidden_resource = MagicMock()
-    hidden_resource.uri = "file:///hidden.txt"
-    hidden_resource.name = "hidden"
-    hidden_resource.description = "hidden"
-    hidden_resource.mime_type = "text/plain"
-    hidden_resource.tags = []
-    hidden_resource.enabled = True
-    hidden_resource.updated_at = now
-
-    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_resource, hidden_resource]
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [visible_resource]
 
     exported = await export_service._export_selected_resources(
         mock_db,
@@ -1756,12 +1797,24 @@ async def test_export_selected_resources_scoped_visibility_filters_non_visible(e
     )
     assert len(exported) == 1
     assert exported[0]["uri"] == "file:///visible.txt"
+    assert executed_bound_values(mock_db) == ["r1"]
+
+
+@pytest.mark.asyncio
+async def test_export_selected_resources_scoped_uri_collision_queries_visible_ids_only(export_service, mock_db):
+    """A hidden resource sharing a URI with a visible resource must not enter the query."""
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(id="reader-r", uri="file:///shared.txt")])
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+    await export_service._export_selected_resources(mock_db, ["file:///shared.txt"], user_email="reader@example.com", token_teams=[])
+
+    assert executed_bound_values(mock_db) == ["reader-r"]
 
 
 @pytest.mark.asyncio
 async def test_export_selected_resources_scoped_no_visible_match_returns_empty(export_service, mock_db):
     """When scoped visibility yields no selected resources, export should short-circuit to empty."""
-    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(uri="file:///visible-only.txt")])
+    export_service._fetch_all_resources = AsyncMock(return_value=[SimpleNamespace(id="r9", uri="file:///visible-only.txt")])
 
     exported = await export_service._export_selected_resources(
         mock_db,
@@ -1774,11 +1827,10 @@ async def test_export_selected_resources_scoped_no_visible_match_returns_empty(e
 
 
 @pytest.mark.asyncio
-async def test_export_gateways_masked_auth_encodes_dict_auth_value(export_service, mock_db):
+async def test_export_gateways_masked_auth_omits_dict_auth_value(export_service, mock_db):
     """Batch-fetched auth_value that is a dict (authheaders) must be encoded before export."""
     # First-Party
     from mcpgateway.config import settings
-    from mcpgateway.utils.services_auth import decode_auth
 
     auth_dict = {"X-Custom-Auth": "my-token", "X-Org-ID": "org-42"}  # pragma: allowlist secret
 
@@ -1814,17 +1866,16 @@ async def test_export_gateways_masked_auth_encodes_dict_auth_value(export_servic
     exported = await export_service._export_gateways(mock_db, None, False)
 
     assert len(exported) == 1
-    assert exported[0]["auth_type"] == "authheaders"
+    assert exported[0]["credentials_required"] is True
+    assert "auth_type" not in exported[0]
     # auth_value must be an encoded string, not the raw dict
-    assert isinstance(exported[0]["auth_value"], str)
-    assert decode_auth(exported[0]["auth_value"]) == auth_dict
+    assert "auth_value" not in exported[0]
 
 
 @pytest.mark.asyncio
-async def test_export_selected_gateways_encodes_dict_auth_value(export_service, mock_db):
+async def test_export_selected_gateways_omits_dict_auth_value(export_service, mock_db):
     """_export_selected_gateways must encode dict auth_value (authheaders) before export."""
     # First-Party
-    from mcpgateway.utils.services_auth import decode_auth
 
     auth_dict = {"X-Custom-Auth": "my-token"}  # pragma: allowlist secret
 
@@ -1847,9 +1898,71 @@ async def test_export_selected_gateways_encodes_dict_auth_value(export_service, 
     exported = await export_service._export_selected_gateways(mock_db, ["gw1"])
 
     assert len(exported) == 1
-    assert exported[0]["auth_type"] == "authheaders"
-    assert isinstance(exported[0]["auth_value"], str)
-    assert decode_auth(exported[0]["auth_value"]) == auth_dict
+    assert exported[0]["credentials_required"] is True
+    assert "auth_type" not in exported[0]
+    assert "auth_value" not in exported[0]
+
+
+@pytest.mark.asyncio
+async def test_export_gateways_skips_sigv4_gateway(export_service, mock_db, caplog):
+    """A SigV4 gateway is left out of the bulk export and the skip is logged."""
+    # First-Party
+    from mcpgateway.config import settings
+
+    sigv4_gateway = SimpleNamespace(
+        id="gw-sigv4",
+        name="aws-gw",
+        url="https://example.execute-api.us-east-1.amazonaws.com/mcp",
+        description=None,
+        transport="STREAMABLEHTTP",
+        capabilities={},
+        enabled=True,
+        tags=[],
+        passthrough_headers=None,
+        tool_validation_policy=None,
+        auth_type="sigv4",
+        auth_value=None,
+    )
+    bearer_gateway = SimpleNamespace(
+        id="gw-bearer",
+        name="plain-gw",
+        url="https://gw.example.com",
+        description=None,
+        transport="SSE",
+        capabilities={},
+        enabled=True,
+        tags=[],
+        passthrough_headers=None,
+        tool_validation_policy=None,
+        auth_type="bearer",
+        auth_value="encoded-value",  # pragma: allowlist secret
+    )
+    assert bearer_gateway.auth_value != settings.masked_auth_value
+    export_service.gateway_service.list_gateways.return_value = ([sigv4_gateway, bearer_gateway], None)
+
+    with caplog.at_level("WARNING"):
+        exported = await export_service._export_gateways(mock_db, None, False)
+
+    assert [g["name"] for g in exported] == ["plain-gw"]
+    assert "gw-sigv4" in caplog.text
+    assert "sigv4_config" not in str(exported)
+
+
+@pytest.mark.asyncio
+async def test_export_selected_gateways_skips_sigv4_gateway(export_service, mock_db):
+    """A SigV4 gateway is left out of the selective export."""
+    db_gateway = MagicMock()
+    db_gateway.id = "gw-sigv4"
+    db_gateway.name = "aws-gw"
+    db_gateway.url = "https://example.execute-api.us-east-1.amazonaws.com/mcp"
+    db_gateway.auth_type = "sigv4"
+    db_gateway.sigv4_config = {"access_key_id": "AKIAIOSFODNN7EXAMPLE"}  # pragma: allowlist secret
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [db_gateway]
+
+    exported = await export_service._export_selected_gateways(mock_db, ["gw-sigv4"])
+
+    assert exported == []
 
 
 @pytest.mark.asyncio
@@ -1876,6 +1989,7 @@ async def test_export_selected_servers_filters_deactivated_entities(export_servi
     mock_scalars.all.return_value = [mock_server]
     mock_result = MagicMock()
     mock_result.scalars.return_value = mock_scalars
+    mock_result.__iter__.return_value = [("server-1", "tool-1", "enabled_tool", None, None, None, None)]
     mock_db.execute.return_value = mock_result
 
     # Call _export_selected_servers
@@ -1892,3 +2006,63 @@ async def test_export_selected_servers_filters_deactivated_entities(export_servi
 
     # Verify the database execute was called
     assert mock_db.execute.called, "Database execute should have been called"
+
+
+@pytest.fixture
+def two_owner_db():
+    """Create a SQLite database where two owners share a prompt name and a resource URI."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    with Session(engine) as seed:
+        seed.add_all([EmailUser(email="reader@example.com", password_hash="x", is_admin=False), EmailUser(email="victim@example.com", password_hash="x", is_admin=False)])
+        for owner, team in (("reader@example.com", "reader-team"), ("victim@example.com", "victim-team")):
+            seed.add(
+                DbPrompt(
+                    id=f"{owner}-prompt",
+                    original_name="shared-prompt",
+                    custom_name="shared-prompt",
+                    custom_name_slug="shared-prompt",
+                    name="shared-prompt",
+                    description=f"{owner} prompt",
+                    template=f"{owner} template",
+                    argument_schema={},
+                    visibility="private",
+                    owner_email=owner,
+                    team_id=team,
+                )
+            )
+            seed.add(Resource(id=f"{owner}-resource", uri="file:///shared.txt", name="shared", description=f"{owner} resource", visibility="private", owner_email=owner, team_id=team))
+        seed.commit()
+    with Session(engine) as session:
+        yield session
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_export_selected_prompts_two_owners_sharing_a_name_excludes_other_owner(two_owner_db):
+    """Selecting a name shared by two owners exports only the caller's private prompt."""
+    service = ExportService()
+
+    exported = await service._export_selected_prompts(two_owner_db, ["shared-prompt"], user_email="reader@example.com", token_teams=["reader-team"])
+
+    assert [prompt["description"] for prompt in exported] == ["reader@example.com prompt"]
+
+
+@pytest.mark.asyncio
+async def test_export_selected_prompts_two_owners_hidden_id_is_not_exported(two_owner_db):
+    """Selecting another owner's prompt by ID exports nothing."""
+    service = ExportService()
+
+    exported = await service._export_selected_prompts(two_owner_db, ["victim@example.com-prompt"], user_email="reader@example.com", token_teams=["reader-team"])
+
+    assert exported == []
+
+
+@pytest.mark.asyncio
+async def test_export_selected_resources_two_owners_sharing_a_uri_excludes_other_owner(two_owner_db):
+    """Selecting a URI shared by two owners exports only the caller's private resource."""
+    service = ExportService()
+
+    exported = await service._export_selected_resources(two_owner_db, ["file:///shared.txt"], user_email="reader@example.com", token_teams=["reader-team"])
+
+    assert [resource["description"] for resource in exported] == ["reader@example.com resource"]

@@ -86,6 +86,30 @@ DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp
 # The gateway will automatically handle schema creation and migrations
 ```
 
+## Aggregate Audit Migration
+
+Migration `4a7d9e2c6b18` permits NULL values in `audit_trails.resource_id`.
+An aggregate audit represents multiple resources and has no individual resource ID.
+Team stamping uses the existing `team_id` column and needs no new column.
+
+Before upgrading an existing deployment:
+
+1. Back up the database and verify that you can restore it.
+2. Stop application writers and schedule a maintenance window for SQLite databases.
+3. Run `alembic upgrade head` from `mcpgateway/` with the deployment's database configuration.
+4. Start the upgraded application only after the migration succeeds.
+
+On historical SQLite schemas, Alembic copies the audit table to change column nullability.
+Allow temporary disk space for that copy and expect write locking during the migration.
+Already-nullable audit columns need no alteration.
+
+!!! warning "Downgrade restriction"
+    Downgrade restores NOT NULL only when every audit row has a resource ID.
+    If any NULL resource IDs exist, the migration refuses the downgrade before changing the schema.
+    Keep the compatible schema revision and preserve those audit records.
+    Do not delete aggregate audits or invent resource IDs to force a downgrade.
+    Application-only rollback leaves the nullable schema in place; check the older application's compatibility separately.
+
 ## Troubleshooting
 
 ### Common PostgreSQL Issues

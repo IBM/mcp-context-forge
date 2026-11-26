@@ -1788,6 +1788,40 @@ class TestEmailAuthServiceUserManagement:
                     assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x!") is True  # pragma: allowlist secret
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("invalidate_sessions, expected_revocations", [(True, 2), (False, 0)])
+    async def test_invalidate_user_sessions_revokes_api_tokens(self, service, mock_db, invalidate_sessions, expected_revocations):
+        """API tokens are revoked in one commit, and only when session invalidation is enabled."""
+        tokens = [SimpleNamespace(jti="jti-1", is_active=True), SimpleNamespace(jti="jti-2", is_active=True)]
+        mock_db.execute.return_value.scalars.return_value.all.return_value = tokens
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_reset_invalidate_sessions = invalidate_sessions
+            with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock()) as invalidate_cache:
+                await service._invalidate_user_sessions("test@example.com", "password_change")
+
+        revocations = [call.args[0] for call in mock_db.add.call_args_list]
+        assert len(revocations) == expected_revocations
+        assert [token.is_active for token in tokens] == [expected_revocations == 0] * 2
+        assert all(r.revoked_by == "test@example.com" and r.reason == "password_change" for r in revocations)
+        assert mock_db.commit.call_count == (1 if expected_revocations else 0)
+        invalidate_cache.assert_awaited_once_with("test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_sessions_rolls_back_when_commit_fails(self, service, mock_db):
+        """A failed commit leaves no token half-revoked and still clears the auth cache."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [SimpleNamespace(jti="jti-1", is_active=True)]
+        mock_db.commit.side_effect = RuntimeError("db down")
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_reset_invalidate_sessions = True
+            with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock()) as invalidate_cache:
+                with pytest.raises(RuntimeError, match="db down"):
+                    await service._invalidate_user_sessions("test@example.com", "password_change")
+
+        mock_db.rollback.assert_called_once()
+        invalidate_cache.assert_awaited_once_with("test@example.com")
+
+    @pytest.mark.asyncio
     async def test_change_password_outer_cache_invalidation_exception_is_non_fatal(self, service, mock_user, mock_password_service):
         """change_password handles exceptions raised by cache invalidation helper."""
         service.password_service = mock_password_service

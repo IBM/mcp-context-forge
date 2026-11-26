@@ -74,6 +74,7 @@ class RootService:
 
     def __init__(self) -> None:
         """Initialize root service."""
+        self.mutation_lock = asyncio.Lock()
         self._roots: Dict[str, Root] = {}
         self._subscribers: List[asyncio.Queue] = []
 
@@ -157,6 +158,22 @@ class RootService:
         with create_span("root.list", {"root.count": len(self._roots)}):
             return list(self._roots.values())
 
+    def publish_import_roots(self, prepared: Dict[str, Root]) -> None:
+        """Publish prepared roots while the caller holds the mutation lock.
+
+        Args:
+            prepared: Complete replacement root state.
+        """
+        self._roots = prepared
+
+    async def notify_import_root(self, event: Dict) -> None:
+        """Notify subscribers of one committed import root event.
+
+        Args:
+            event: Prepared root event.
+        """
+        await self._notify_subscribers(event)
+
     async def add_root(self, uri: str, name: Optional[str] = None) -> Root:
         """Add a new root.
 
@@ -216,10 +233,10 @@ class RootService:
         # NORMALIZED URI from the Root object as the dictionary key
         normalized_key = str(root_obj.uri)
 
-        if normalized_key in self._roots:
-            raise RootServiceError(f"Root already exists: {root_uri}")
-
-        self._roots[normalized_key] = root_obj
+        async with self.mutation_lock:
+            if normalized_key in self._roots:
+                raise RootServiceError(f"Root already exists: {root_uri}")
+            self._roots[normalized_key] = root_obj
 
         await self._notify_root_added(root_obj)
         logger.info("Added root: %s", root_uri)
@@ -298,14 +315,13 @@ class RootService:
         """
         # Normalize the URI to match how it was stored.
         normalized_uri = self._validate_and_canonicalize_root_uri(root_uri)
-        if normalized_uri not in self._roots:
-            raise RootServiceNotFoundError(f"Root not found: {root_uri}")
-
-        root_obj = self._roots[normalized_uri]
-
-        # Update name if provided
-        if name is not None:
-            root_obj.name = self._validate_root_name(name)
+        async with self.mutation_lock:
+            if normalized_uri not in self._roots:
+                raise RootServiceNotFoundError(f"Root not found: {root_uri}")
+            root_obj = self._roots[normalized_uri]
+            if name is not None:
+                root_obj = root_obj.model_copy(update={"name": self._validate_root_name(name)})
+                self._roots[normalized_uri] = root_obj
 
         # Notify subscribers of the update
         event = {"type": "root_updated", "data": {"uri": root_obj.uri, "name": root_obj.name}}
@@ -343,9 +359,10 @@ class RootService:
         """
         # Normalize the URI to match how it was stored.
         normalized_uri = self._validate_and_canonicalize_root_uri(root_uri)
-        if normalized_uri not in self._roots:
-            raise RootServiceNotFoundError(f"Root not found: {root_uri}")
-        root_obj = self._roots.pop(normalized_uri)
+        async with self.mutation_lock:
+            if normalized_uri not in self._roots:
+                raise RootServiceNotFoundError(f"Root not found: {root_uri}")
+            root_obj = self._roots.pop(normalized_uri)
         await self._notify_root_removed(root_obj)
         logger.info("Removed root: %s", root_uri)
 
@@ -613,7 +630,15 @@ class RootService:
 
 # Lazy singleton - created on first access, not at module import time.
 # This avoids instantiation when only exception classes are imported.
-_root_service_instance = None  # pylint: disable=invalid-name
+_root_service_instance: Optional[RootService] = None  # pylint: disable=invalid-name
+
+
+def get_root_service() -> RootService:
+    """Return the shared root service, creating it on first access."""
+    global _root_service_instance  # pylint: disable=global-statement
+    if _root_service_instance is None:
+        _root_service_instance = RootService()
+    return _root_service_instance
 
 
 def __getattr__(name: str):
@@ -628,9 +653,6 @@ def __getattr__(name: str):
     Raises:
         AttributeError: If the attribute name is not "root_service".
     """
-    global _root_service_instance  # pylint: disable=global-statement
     if name == "root_service":
-        if _root_service_instance is None:
-            _root_service_instance = RootService()
-        return _root_service_instance
+        return get_root_service()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

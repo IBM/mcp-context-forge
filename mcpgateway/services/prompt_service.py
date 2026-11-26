@@ -33,7 +33,7 @@ from mcp.shared.exceptions import MCPError
 import mcp_types as types
 from mcp_types import GetPromptRequest, GetPromptRequestParams
 import orjson
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -57,6 +57,7 @@ from mcpgateway.services.dataplane_publisher.dataplane_publisher import notify_d
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, get_content_security_service, TemplateValidationError
 from mcpgateway.services.event_service import EventService
+from mcpgateway.services.import_effects import after_import_commit, after_import_commit_sync
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -72,6 +73,7 @@ from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.sigv4 import build_gateway_sigv4_auth, SigV4ConfigError, sigv4_client_factory
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
@@ -148,8 +150,14 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]] = None) -> "types.ClientRequest":
-    """Build a GetPrompt ClientRequest that carries _meta when metadata is given (CWE-20, CWE-284).
+#: Upstream ``prompts/get`` answers: the rendered prompt, or a 2026 MRTR request for input.
+_GET_PROMPT_RESULT_ADAPTER: TypeAdapter = TypeAdapter(types.GetPromptResult | types.InputRequiredResult)
+
+
+def _build_get_prompt_request(
+    name: str, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]], input_responses: Optional[Any] = None, request_state: Optional[str] = None
+) -> "types.ClientRequest":
+    """Build a GetPrompt ClientRequest that carries _meta and any MRTR retry fields (CWE-20, CWE-284).
 
     Using ``by_alias=True`` ensures the Pydantic alias ``_meta`` is the only
     key written into the dict so the subsequent ``model_validate`` call
@@ -162,12 +170,14 @@ def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], me
     Args:
         name: The prompt name.
         arguments: Optional prompt arguments.
-        meta_data: Optional validated metadata dict to inject as ``_meta``.
+        meta_data: Validated metadata dict to inject as ``_meta``, or ``None``.
+        input_responses: Answers to a prior input-required result, echoed on the retry.
+        request_state: Opaque state from a prior input-required result, echoed on the retry.
 
     Returns:
         A :class:`GetPromptRequest` ready to be passed to ``session.send_request``.
     """
-    _gp_dict = GetPromptRequestParams(name=name, arguments=arguments).model_dump(by_alias=True)
+    _gp_dict = GetPromptRequestParams(name=name, arguments=arguments, input_responses=input_responses, request_state=request_state).model_dump(by_alias=True)
     if meta_data:
         _gp_dict["_meta"] = meta_data
     return GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))
@@ -179,8 +189,10 @@ async def _get_prompt_with_meta(
     arguments: Optional[Dict[str, str]],
     meta_data: Optional[Dict[str, Any]],
     progress_callback: ProgressFnT | None = None,
+    input_responses: Optional[Any] = None,
+    request_state: Optional[str] = None,
 ) -> Any:
-    """Dispatch a get_prompt call, injecting ``_meta`` and relaying upstream progress when requested.
+    """Dispatch a get_prompt call, injecting ``_meta``, relaying upstream progress, and carrying any MRTR retry fields.
 
     Eliminates the repeated ``if meta_data: send_request … else: get_prompt``
     pattern across every transport/pool branch in this module.
@@ -190,22 +202,37 @@ async def _get_prompt_with_meta(
         session: An active MCP :class:`ClientSession`.
         name: The prompt name.
         arguments: Optional prompt-rendering arguments.
-        meta_data: Optional validated metadata dict. When ``None`` the standard
-            SDK helper is used; when non-empty the low-level ``send_request``
-            path is taken to carry ``_meta``.
+        meta_data: Optional validated metadata dict. Without it, a progress callback or retry
+            fields the standard SDK helper is used; otherwise the low-level ``send_request``
+            path is taken to carry them. The client's progress token never goes upstream.
         progress_callback: Optional callback that receives upstream progress notifications.
+        input_responses: Answers to a prior input-required result, echoed on the retry.
+        request_state: Opaque state from a prior input-required result, echoed on the retry.
 
     Returns:
-        The raw MCP result object (caller extracts ``.messages``).
+        The raw MCP result object: a ``GetPromptResult`` or an ``InputRequiredResult``.
     """
     meta_data = without_progress_token(meta_data)
-    if meta_data or progress_callback:
+    if meta_data or progress_callback or input_responses or request_state:
         return await session.send_request(
-            _build_get_prompt_request(name, arguments, meta_data),
-            types.GetPromptResult,
+            _build_get_prompt_request(name, arguments, meta_data, input_responses, request_state),
+            _GET_PROMPT_RESULT_ADAPTER,
             progress_callback=progress_callback,
         )
-    return await session.get_prompt(name, arguments=arguments)
+    return await session.get_prompt(name, arguments=arguments, allow_input_required=True)
+
+
+def _raise_if_input_required(remote_result: Any) -> None:
+    """Turn an upstream input-required answer into the ``PromptInputRequired`` signal.
+
+    Args:
+        remote_result: The raw upstream result.
+
+    Raises:
+        PromptInputRequired: If the upstream asks for input before rendering the prompt.
+    """
+    if isinstance(remote_result, types.InputRequiredResult):
+        raise PromptInputRequired(remote_result)
 
 
 def _prompt_result_to_plugin_payload(result: PromptResult) -> dict[str, Any]:
@@ -266,6 +293,22 @@ class PromptNameConflictError(PromptError):
         super().__init__(message)
 
 
+class PromptInputRequired(PromptError):
+    """Control-flow signal: the upstream answered ``prompts/get`` with an input-required result (2026 MRTR).
+
+    The caller decides whether to relay the result to a modern client or refuse it for a legacy one.
+    """
+
+    def __init__(self, result: "types.InputRequiredResult") -> None:
+        """Keep the upstream result for the caller.
+
+        Args:
+            result: The ``InputRequiredResult`` the upstream returned.
+        """
+        super().__init__("Input required by the upstream prompt")
+        self.result = result
+
+
 class PromptValidationError(PromptError):
     """Raised when prompt validation fails."""
 
@@ -305,11 +348,15 @@ def _sanitize_error_data(value: Any, auth_query_params: Optional[Dict[str, str]]
     return value
 
 
-def _upstream_root_cause(exc: BaseException) -> BaseException:
-    """Return the first MCPError inside a task-group wrapped failure, or its first leaf when there is none.
+def _upstream_root_cause(exc: BaseException, signal: type[BaseException] | None = None) -> BaseException:
+    """Return the exception that explains a task-group wrapped failure.
+
+    A ``signal`` instance wins first (a control-flow result such as input-required raised
+    inside the SDK client block), then the first MCPError, then the first leaf.
 
     Args:
         exc: The exception caught around an upstream call.
+        signal: Optional control-flow exception type to surface ahead of errors.
 
     Returns:
         BaseException: The exception that explains the failure.
@@ -322,6 +369,10 @@ def _upstream_root_cause(exc: BaseException) -> BaseException:
             pending.extend(current.exceptions)
         else:
             leaves.append(current)
+    if signal is not None:
+        found = next((leaf for leaf in leaves if isinstance(leaf, signal)), None)
+        if found is not None:
+            return found
     return next((leaf for leaf in leaves if isinstance(leaf, MCPError)), leaves[0] if leaves else exc)
 
 
@@ -456,6 +507,8 @@ class PromptService(BaseService):
         arguments: Optional[Dict[str, str]],
         meta_data: Optional[Dict[str, Any]] = None,
         progress_callback: ProgressFnT | None = None,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> PromptResult:
         """Fetch a rendered prompt from the upstream MCP gateway.
 
@@ -464,11 +517,14 @@ class PromptService(BaseService):
             arguments: Optional prompt-rendering arguments.
             meta_data: Optional metadata dict forwarded as ``_meta`` in the upstream MCP request.
             progress_callback: Optional callback that receives upstream progress notifications.
+            input_responses: Answers to a prior input-required result, echoed on the retry.
+            request_state: Opaque state from a prior input-required result, echoed on the retry.
 
         Returns:
             Prompt result normalized into ContextForge models.
 
         Raises:
+            PromptInputRequired: If the upstream asks for input before it can render the prompt.
             PromptError: If the gateway prompt cannot be fetched.
         """
         gateway = getattr(prompt, "gateway", None)
@@ -478,6 +534,11 @@ class PromptService(BaseService):
         gateway_url = str(gateway.url)
         headers = build_gateway_auth_headers(gateway)
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        try:
+            signing_auth = build_gateway_sigv4_auth(getattr(gateway, "auth_type", None), getattr(gateway, "sigv4_config", None))
+        except SigV4ConfigError as exc:
+            raise PromptError(f"Stored SigV4 credentials could not be loaded for prompt gateway '{gateway.id}'") from exc
+        sigv4_factory = sigv4_client_factory(signing_auth)
 
         if getattr(gateway, "auth_type", None) == "query_param" and getattr(gateway, "auth_query_params", None):
             auth_query_params_decrypted = {}
@@ -515,8 +576,10 @@ class PromptService(BaseService):
                         url=gateway_url,
                         headers=headers,
                         transport_type=registry_transport_type,
+                        httpx_client_factory=sigv4_factory,
                     ) as upstream:
-                        remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data, progress_callback)
+                        remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data, progress_callback, input_responses, request_state)
+                        _raise_if_input_required(remote_result)
                         return PromptResult(
                             messages=[
                                 Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
@@ -530,17 +593,20 @@ class PromptService(BaseService):
                     url=gateway_url,
                     headers=headers,
                     timeout=settings.health_check_timeout,
+                    httpx_client_factory=sigv4_factory,
                     transport="sse",
                 ) as client:
-                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback)
+                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback, input_responses, request_state)
             else:
                 async with mcp_proxy_client(
                     url=gateway_url,
                     headers=headers,
                     timeout=settings.health_check_timeout,
+                    httpx_client_factory=sigv4_factory,
                 ) as client:
-                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback)
+                    remote_result = await _get_prompt_with_meta(client.session, remote_name, prompt_arguments, meta_data, progress_callback, input_responses, request_state)
 
+            _raise_if_input_required(remote_result)
             return PromptResult(
                 messages=[
                     Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
@@ -548,8 +614,10 @@ class PromptService(BaseService):
                 ],
                 description=getattr(remote_result, "description", None) or prompt.description,
             )
+        except PromptInputRequired:
+            raise
         except Exception as exc:
-            # The SDK's task group wraps the failure; an upstream JSON-RPC error inside it wins over any other leaf.
+            # The SDK's task group wraps the failure; the input-required signal, then an upstream JSON-RPC error, wins over any other leaf.
             root_cause = _upstream_root_cause(exc)
             # Either message may echo the gateway URL, so auth parameters are stripped from it.
             sanitized_error = sanitize_exception_message(str(root_cause), auth_query_params_decrypted)
@@ -966,14 +1034,15 @@ class PromptService(BaseService):
             db.add(db_prompt)
             db.commit()
             db.refresh(db_prompt)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
             # Notify subscribers
-            await self._notify_prompt_added(db_prompt)
+            await after_import_commit(self._notify_prompt_added, db_prompt)
 
             logger.info("Registered prompt: %s", prompt.name)
 
             # Structured logging: Audit trail for prompt creation
-            audit_trail.log_action(
+            after_import_commit_sync(
+                audit_trail.log_action,
                 user_id=created_by or "system",
                 action="create_prompt",
                 resource_type="prompt",
@@ -1016,17 +1085,17 @@ class PromptService(BaseService):
 
             # Invalidate cache after successful creation
             cache = _get_registry_cache()
-            await cache.invalidate_prompts()
+            await after_import_commit(cache.invalidate_prompts)
             # Also invalidate tags cache since prompt tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
             # First-Party
             from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
 
-            metrics_cache.invalidate_prefix("top_prompts:")
-            metrics_cache.invalidate("prompts")
+            after_import_commit_sync(metrics_cache.invalidate_prefix, "top_prompts:")
+            after_import_commit_sync(metrics_cache.invalidate, "prompts")
 
             return PromptRead.model_validate(prompt_dict)
 
@@ -1413,6 +1482,12 @@ class PromptService(BaseService):
                 if prompts_to_add:
                     db.add_all(prompts_to_add)
 
+                audit_counts: dict[str | None, dict[str, int]] = {}
+                for operation, db_prompts in (("created", prompts_to_add), ("updated", prompts_to_update)):
+                    for db_prompt in db_prompts:
+                        counts = audit_counts.setdefault(db_prompt.team_id, {"created": 0, "updated": 0})
+                        counts[operation] += 1
+
                 # Commit the chunk
                 db.commit()
                 notify_dataplane()
@@ -1424,21 +1499,20 @@ class PromptService(BaseService):
                     # Notify subscribers
                     await self._notify_prompt_added(db_prompt)
 
-                # Log bulk audit trail entry
-                if prompts_to_add or prompts_to_update:
+                for audit_team_id, counts in audit_counts.items():
                     audit_trail.log_action(
                         user_id=created_by or "system",
-                        action="bulk_create_prompts" if prompts_to_add else "bulk_update_prompts",
+                        action="bulk_create_prompts" if counts["created"] else "bulk_update_prompts",
                         resource_type="prompt",
                         resource_id=import_batch_id or "bulk_operation",
-                        resource_name=f"Bulk operation: {len(prompts_to_add)} created, {len(prompts_to_update)} updated",
+                        resource_name=f"Bulk operation: {counts['created']} created, {counts['updated']} updated",
                         user_email=owner_email,
-                        team_id=team_id,
+                        team_id=audit_team_id,
                         client_ip=created_from_ip,
                         user_agent=created_user_agent,
                         new_values={
-                            "prompts_created": len(prompts_to_add),
-                            "prompts_updated": len(prompts_to_update),
+                            "prompts_created": counts["created"],
+                            "prompts_updated": counts["updated"],
                             "visibility": visibility,
                         },
                         context={
@@ -2014,6 +2088,8 @@ class PromptService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         _meta_data: Optional[Dict[str, Any]] = None,
         progress_callback: ProgressFnT | None = None,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> PromptResult:
         """Retrieve and render a prompt by name or ID.
 
@@ -2038,6 +2114,8 @@ class PromptService(BaseService):
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             _meta_data: Optional metadata forwarded as _meta to the upstream MCP gateway during prompt retrieval.
             progress_callback: Optional callback that receives upstream progress notifications, forwarded to the gateway fetch.
+            input_responses: Answers to a prior input-required result, echoed to the upstream on the retry.
+            request_state: Opaque state from a prior input-required result, echoed to the upstream on the retry.
 
         Returns:
             Prompt result with rendered messages
@@ -2200,7 +2278,9 @@ class PromptService(BaseService):
                 if self._should_fetch_gateway_prompt(prompt):
                     # Release the read transaction before any remote network I/O.
                     db.commit()
-                    result = await self._fetch_gateway_prompt_result(prompt, arguments, meta_data=_meta_data, progress_callback=progress_callback)
+                    result = await self._fetch_gateway_prompt_result(
+                        prompt, arguments, meta_data=_meta_data, progress_callback=progress_callback, input_responses=input_responses, request_state=request_state
+                    )
                 elif arguments is None:
                     # No arguments at all means "show the template", as the REST view does.
                     result = PromptResult(
@@ -2289,6 +2369,10 @@ class PromptService(BaseService):
                 logger.info("Retrieved prompt: %s successfully", prompt.id)
                 return result
 
+            except PromptInputRequired:
+                # An upstream question is one round of a successful call, not a failure.
+                success = True
+                raise
             except Exception as e:
                 success = False
                 error_message = str(e)
@@ -2344,6 +2428,7 @@ class PromptService(BaseService):
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        import_platform_admin: bool = False,
     ) -> PromptRead:
         """
         Update a prompt template.
@@ -2357,6 +2442,7 @@ class PromptService(BaseService):
             modified_via: Source of modification (ui/api/import)
             modified_user_agent: User agent string from the modification request
             user_email: Email of user performing update (for ownership check)
+            import_platform_admin: Verified unrestricted administrator for this import update.
 
         Returns:
             The updated PromptRead object
@@ -2407,7 +2493,7 @@ class PromptService(BaseService):
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
             # Check ownership if user_email provided
-            if user_email:
+            if user_email and not import_platform_admin:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
@@ -2536,12 +2622,13 @@ class PromptService(BaseService):
 
             db.commit()
             db.refresh(prompt)
-            notify_dataplane()
+            after_import_commit_sync(notify_dataplane)
 
-            await self._notify_prompt_updated(prompt)
+            await after_import_commit(self._notify_prompt_updated, prompt)
 
             # Structured logging: Audit trail for prompt update
-            audit_trail.log_action(
+            after_import_commit_sync(
+                audit_trail.log_action,
                 user_id=user_email or modified_by or "system",
                 action="update_prompt",
                 resource_type="prompt",
@@ -2572,12 +2659,12 @@ class PromptService(BaseService):
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
-            await cache.invalidate_prompts()
+            await after_import_commit(cache.invalidate_prompts)
             # Also invalidate tags cache since prompt tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
-            await admin_stats_cache.invalidate_tags()
+            await after_import_commit(admin_stats_cache.invalidate_tags)
 
             return self.convert_prompt_to_read(prompt)
 

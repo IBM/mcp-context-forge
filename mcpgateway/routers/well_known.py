@@ -10,12 +10,17 @@ Defaults assume private API deployment with crawling disabled.
 """
 
 # Standard
+import base64
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
 # Third-Party
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy.orm import Session
@@ -23,9 +28,11 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
+from mcpgateway.services.cimd_service import CimdKeyError, CimdService, load_cimd_previous_public_key, load_cimd_public_key
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import require_auth
 
 # Get logger instance
@@ -229,6 +236,106 @@ async def get_oauth_protected_resource(
     raise HTTPException(
         status_code=404, detail=("This endpoint is deprecated and non-compliant with RFC 9728. Use the path-based endpoint: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
     )
+
+
+_EC_CURVE_NAMES = {"secp256r1": "P-256", "secp384r1": "P-384", "secp521r1": "P-521"}
+
+
+def _b64url(data: bytes) -> str:
+    """Return unpadded base64url text for ``data``."""
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+
+def _int_bytes(value: int, size: Optional[int] = None) -> bytes:
+    """Return ``value`` as big-endian bytes, padded to ``size`` when given."""
+    return value.to_bytes(size or (value.bit_length() + 7) // 8, byteorder="big")
+
+
+def get_jwk_from_public_key(pem_content: str, kid: str, alg: str) -> dict:
+    """Generate a standard JWK dictionary from a public key PEM string."""
+    try:
+        pub_key = load_pem_public_key(pem_content.encode("utf-8"))
+    except (ValueError, TypeError, UnsupportedAlgorithm) as e:
+        logger.warning(f"Failed to parse public key for JWK: {e}")
+        return {}
+
+    jwk = {"kid": kid, "use": "sig", "alg": alg}
+
+    if isinstance(pub_key, rsa.RSAPublicKey):
+        numbers = pub_key.public_numbers()
+        jwk.update({"kty": "RSA", "n": _b64url(_int_bytes(numbers.n)), "e": _b64url(_int_bytes(numbers.e))})
+    elif isinstance(pub_key, ec.EllipticCurvePublicKey):
+        numbers = pub_key.public_numbers()
+        coord_size = (pub_key.curve.key_size + 7) // 8
+        crv_name = _EC_CURVE_NAMES.get(pub_key.curve.name, pub_key.curve.name)
+        jwk.update({"kty": "EC", "crv": crv_name, "x": _b64url(_int_bytes(numbers.x, coord_size)), "y": _b64url(_int_bytes(numbers.y, coord_size))})
+    elif isinstance(pub_key, ed25519.Ed25519PublicKey):
+        pub_bytes = pub_key.public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+        jwk.update({"kty": "OKP", "crv": "Ed25519", "x": _b64url(pub_bytes)})
+    else:
+        logger.warning("Unsupported public key type for JWK")
+        return {}
+
+    return jwk
+
+
+def get_jwks() -> dict:
+    """Build the CIMD JSON Web Key Set from the dedicated CIMD keys, never the JWT signing keys."""
+    keys = []
+    alg = settings.cimd_signing_alg.upper()
+
+    try:
+        jwk = get_jwk_from_public_key(load_cimd_public_key(), kid=settings.cimd_key_id, alg=alg)
+        if jwk:
+            keys.append(jwk)
+    except CimdKeyError as e:
+        logger.warning(f"CIMD public key unavailable for JWKS: {e}")
+
+    prev_pem = load_cimd_previous_public_key()
+    if prev_pem:
+        jwk = get_jwk_from_public_key(prev_pem, kid=settings.cimd_previous_key_id or f"{settings.cimd_key_id}-previous", alg=alg)
+        if jwk:
+            keys.append(jwk)
+
+    return {"keys": keys}
+
+
+def _cimd_cache_headers() -> dict:
+    """Return the public cache headers for CIMD responses.
+
+    Returns:
+        dict: ``Cache-Control`` header.
+
+    Raises:
+        HTTPException: 404 if CIMD is disabled.
+    """
+    if not settings.cimd_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"Cache-Control": f"public, max-age={settings.cimd_document_cache_seconds}"}
+
+
+@router.get("/oauth/client-metadata.json")
+async def get_oauth_client_metadata(request: Request) -> JSONResponse:
+    """Serve the gateway's OAuth Client ID Metadata Document (CIMD).
+
+    Authorization servers fetch this public document to learn the gateway's
+    client metadata. It is built from server-side configuration and the ASGI root path, and holds no secrets.
+
+    Args:
+        request: Incoming request, used to resolve the reverse-proxy root path.
+
+    Returns:
+        JSONResponse: The Client ID Metadata Document.
+    """
+    headers = _cimd_cache_headers()
+    return JSONResponse(content=CimdService(root_path=resolve_root_path(request)).build_document(), headers=headers)
+
+
+@router.get("/oauth/client-metadata/jwks.json")
+async def get_oauth_client_metadata_jwks() -> JSONResponse:
+    """Serve the gateway's public JWKS for CIMD private_key_jwt client assertions."""
+    headers = _cimd_cache_headers()
+    return JSONResponse(content=get_jwks(), headers=headers)
 
 
 def get_well_known_file_content(filename: str) -> PlainTextResponse:
