@@ -8465,14 +8465,15 @@ class TestRemainingCoverageGaps:
         from mcpgateway.services.resource_service import ResourceLockConflictError
         from mcpgateway.services.server_service import ServerError, ServerLockConflictError
 
+        request = _make_request("/servers/s1/state", method="POST")
         monkeypatch.setattr(main_mod.server_service, "set_server_state", AsyncMock(side_effect=ServerLockConflictError("locked")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_server_state.__wrapped__("s1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_server_state.__wrapped__("s1", request, activate=True, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 409
 
         monkeypatch.setattr(main_mod.server_service, "set_server_state", AsyncMock(side_effect=ServerError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_server_state.__wrapped__("s1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_server_state.__wrapped__("s1", request, activate=True, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 400
 
         monkeypatch.setattr(main_mod.resource_service, "set_resource_state", AsyncMock(side_effect=ResourceLockConflictError("locked")))

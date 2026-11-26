@@ -89,7 +89,14 @@ class TestSyncAgentTools:
 
         assert server.tools == [tool]
 
-    @pytest.mark.parametrize("agent_id,integration_type", [(A2, "A2A"), (None, "A2A"), (A1, "REST")])
+    @pytest.mark.parametrize(
+        "agent_id,integration_type",
+        [
+            pytest.param(A2, "A2A", id="wrong-agent"),
+            pytest.param(None, "A2A", id="missing-agent"),
+            pytest.param(A1, "REST", id="wrong-type"),
+        ],
+    )
     def test_invalid_link_cannot_attach_or_detach_tool(self, agent_id, integration_type):
         """An invalid reverse link leaves independent server tools intact."""
         tool = _tool(T1, agent_id, integration_type)

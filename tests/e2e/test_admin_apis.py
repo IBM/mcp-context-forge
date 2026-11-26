@@ -1892,10 +1892,10 @@ class TestAdminListingGracefulErrorHandling:
         corrupted_server_id = corrupted_server.id
         original_convert = ServerService.convert_server_to_read
 
-        def mock_convert(self, server, include_metrics=False):
+        def mock_convert(self, server, **kwargs):
             if server.id == corrupted_server_id:
                 raise ValueError("Simulated corrupted data")
-            return original_convert(self, server, include_metrics=include_metrics)
+            return original_convert(self, server, **kwargs)
 
         with patch.object(ServerService, "convert_server_to_read", mock_convert):
             response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)

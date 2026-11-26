@@ -1753,7 +1753,7 @@ async def test_admin_servers_partial_html_render_variants(monkeypatch):
 
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: _StubTeamService(db))
     monkeypatch.setattr(admin, "paginate_query", _fake_paginate_query)
-    monkeypatch.setattr(admin.server_service, "convert_server_to_read", lambda _s, include_metrics=False: {"id": "server-1"})
+    monkeypatch.setattr(admin.server_service, "convert_server_to_read", lambda _server, **_kwargs: {"id": "server-1"})
 
     response = await admin.admin_servers_partial_html(
         request,

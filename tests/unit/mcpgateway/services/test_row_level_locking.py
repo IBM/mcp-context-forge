@@ -25,7 +25,7 @@ from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.server_service import ServerService
-from mcpgateway.services.tool_service import ToolService
+from mcpgateway.services.tool_service import ToolNameConflictError, ToolService
 
 
 class TestGetForUpdateHelper:
@@ -510,6 +510,7 @@ class TestConcurrencyScenarios:
         mock_tool.id = "tool-id"
         mock_tool.name = "old-name"
         mock_tool.custom_name = "old-name"
+        mock_tool.integration_type = "REST"
         mock_tool.visibility = "public"
         mock_tool.team_id = None
         mock_tool.owner_email = "test@example.com"
@@ -522,13 +523,7 @@ class TestConcurrencyScenarios:
         mock_conflict.enabled = True
         mock_conflict.visibility = "public"
 
-        tool_update = MagicMock(spec=ToolUpdate)
-        tool_update.name = "new-name"
-        tool_update.custom_name = "new-name"
-        tool_update.visibility = MagicMock()
-        tool_update.visibility.lower.return_value = "public"
-        tool_update.description = None
-        tool_update.input_schema = None
+        tool_update = ToolUpdate(name="new-name", custom_name="new-name", integration_type="REST", visibility="public")
 
         get_for_update_calls = []
 
@@ -542,10 +537,8 @@ class TestConcurrencyScenarios:
 
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=track_get_for_update):
             with patch("mcpgateway.services.tool_service._get_registry_cache"):
-                try:
+                with pytest.raises(ToolNameConflictError):
                     await service.update_tool(db, "tool-id", tool_update)
-                except Exception:
-                    pass  # Expect conflict error
 
         # Verify get_for_update was called multiple times (tool + conflict check)
         assert len(get_for_update_calls) >= 2
