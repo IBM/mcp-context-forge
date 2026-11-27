@@ -468,6 +468,7 @@ class TestTokenCatalogService:
         With per-team uniqueness (uq_email_api_tokens_user_name_team), creating
         the same name twice for the same team_id must be rejected by the pre-check.
         """
+        # Standard
         from unittest.mock import MagicMock
 
         mock_team = MagicMock()
@@ -1329,6 +1330,7 @@ class TestTokenCatalogService:
             # Patch invalidate_revocation to avoid any Redis dependency and to return a coroutine we can safely close.
             with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock):
                 # Patch create_task to raise, but close the coroutine to avoid warnings.
+                # Standard
                 import asyncio  # pylint: disable=import-outside-toplevel
 
                 def _boom_create_task(coro):

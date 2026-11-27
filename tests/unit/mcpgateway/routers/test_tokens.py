@@ -344,6 +344,7 @@ class TestCreateToken:
 @pytest.mark.asyncio
 async def test_create_token_public_validation_error(mock_db, mock_current_user):
     """Test that PublicValidationError messages are exposed even in production mode."""
+    # First-Party
     from mcpgateway.utils.error_formatter import PublicValidationError
 
     request = TokenCreateRequest(
@@ -368,6 +369,7 @@ async def test_create_token_public_validation_error(mock_db, mock_current_user):
 @pytest.mark.asyncio
 async def test_create_team_token_public_validation_error(mock_db, mock_current_user):
     """Test that PublicValidationError messages are exposed in create_team_token."""
+    # First-Party
     from mcpgateway.utils.error_formatter import PublicValidationError
 
     request = TokenCreateRequest(
@@ -620,6 +622,7 @@ class TestUpdateToken:
 @pytest.mark.asyncio
 async def test_update_token_public_validation_error(mock_db, mock_current_user):
     """Test that PublicValidationError messages are exposed in update_token."""
+    # First-Party
     from mcpgateway.utils.error_formatter import PublicValidationError
 
     request = TokenUpdateRequest(name="Updated Token")
@@ -983,6 +986,7 @@ class TestTeamTokens:
 @pytest.mark.asyncio
 async def test_list_team_tokens_public_validation_error(mock_db, mock_current_user):
     """Test that PublicValidationError messages are exposed in list_team_tokens."""
+    # First-Party
     from mcpgateway.utils.error_formatter import PublicValidationError
 
     with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
@@ -1501,6 +1505,7 @@ class TestAdminBypassRouterLevel:
     @pytest.mark.asyncio
     async def test_create_team_token_admin_bypass_with_scope(self, mock_db, mock_admin_user, mock_token_record):
         """Un-narrowed admin can create team token with custom scope."""
+        # First-Party
         from mcpgateway.schemas import TokenScopeRequest
 
         request = TokenCreateRequest(name="Scoped Admin Token", description="With permissions", scope=TokenScopeRequest(permissions=["tools.read"]))
