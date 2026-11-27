@@ -1414,6 +1414,26 @@ class Settings(  # pylint: disable=too-many-ancestors
         description="Trusted deployment base or full frontend root ending in /app for browser-facing UI links. Falls back to APP_DOMAIN plus APP_ROOT_PATH when unset.",
     )
 
+    @model_validator(mode="after")
+    def warn_when_no_public_origin_declared(self) -> Self:
+        """Log a startup warning when APP_DOMAIN declares no public origin.
+
+        OAuth callbacks derive from APP_DOMAIN, and catalog registration does
+        not accept a caller-supplied redirect_uri (#7394). A localhost
+        APP_DOMAIN therefore names the origin that every OAuth callback and
+        client registration will use. Name that origin in the warning. Never
+        fail startup.
+
+        Returns:
+            Self for chaining.
+        """
+        if (urlparse(str(self.app_domain)).hostname or "") in ("localhost", "127.0.0.1", "::1"):
+            logger.warning(
+                "APP_DOMAIN declares no public origin (%s); OAuth callbacks and client registrations will use this origin. Set APP_DOMAIN to the deployment's public origin before enabling OAuth.",
+                str(self.app_domain).rstrip("/"),
+            )
+        return self
+
     @field_validator("ui_base_url", mode="before")
     @classmethod
     def normalize_ui_base_url(cls, value: object) -> object:
