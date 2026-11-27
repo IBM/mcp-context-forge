@@ -434,7 +434,11 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not token_issuers or len(token_issuers) > _MAX_TOKEN_ISSUERS or not all(isinstance(item, str) and item for item in token_issuers):
             raise ValueError(f"oauth_config.token_issuer must be a URL string or a list of 1-{_MAX_TOKEN_ISSUERS} URL strings")
         for item in token_issuers:
-            validate_core_url(item, "OAuth config token_issuer")
+            # token_issuer is never fetched. resolve_expected_token_issuers()
+            # only compares it with the token iss claim, so SSRF and DNS
+            # checks do not apply and would reject issuers on internal hosts
+            # that do not resolve publicly (issue #7665).
+            validate_core_url(item, "OAuth config token_issuer", skip_ssrf=True)
     _validate_oauth_discovery(v.get("discovery"))
     _validate_oauth_actor_token(v)
     if "redirect_uri_after_oauth" in v:

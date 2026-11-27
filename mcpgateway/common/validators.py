@@ -2540,7 +2540,7 @@ class SecurityValidator:
         return data
 
 
-def validate_core_url(value: str, field_name: str = "URL") -> str:
+def validate_core_url(value: str, field_name: str = "URL", *, skip_ssrf: bool = False) -> str:
     """Core ContextForge URL validation entry point.
 
     This wrapper provides an explicit core-only entry point so the core
@@ -2549,11 +2549,15 @@ def validate_core_url(value: str, field_name: str = "URL") -> str:
     Args:
         value: The URL string to validate.
         field_name: Descriptive name for error messages.
+        skip_ssrf: Skip the SSRF and DNS resolution checks. Pass True only
+            for values that the gateway never fetches, such as identifiers
+            that it only compares against a claim value. Format checks
+            (scheme, host, syntax) still run.
 
     Returns:
         The validated URL string.
     """
-    return SecurityValidator.validate_url(value, field_name)
+    return SecurityValidator.validate_url(value, field_name, skip_ssrf=skip_ssrf)
 
 
 # CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
