@@ -46,6 +46,9 @@ def mock_tool():
     tool.name = "test_tool"
     tool.created_by = "test_user"
     tool.modified_by = "test_user"
+    tool.visibility = "public"
+    tool.team_id = None
+    tool.owner_email = None
     tool._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return tool
 
@@ -57,6 +60,9 @@ def mock_resource():
     res.name = "test_resource"
     res.created_by = "test_user"
     res.modified_by = "test_user"
+    res.visibility = "public"
+    res.team_id = None
+    res.owner_email = None
     res._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return res
 
@@ -68,6 +74,9 @@ def mock_prompt():
     pr.name = "test_prompt"
     pr.created_by = "test_user"
     pr.modified_by = "test_user"
+    pr.visibility = "public"
+    pr.team_id = None
+    pr.owner_email = None
     pr._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return pr
 
@@ -339,10 +348,20 @@ class TestServerService:
         Successful registration returns a populated ServerRead.
         We mock the DB operations to avoid SQLAlchemy state issues.
         """
-        # Pretend there is no existing server with the same name
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = None
-        test_db.execute = Mock(return_value=mock_scalar)
+        # Pretend there is no existing server with the same name, and return
+        # associated items for the visibility checks added in #7684.
+        def _execute(stmt):
+            result = MagicMock()
+            result.scalar_one_or_none.return_value = None
+            try:
+                model = stmt.column_descriptions[0]["type"]
+            except Exception:
+                model = None
+            items = {DbTool: [mock_tool], DbResource: [mock_resource], DbPrompt: [mock_prompt]}.get(model, [])
+            result.scalars.return_value.all.return_value = items
+            return result
+
+        test_db.execute = Mock(side_effect=_execute)
 
         # Mock the created server instance
         mock_db_server = MagicMock(spec=DbServer)
@@ -526,10 +545,11 @@ class TestServerService:
         Non-existent associated tool raises ServerError.
         We let the real exception flow through without patching DbServer.
         """
-        # No existing server with the same name
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = None
-        test_db.execute = Mock(return_value=mock_scalar)
+        # No existing server with the same name, and no matching tool for the visibility check
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalars.return_value.all.return_value = []
+        test_db.execute = Mock(return_value=mock_result)
 
         # Mock db.add to not actually add anything
         test_db.add = Mock()
@@ -547,7 +567,8 @@ class TestServerService:
         with pytest.raises(ServerError) as exc:
             await server_service.register_server(test_db, server_create)
 
-        assert "Tool with id 550e8400e29b41d4a716446655440999 does not exist" in str(exc.value)  # pragma: allowlist secret
+        assert "550e8400e29b41d4a716446655440999" in str(exc.value)  # pragma: allowlist secret
+        assert "do not exist" in str(exc.value)
         test_db.rollback.assert_called_once()
 
     # --------------------------- list & get ----------------------------- #
@@ -745,18 +766,27 @@ class TestServerService:
     async def test_update_server(self, server_service, mock_server, test_db, mock_tool, mock_resource, mock_prompt):
         # Mock new associated items
         new_tool = MagicMock(spec=DbTool)
-        new_tool.id = 102
+        new_tool.id = "550e8400e29b41d4a716446655440102"  # pragma: allowlist secret
         new_tool.name = "new_tool"
+        new_tool.visibility = "public"
+        new_tool.team_id = None
+        new_tool.owner_email = None
         new_tool._sa_instance_state = MagicMock()
 
         new_resource = MagicMock(spec=DbResource)
-        new_resource.id = 202
+        new_resource.id = "550e8400e29b41d4a716446655440202"  # pragma: allowlist secret
         new_resource.name = "new_resource"
+        new_resource.visibility = "public"
+        new_resource.team_id = None
+        new_resource.owner_email = None
         new_resource._sa_instance_state = MagicMock()
 
         new_prompt = MagicMock(spec=DbPrompt)
         new_prompt.id = "550e8400e29b41d4a716446655440302"  # pragma: allowlist secret
         new_prompt.name = "new_prompt"
+        new_prompt.visibility = "public"
+        new_prompt.team_id = None
+        new_prompt.owner_email = None
         new_prompt._sa_instance_state = MagicMock()
 
         # db.get is still used to retrieve the Server itself (now with eager loading options)
@@ -777,15 +807,22 @@ class TestServerService:
         mock_result_prompts = Mock()
         mock_result_prompts.scalars.return_value.all.return_value = [new_prompt]
 
-        test_db.execute = Mock(
-            side_effect=[
-                mock_result_get_server,
-                mock_result_name_conflict,
-                mock_result_tools,
-                mock_result_resources,
-                mock_result_prompts,
-            ]
-        )
+        def _execute(stmt):
+            try:
+                model = stmt.column_descriptions[0]["type"]
+            except Exception:
+                model = None
+            if model is DbTool:
+                return mock_result_tools
+            if model is DbResource:
+                return mock_result_resources
+            if model is DbPrompt:
+                return mock_result_prompts
+            if model is DbServer:
+                return mock_result_get_server
+            return mock_result_name_conflict
+
+        test_db.execute = Mock(side_effect=_execute)
 
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -852,6 +889,7 @@ class TestServerService:
         with (
             patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
             patch("mcpgateway.services.server_service._get_tool_lookup_cache", return_value=tool_lookup_cache),
+            patch("mcpgateway.services.server_service.get_for_update", side_effect=lambda *args, **kwargs: None if kwargs.get("where") is not None else mock_server),
         ):
             result = await server_service.update_server(test_db, 1, server_update, test_user_email)
 
