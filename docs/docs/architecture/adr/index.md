@@ -24,7 +24,7 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0017  | Adopt **orjson** for High-Performance JSON         | Accepted  | Performance    | 2025-10-27  |
 | 0018  | Built-in Response Compression (Brotli/Zstd/GZip)   | Accepted  | Performance    | 2025-10-27  |
 | 0019  | Modular Architecture Split (14 Independent Modules) | Accepted  | Architecture   | 2025-10-27  |
-| 0020  | Multi-Format Packaging Strategy                    | Accepted  | Distribution   | 2025-10-27  |
+| 0020  | Multi-Format Packaging Strategy                    | Accepted (Helm part superseded by ADR-0059) | Distribution   | 2025-10-27  |
 | 0021  | Built-in Proxy Capabilities vs Service Mesh        | Accepted  | Architecture   | 2025-10-27  |
 | 0022  | Elicitation Passthrough Implementation             | Accepted  | MCP Protocol   | 2025-10-26  |
 | 0023  | One-Time Authentication Servers                    | Accepted  | Security       | 2025-10-27  |
@@ -61,5 +61,6 @@ This page tracks all significant design decisions made for ContextForge project,
 | 0056  | CSP Hardening — No eval, No Inline Handlers, Nonce-Only Scripts (supersedes ADR-0014 CSP) | Accepted | Security | 2026-10-01  |
 | 0057  | Trust A2A Plugin Header Output | Accepted | Security | 2026-10-06 |
 | 0058  | Remove Rust Runtime Sidecars and Workspace | Accepted | Architecture | 2026-11-04 |
+| 0059  | Helm Chart as Code Example, Not a Release Artifact (supersedes ADR-0020 Helm part) | Proposed | Distribution | 2026-11-19 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.
