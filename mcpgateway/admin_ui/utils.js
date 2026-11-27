@@ -152,8 +152,8 @@ export async function fetchWithTimeout(
       ...options.headers,
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
-      ...(getCookie("mcpgateway_csrf_token")
-        ? { "X-CSRF-Token": getCookie("mcpgateway_csrf_token") }
+      ...(getCookie(getCSRFCookieName())
+        ? { "X-CSRF-Token": getCookie(getCSRFCookieName()) }
         : {}),
     },
   })
@@ -474,6 +474,10 @@ export const getCookie = function (name) {
     return parts.pop().split(";").shift();
   }
   return "";
+};
+
+export const getCSRFCookieName = function () {
+  return (typeof window !== "undefined" && window.MCPGATEWAY_CSRF_COOKIE_NAME) || "mcpgateway_csrf_token";
 };
 
 /**
