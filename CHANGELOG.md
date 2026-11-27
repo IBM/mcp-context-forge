@@ -137,6 +137,8 @@ Release 1.1.2 adds **MCP subscriptions**, **A2A Agent Cards**, **AWS Signature V
 
 - **Agent Card re-fetch** ([#7540](https://github.com/IBM/mcp-context-forge/issues/7540)) - `POST /a2a/{agent_id}/card` fetches the card of a registered agent again. It uses the `base_url` of the request, then the stored `source_url` with its `ETag` in `If-None-Match`, then the URLs derived from `endpoint_url`. A `base_url` in the request also needs `a2a.create`. An unchanged card adds no version and sets `checked_at`. A changed card becomes the next version, and the response lists the changed top-level keys. The agent credential goes only to a URL on the origin of `endpoint_url`. The route does not change the agent row. `A2A_CARD_REFRESH_MIN_INTERVAL` limits calls per agent. Alembic revision `b9d2f4a6c8e1` adds `checked_at`.
 
+- **Extra OAuth authorization parameters** ([#4044](https://github.com/IBM/mcp-context-forge/issues/4044)) - `oauth_config.extra_auth_params` adds provider-specific parameters to the authorization URL, for example `{"access_type": "offline", "prompt": "consent"}` so that Google issues a refresh token. The API rejects names that the gateway sets or that change the authorization flow, such as `state`, `redirect_uri` and `code_challenge`, with `422`. The authorization URL builder checks the stored value again.
+
 ### Changed
 
 - **Team-management authorization** ([#7593](https://github.com/IBM/mcp-context-forge/pull/7593)) - Protected team-management operations require a token that includes the target team and the required RBAC permissions. A personal-team token does not authorize management of other teams. For automation, create the token with the target `team_id`.
