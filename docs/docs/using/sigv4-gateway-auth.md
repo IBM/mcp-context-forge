@@ -2,9 +2,14 @@
 
 ## Overview
 
-Some upstream MCP servers sit behind AWS IAM authentication. Examples are a Lambda function URL with `AWS_IAM` auth and an API Gateway endpoint with IAM authorization. These endpoints reject bearer tokens and static headers. They accept only requests signed with [AWS Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-signing.html).
+Some upstream MCP servers sit behind AWS IAM authentication. These endpoints reject bearer tokens and static headers. They accept only requests signed with [AWS Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-signing.html).
 
 ContextForge supports this with `auth_type: "sigv4"` on a gateway. The gateway stores AWS credentials and signs every request it sends to the upstream server.
+
+!!! note "Any SigV4 endpoint works"
+    The upstream MCP server can run anywhere, and ContextForge does not need to run in AWS. The only requirement is that the endpoint verifies AWS Signature Version 4. Examples are a Lambda function URL with `AWS_IAM` auth, an API Gateway endpoint with IAM authorization, a service behind a proxy that verifies SigV4, and a self-hosted server that checks SigV4.
+
+    The examples in this guide use placeholders for the endpoint. Lambda and API Gateway appear only as common cases. Replace the URL, `region`, and `service` with the values of your own endpoint.
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -26,33 +31,49 @@ A long-lived session never reuses an expired signature.
 
 ## Prerequisites
 
-- An upstream MCP server behind AWS IAM authentication, reachable over `SSE` or `STREAMABLEHTTP`.
+- An upstream MCP server behind AWS IAM authentication, reachable over `SSE` or `STREAMABLEHTTP`. It can run on any AWS service or host that verifies SigV4.
 - An IAM identity with permission to call that endpoint. Use a dedicated identity with the minimum policy.
-- The access key ID, secret access key, AWS region, and AWS service name of the endpoint.
-- A ContextForge API token with permission to create gateways.
+- The access key ID, secret access key, AWS region, and AWS service name of the endpoint. See [Find the region and service](#find-the-region-and-service).
+- A ContextForge API token with the `gateways.create` permission. To register REST tools, the token also needs `tools.create`. The built-in `developer` and `platform_admin` roles have both.
 - `AUTH_ENCRYPTION_SECRET` set on the gateway. It encrypts the stored secret. SigV4 adds no other environment variable.
+
+### Find the region and service
+
+`region` and `service` are the values AWS uses to verify the signature. They must match the endpoint, or the upstream server rejects every request. Ask the owner of the endpoint, or read them from the host name:
+
+| Endpoint | `region` | `service` |
+|----------|----------|-----------|
+| `<id>.execute-api.<region>.amazonaws.com` (API Gateway) | `<region>` | `execute-api` |
+| `<id>.lambda-url.<region>.on.aws` (Lambda function URL) | `<region>` | `lambda` |
+| Any other SigV4 endpoint | The region the endpoint verifies against | The signing name the endpoint verifies against |
+
+For another AWS service, use its signing name from the AWS documentation. For a custom or self-hosted server, use the values its SigV4 check expects.
 
 ## Register a SigV4 gateway
 
-Create an API token:
+Create an API token. The `--admin` flag is for development and testing only. In production, use the token of a user with the `developer` role:
 
 ```bash
 export GW=http://127.0.0.1:8000
 export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
+  --username admin@example.com --admin --exp 120 --secret "$JWT_SECRET_KEY" 2>/dev/null | tail -1)
+echo ${#TOKEN}   # a number above 0 means the token exists
 ```
 
 `$JWT_SECRET_KEY` must match the value the running gateway uses.
 
-Register the gateway with `POST /gateways`:
+!!! note "Token scope and visibility"
+    A non-admin token without a `teams` claim is public-only. A public-only token can register only `"visibility": "public"`. A request for `team` or `private` fails with HTTP 403. To register a `team` or `private` gateway, use a token scoped to a team.
+
+Register the gateway with `POST /gateways`. The example uses a generic endpoint. Replace `url`, `region`, and `service` with the values of your own MCP server:
 
 ```bash
 curl -sS -X POST "$GW/gateways" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "aws-lambda-sigv4",
-    "url": "https://<id>.lambda-url.<region>.on.aws/mcp",
+    "name": "my-sigv4-mcp-server",
+    "url": "https://<your-mcp-endpoint>/mcp",
     "transport": "STREAMABLEHTTP",
     "visibility": "public",
     "auth_type": "sigv4",
@@ -61,7 +82,7 @@ curl -sS -X POST "$GW/gateways" \
       "secret_access_key": "<secret-access-key>",
       "session_token": "<optional, temporary credentials only>",
       "region": "<region>",
-      "service": "<service, for example lambda or execute-api>"
+      "service": "<service, for example execute-api or lambda>"
     }
   }'
 ```
@@ -70,12 +91,18 @@ curl -sS -X POST "$GW/gateways" \
     Do not paste a real secret access key into a command line. Read it with `read -rs` and build the JSON with `jq`:
 
     ```bash
-    read -rs "AWS_SK?Secret access key: "; echo
-    jq -n --arg url "$FN_URL" --arg ak "$AWS_AK" --arg sk "$AWS_SK" --arg region "$AWS_REGION" '{
-      name: "aws-lambda-sigv4", url: $url, transport: "STREAMABLEHTTP", visibility: "public", auth_type: "sigv4",
-      sigv4_config: {access_key_id: $ak, secret_access_key: $sk, region: $region, service: "lambda"}
+    export MCP_URL="https://<your-mcp-endpoint>/mcp"
+    export AWS_REGION="<region>"
+    export AWS_AK="<access-key-id>"
+    read -rs "AWS_SK?Secret access key: "; echo          # zsh
+    # read -rsp "Secret access key: " AWS_SK; echo        # bash
+
+    jq -n --arg url "$MCP_URL" --arg ak "$AWS_AK" --arg sk "$AWS_SK" --arg region "$AWS_REGION" '{
+      name: "my-sigv4-mcp-server", url: $url, transport: "STREAMABLEHTTP", visibility: "public", auth_type: "sigv4",
+      sigv4_config: {access_key_id: $ak, secret_access_key: $sk, region: $region, service: "<service>"}
     }' | curl -sS -X POST "$GW/gateways" -H "Authorization: Bearer $TOKEN" \
-        -H "Content-Type: application/json" -d @-
+        -H "Content-Type: application/json" -d @- | tee /tmp/gw.json | jq .
+    export GW_ID=$(jq -r .id /tmp/gw.json)
     unset AWS_SK
     ```
 
@@ -102,12 +129,43 @@ Use the API to register a SigV4 gateway and to change its credentials. The Admin
 3. If the upstream server accepts the signature, ContextForge saves the gateway and its tools.
 4. If the upstream server answers 401 or 403, registration fails with a message that the upstream server rejected the SigV4 credentials. ContextForge saves no gateway.
 
-| Result | Meaning |
-|--------|---------|
-| `200` or `201` | The gateway is registered. The response shows the secret and token masked. |
-| `422` | The `sigv4_config` shape is wrong, for example a missing field or a bad region. |
-| Credential error from the upstream server | The access key, secret, region, or service does not match the endpoint. |
-| `401` or `403` from ContextForge | The API token lacks permission to create gateways. |
+| HTTP status | Meaning |
+|-------------|---------|
+| `200` | The gateway is registered. The response shows the secret and token masked. |
+| `202` | The gateway is pending. This applies only when `GATEWAY_ASYNC_LIFECYCLE_ENABLED` is `true`. |
+| `422` with `upstream rejected the SigV4 credentials` | The upstream server answered 401 or 403. The access key, secret, session token, region, or service does not match the endpoint. |
+| `422` with a field error | The `sigv4_config` shape is wrong, for example a missing field, an unknown key, or a bad region. |
+| `502` | ContextForge could not reach the upstream server, or it failed for a reason other than 401 or 403. Check the `url` and the network path. |
+| `403` | A public-only token asked for `team` or `private` visibility, or the token lacks permission to create gateways. |
+| `401` | The API token is missing or invalid. |
+| `409` | A gateway with the same name or the same SigV4 identity exists. |
+
+Error responses carry a `message` field. Read it to tell the two `422` cases apart.
+
+### Example response
+
+The registration response and `GET /gateways/{id}` return the stored settings. Secret fields show `*****`. Field names use camelCase. The example is abbreviated.
+
+```json
+{
+  "id": "<gateway-id>",
+  "name": "my-sigv4-mcp-server",
+  "url": "https://<your-mcp-endpoint>/mcp",
+  "transport": "STREAMABLEHTTP",
+  "authType": "sigv4",
+  "sigv4Config": {
+    "access_key_id": "<access-key-id>",
+    "secret_access_key": "*****",
+    "region": "<region>",
+    "service": "<service>"
+  },
+  "visibility": "public",
+  "enabled": true,
+  "reachable": true
+}
+```
+
+A `session_token` also shows `*****` when you set one. To keep a stored secret on update, send `*****` back as the value. See [Rotate credentials](#rotate-credentials).
 
 ## Check the gateway
 
@@ -116,6 +174,15 @@ List the tools that discovery found:
 ```bash
 curl -sS "$GW/tools?limit=0" -H "Authorization: Bearer $TOKEN" | jq '.[].name'
 ```
+
+Call one discovered tool through ContextForge. This proves that signed calls work after registration, not only discovery:
+
+```bash
+curl -sS -X POST "$GW/rpc" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"<tool-name>","arguments":{}}}' | jq .
+```
+
+Use a tool name from the list above and arguments that match its input schema. A successful result means the upstream server accepted the signed call.
 
 Confirm that reads never return the secret:
 
@@ -154,6 +221,8 @@ A REST tool can send SigV4-signed requests too. Two forms exist.
 - **Standalone tool.** Set `auth_type` to `sigv4` and add a `sigv4_config` object to `POST /tools`.
 - **Tool under a SigV4 gateway.** Set `auth_type` to `sigv4` and `gateway_id` to the gateway. Omit `sigv4_config`. The tool signs with the gateway credential.
 
+The `POST /tools` body wraps the tool fields in a `tool` object. The example below targets an API Gateway endpoint. Any REST endpoint that verifies SigV4 works. Replace `url`, `region`, and `service` with your own values:
+
 ```bash
 curl -sS -X POST "$GW/tools" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -164,6 +233,11 @@ curl -sS -X POST "$GW/tools" \
       "integration_type": "REST",
       "request_type": "POST",
       "auth_type": "sigv4",
+      "input_schema": {
+        "type": "object",
+        "properties": {"id": {"type": "string"}, "message": {"type": "string"}},
+        "required": ["id"]
+      },
       "sigv4_config": {
         "access_key_id": "<access-key-id>",
         "secret_access_key": "<secret-access-key>",
@@ -172,6 +246,13 @@ curl -sS -X POST "$GW/tools" \
       }
     }
   }'
+```
+
+`{id}` in the URL takes its value from the `id` argument of the call. Call the tool to check that signing works:
+
+```bash
+curl -sS -X POST "$GW/rpc" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"orders-api","arguments":{"id":"42","message":"hello"}}}' | jq .
 ```
 
 How the signing works:

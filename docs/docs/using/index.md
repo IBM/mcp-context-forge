@@ -16,6 +16,7 @@ This section focuses on how to use ContextForge effectively as a developer, inte
 
 | Page | Description |
 |------|-------------|
+| [AWS SigV4 Gateway Authentication](sigv4-gateway-auth.md) | Register gateways and REST tools behind AWS IAM (SigV4) authentication |
 | [Tool Annotations](tool-annotations.md) | Configure behavior hints for tools (safety, idempotency, etc.) |
 | [Clients](clients/index.md) | Compatible UIs and developer tools |
 | [Agents](agents/index.md) | LangChain, LangGraph, CrewAI, and other frameworks |

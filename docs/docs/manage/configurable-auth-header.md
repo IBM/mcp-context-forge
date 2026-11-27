@@ -13,6 +13,7 @@ The `AUTH_HEADER_NAME` configuration option lets ContextForge read its own JWT f
 
     * `auth_type=none` registered gateways forward the inbound `Authorization` header as-is.
     * `auth_type=basic`, `auth_type=bearer`, or `auth_type=oauth` registered gateways **replace** `Authorization` with the configured server credentials. The client's `Authorization` is not forwarded.
+    * `auth_type=sigv4` registered gateways sign each upstream request with the stored AWS credentials. The client's `Authorization` never replaces the signature. See [AWS SigV4 Gateway Authentication](../using/sigv4-gateway-auth.md).
     * For all gateway auth types, clients can opt into explicit downstream passthrough by sending `X-Upstream-Authorization: Bearer <token>`. ContextForge renames it to `Authorization` on the upstream request. This is the recommended mechanism when the registered gateway already uses its own auth.
     * Internal gateway-to-gateway loopback never forwards `Authorization` (loop-prevention).
 
