@@ -86,6 +86,40 @@ class TestTokenRevocation:
             # Both are timezone-aware
             assert abs((revocation.token_expiry - token_expiry).total_seconds()) < 1
 
+    def test_token_revocation_jti_declares_external_idp_capacity(self):
+        """The schema accepts JTIs from external identity providers."""
+        assert TokenRevocation.__table__.c.jti.type.length == 255
+
+    @pytest.mark.parametrize(
+        "jti",
+        [
+            "onrtac:12345678-1234-1234-1234-123456789012",
+            "j" * 255,
+        ],
+        ids=["keycloak-onrtac", "maximum-length"],
+    )
+    def test_revoke_token_with_long_jti(self, blocklist_service, test_db, jti):
+        """Revoke a long JTI when the database enforces the declared length."""
+        jti_length = TokenRevocation.__table__.c.jti.type.length
+        assert jti_length is not None
+        test_db.connection().exec_driver_sql(f"""
+            CREATE TRIGGER enforce_token_revocation_jti_length
+            BEFORE INSERT ON token_revocations
+            WHEN length(NEW.jti) > {jti_length}
+            BEGIN
+                SELECT RAISE(ABORT, 'JTI exceeds declared length');
+            END
+            """)
+
+        with patch("mcpgateway.services.token_blocklist_service.TokenBlocklistService._get_redis_client", return_value=None):
+            result = blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout")
+            assert result is True
+            assert blocklist_service.is_token_revoked(jti) is True
+
+        revocation = test_db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti)).scalar_one_or_none()
+        assert revocation is not None
+        assert revocation.jti == jti
+
     def test_revoke_token_duplicate(self, blocklist_service, test_db):
         """Test revoking an already revoked token."""
         jti = str(uuid.uuid4())

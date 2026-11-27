@@ -5805,7 +5805,7 @@ class TokenRevocation(Base):
     __tablename__ = "token_revocations"
 
     # JWT ID as primary key
-    jti: Mapped[str] = mapped_column(String(36), primary_key=True)
+    jti: Mapped[str] = mapped_column(String(255), primary_key=True)
 
     # Revocation details
     revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
