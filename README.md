@@ -491,19 +491,13 @@ export JWT_SECRET_KEY="$(grep '^JWT_SECRET_KEY=' .env.secrets | cut -d= -f2)"
 export AUTH_ENCRYPTION_SECRET="$(grep '^AUTH_ENCRYPTION_SECRET=' .env.secrets | cut -d= -f2)"
 
 docker run -d --name mcpgateway \
+  podman run -d --name mcpgateway \
   -p 4444:4444 \
-  -e MCPGATEWAY_UI_ENABLED=true \
-  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \
-  -e AUTH_ENCRYPTION_SECRET="${AUTH_ENCRYPTION_SECRET}" \
-  -e AUTH_REQUIRED=true \
-  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=<strong-password> \
-  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  -e SECURE_COOKIES=false \
-  ghcr.io/ibm/mcp-context-forge:latest
+  -e JWT_SECRET_KEY="your-jwt-secret" \
+  -e AUTH_ENCRYPTION_SECRET="your-encryption-secret" \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 
 # Tail logs
 docker logs -f mcpgateway
