@@ -21,6 +21,50 @@ from mcpgateway.services.sso_service import ADFS_PROVIDER_ID
 logger = logging.getLogger(__name__)
 
 
+def _is_empty_metadata_value(value: Any) -> bool:
+    """Return whether a provider_metadata value carries no configuration."""
+    return value is None or value in ("", {}, [])
+
+
+def _without_empty_metadata_values(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop empty provider_metadata entries so defaults are not pinned in the database."""
+    return {key: value for key, value in metadata.items() if not _is_empty_metadata_value(value)}
+
+
+def _merge_provider_metadata(env_metadata: Optional[Dict[str, Any]], db_metadata: Optional[Dict[str, Any]], provider_id: str) -> Dict[str, Any]:
+    """Merge environment defaults with stored provider metadata.
+
+    Database values win so changes made through the Admin API survive restarts.
+    An empty stored value does not shadow a non-empty environment value: empty
+    entries seeded by an older release are indistinguishable from an intentional
+    clear, and keeping them would ignore the environment setting forever. When
+    both sides are non-empty and differ, log the override so operators can see
+    why the environment value is not taking effect.
+
+    Args:
+        env_metadata: provider_metadata built from the current environment.
+        db_metadata: provider_metadata stored on the existing provider row.
+        provider_id: Provider identifier used in the override warning.
+
+    Returns:
+        Merged metadata with environment defaults and database overrides.
+    """
+    merged = _without_empty_metadata_values(env_metadata or {})
+    for key, db_value in (db_metadata or {}).items():
+        if key in merged and _is_empty_metadata_value(db_value):
+            continue
+        if key in merged and merged[key] != db_value:
+            logger.warning(
+                "SSO provider '%s': provider_metadata['%s'] from the database overrides the environment value. "
+                "Update it via PUT /auth/sso/admin/providers/%s or recreate the provider to apply the environment setting.",
+                provider_id,
+                key,
+                provider_id,
+            )
+        merged[key] = db_value
+    return merged
+
+
 def _parse_group_mapping(raw: Optional[str], env_var_name: str) -> Dict[str, Any]:
     """Parse a JSON group-to-team mapping env var, returning {} on any failure.
 
@@ -240,13 +284,15 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,
                 "team_mapping": {},
-                "provider_metadata": {
-                    "groups_claim": settings.sso_entra_groups_claim,
-                    "role_mappings": settings.sso_entra_role_mappings,
-                    "graph_api_enabled": settings.sso_entra_graph_api_enabled,
-                    "graph_api_timeout": settings.sso_entra_graph_api_timeout,
-                    "graph_api_max_groups": settings.sso_entra_graph_api_max_groups,
-                },
+                "provider_metadata": _without_empty_metadata_values(
+                    {
+                        "groups_claim": settings.sso_entra_groups_claim,
+                        "role_mappings": settings.sso_entra_role_mappings,
+                        "graph_api_enabled": settings.sso_entra_graph_api_enabled,
+                        "graph_api_timeout": settings.sso_entra_graph_api_timeout,
+                        "graph_api_max_groups": settings.sso_entra_graph_api_max_groups,
+                    }
+                ),
             }
         )
 
@@ -280,20 +326,22 @@ def get_predefined_sso_providers() -> List[Dict]:
                         "trusted_domains": settings.sso_trusted_domains,
                         "auto_create_users": settings.sso_auto_create_users,
                         "team_mapping": {},
-                        "provider_metadata": {
-                            "realm": settings.sso_keycloak_realm,
-                            "base_url": settings.sso_keycloak_base_url,
-                            "public_base_url": getattr(settings, "sso_keycloak_public_base_url", None),
-                            "map_realm_roles": settings.sso_keycloak_map_realm_roles,
-                            "map_client_roles": settings.sso_keycloak_map_client_roles,
-                            "username_claim": settings.sso_keycloak_username_claim,
-                            "email_claim": settings.sso_keycloak_email_claim,
-                            "groups_claim": settings.sso_keycloak_groups_claim,
-                            "jwks_uri": endpoints.get("jwks_uri"),
-                            "role_mappings": getattr(settings, "sso_keycloak_role_mappings", {}),
-                            "default_role": getattr(settings, "sso_keycloak_default_role", None),
-                            "resolve_team_scope_to_personal_team": getattr(settings, "sso_keycloak_resolve_team_scope_to_personal_team", False),
-                        },
+                        "provider_metadata": _without_empty_metadata_values(
+                            {
+                                "realm": settings.sso_keycloak_realm,
+                                "base_url": settings.sso_keycloak_base_url,
+                                "public_base_url": getattr(settings, "sso_keycloak_public_base_url", None),
+                                "map_realm_roles": settings.sso_keycloak_map_realm_roles,
+                                "map_client_roles": settings.sso_keycloak_map_client_roles,
+                                "username_claim": settings.sso_keycloak_username_claim,
+                                "email_claim": settings.sso_keycloak_email_claim,
+                                "groups_claim": settings.sso_keycloak_groups_claim,
+                                "jwks_uri": endpoints.get("jwks_uri"),
+                                "role_mappings": getattr(settings, "sso_keycloak_role_mappings", {}),
+                                "default_role": getattr(settings, "sso_keycloak_default_role", None),
+                                "resolve_team_scope_to_personal_team": getattr(settings, "sso_keycloak_resolve_team_scope_to_personal_team", False),
+                            }
+                        ),
                     }
                 )
             else:
@@ -346,13 +394,15 @@ def get_predefined_sso_providers() -> List[Dict]:
             "trusted_domains": settings.sso_trusted_domains,
             "auto_create_users": settings.sso_auto_create_users,
             "team_mapping": {},
-            "provider_metadata": {
-                "groups_claim": settings.sso_generic_groups_claim,
-                "admin_groups": getattr(settings, "sso_generic_admin_groups", []),
-                "role_mappings": settings.sso_generic_role_mappings,
-                "default_role": settings.sso_generic_default_role,
-                "sync_roles": getattr(settings, "sso_generic_sync_roles_on_login", True),
-            },
+            "provider_metadata": _without_empty_metadata_values(
+                {
+                    "groups_claim": settings.sso_generic_groups_claim,
+                    "admin_groups": getattr(settings, "sso_generic_admin_groups", []),
+                    "role_mappings": settings.sso_generic_role_mappings,
+                    "default_role": settings.sso_generic_default_role,
+                    "sync_roles": getattr(settings, "sso_generic_sync_roles_on_login", True),
+                }
+            ),
         }
         if settings.sso_generic_jwks_uri:
             provider_config["jwks_uri"] = settings.sso_generic_jwks_uri
@@ -415,8 +465,10 @@ async def bootstrap_sso_providers() -> None:
                 # - Env config provides DEFAULTS for keys not in DB
                 # - DB values are PRESERVED (Admin API changes survive restarts)
                 # - New env keys introduced in upgrades APPLY automatically
+                # - Empty DB values do not shadow non-empty env values: older releases seeded
+                #   empty defaults, which would otherwise pin the key forever.
                 #
-                # Trade-off: To change a key that exists in DB, use Admin API or reset provider.
+                # Trade-off: To change a non-empty key that exists in DB, use Admin API or reset provider.
                 # This prevents env config from unexpectedly overriding intentional Admin API changes.
                 #
                 # Example:
@@ -424,11 +476,7 @@ async def bootstrap_sso_providers() -> None:
                 #   db:   {"groups_claim": "custom", "sync_roles": false}
                 #   result: {"groups_claim": "custom", "new_setting": "value", "sync_roles": false}
                 if "provider_metadata" in provider_config and existing_provider.provider_metadata:
-                    env_metadata = provider_config["provider_metadata"] or {}
-                    db_metadata = existing_provider.provider_metadata or {}
-                    # Env provides base, DB values override (preserving Admin API changes)
-                    merged_metadata = {**env_metadata, **db_metadata}
-                    provider_config["provider_metadata"] = merged_metadata
+                    provider_config["provider_metadata"] = _merge_provider_metadata(provider_config["provider_metadata"], existing_provider.provider_metadata, existing_provider.id)
 
                 # Preserve DB scope when env provides only the default value;
                 # an explicit non-default env scope takes precedence over DB.
