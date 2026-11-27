@@ -19,7 +19,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 import pytest
 
 # First-Party
@@ -119,7 +119,7 @@ class TestA2AAgentPluginBindingsRouter:
         request = _make_request()
         expected = self._make_binding_response()
         with patch("mcpgateway.routers.a2a_agent_plugin_bindings._service") as mock_service, patch(
-            "mcpgateway.routers.a2a_agent_plugin_bindings._invalidate_and_broadcast",
+            "mcpgateway.routers.a2a_agent_plugin_bindings.invalidate_a2a_plugin_bindings",
             new_callable=AsyncMock,
         ) as mock_invalidate:
             mock_service.upsert_binding.return_value = expected
@@ -149,7 +149,7 @@ class TestA2AAgentPluginBindingsRouter:
         second = self._make_binding_response(mode="permissive", priority=99, config={"enabled": True, "max_chars": 500})
 
         with patch("mcpgateway.routers.a2a_agent_plugin_bindings._service") as mock_service, patch(
-            "mcpgateway.routers.a2a_agent_plugin_bindings._invalidate_and_broadcast",
+            "mcpgateway.routers.a2a_agent_plugin_bindings.invalidate_a2a_plugin_bindings",
             new_callable=AsyncMock,
         ):
             mock_service.upsert_binding.side_effect = [first, second]
@@ -178,7 +178,7 @@ class TestA2AAgentPluginBindingsRouter:
         request = _make_request(agent_name="*", plugin_id="RateLimiterPlugin")
         expected = self._make_binding_response(agent_name="*", plugin_id="RateLimiterPlugin")
         with patch("mcpgateway.routers.a2a_agent_plugin_bindings._service") as mock_service, patch(
-            "mcpgateway.routers.a2a_agent_plugin_bindings._invalidate_and_broadcast",
+            "mcpgateway.routers.a2a_agent_plugin_bindings.invalidate_a2a_plugin_bindings",
             new_callable=AsyncMock,
         ):
             mock_service.upsert_binding.return_value = expected
@@ -196,7 +196,6 @@ class TestA2AAgentPluginBindingsRouter:
         non_admin_ctx = {**user_ctx, "is_admin": False, "token_teams": {"team-b"}}
         request = _make_request()
         # Third-Party
-        from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc:
             await upsert_a2a_agent_plugin_binding(
@@ -211,7 +210,6 @@ class TestA2AAgentPluginBindingsRouter:
     async def test_upsert_value_error(self, user_ctx: dict[str, Any], db_session: MagicMock) -> None:
         """ValueError from the service is converted to HTTP 400."""
         # Third-Party
-        from fastapi import HTTPException
 
         # First-Party
         from mcpgateway.routers.a2a_agent_plugin_bindings import _service
@@ -247,6 +245,7 @@ class TestA2AAgentPluginBindingsRouter:
             db_session,
             team_id=None,
             binding_reference_id=None,
+            agent_name=None,
             limit=100,
             offset=0,
             allowed_teams=None,
@@ -275,6 +274,7 @@ class TestA2AAgentPluginBindingsRouter:
             db_session,
             team_id=None,
             binding_reference_id=None,
+            agent_name=None,
             limit=100,
             offset=0,
             allowed_teams={"team-a"},
@@ -296,6 +296,7 @@ class TestA2AAgentPluginBindingsRouter:
             db_session,
             team_id=None,
             binding_reference_id="ref-001",
+            agent_name=None,
             limit=100,
             offset=0,
             allowed_teams=None,
@@ -323,6 +324,7 @@ class TestA2AAgentPluginBindingsRouter:
             db_session,
             team_id="team-a",
             binding_reference_id=None,
+            agent_name=None,
             limit=100,
             offset=0,
             allowed_teams=None,
@@ -344,6 +346,7 @@ class TestA2AAgentPluginBindingsRouter:
             db_session,
             team_id="team-nonexistent",
             binding_reference_id=None,
+            agent_name=None,
             limit=100,
             offset=0,
             allowed_teams=None,
@@ -374,6 +377,7 @@ class TestA2AAgentPluginBindingsRouter:
             db_session,
             team_id="team-b",
             binding_reference_id=None,
+            agent_name=None,
             limit=100,
             offset=0,
             allowed_teams={"team-a"},
@@ -404,6 +408,7 @@ class TestA2AAgentPluginBindingsRouter:
             db_session,
             team_id="team-a",
             binding_reference_id=None,
+            agent_name=None,
             limit=100,
             offset=0,
             allowed_teams=set(),
@@ -417,7 +422,7 @@ class TestA2AAgentPluginBindingsRouter:
     async def test_delete_by_id_success(self, user_ctx, db_session):
         created = self._make_binding_response()
         with patch("mcpgateway.routers.a2a_agent_plugin_bindings._service") as mock_service, patch(
-            "mcpgateway.routers.a2a_agent_plugin_bindings._invalidate_and_broadcast",
+            "mcpgateway.routers.a2a_agent_plugin_bindings.invalidate_a2a_plugin_bindings",
             new_callable=AsyncMock,
         ) as mock_invalidate:
             mock_service.delete_binding.return_value = created
@@ -437,7 +442,6 @@ class TestA2AAgentPluginBindingsRouter:
     @pytest.mark.asyncio
     async def test_delete_by_id_not_found(self, user_ctx, db_session):
         # Third-Party
-        from fastapi import HTTPException
 
         with patch("mcpgateway.routers.a2a_agent_plugin_bindings._service") as mock_service:
             from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingNotFoundError
@@ -454,7 +458,6 @@ class TestA2AAgentPluginBindingsRouter:
     @pytest.mark.asyncio
     async def test_delete_by_id_forbidden_non_admin(self, user_ctx, db_session):
         # Third-Party
-        from fastapi import HTTPException
 
         user_ctx_b = {**user_ctx, "is_admin": False, "token_teams": {"team-b"}}
         with patch("mcpgateway.routers.a2a_agent_plugin_bindings._service") as mock_service:
@@ -477,7 +480,7 @@ class TestA2AAgentPluginBindingsRouter:
     async def test_delete_by_reference_success(self, user_ctx, db_session):
         deleted_binding = self._make_binding_response(binding_reference_id="ref-001")
         with patch("mcpgateway.routers.a2a_agent_plugin_bindings._service") as mock_service, patch(
-            "mcpgateway.routers.a2a_agent_plugin_bindings._invalidate_and_broadcast",
+            "mcpgateway.routers.a2a_agent_plugin_bindings.invalidate_a2a_plugin_bindings",
             new_callable=AsyncMock,
         ) as mock_invalidate:
             mock_service.delete_bindings_by_reference.return_value = [deleted_binding]
@@ -500,7 +503,7 @@ class TestA2AAgentPluginBindingsRouter:
         deleted_binding = self._make_binding_response(team_id="team-a", binding_reference_id="ref-001")
         user_ctx_a = {**user_ctx, "is_admin": False, "token_teams": {"team-a"}}
         with patch("mcpgateway.routers.a2a_agent_plugin_bindings._service") as mock_service, patch(
-            "mcpgateway.routers.a2a_agent_plugin_bindings._invalidate_and_broadcast",
+            "mcpgateway.routers.a2a_agent_plugin_bindings.invalidate_a2a_plugin_bindings",
             new_callable=AsyncMock,
         ):
             mock_service.delete_bindings_by_reference.return_value = [deleted_binding]

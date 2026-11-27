@@ -11,7 +11,7 @@ Abstract base class for services with visibility-filtered listing.
 
 # Standard
 from abc import ABC
-from typing import Any, List, Optional, Type
+from typing import Any, List, Literal, Optional, Type
 
 # Third-Party
 from sqlalchemy import and_
@@ -281,13 +281,14 @@ class BaseService(ABC):
 
         return stmt.where(or_(*access_conditions))
 
-    async def _get_plugin_manager(self, server_id: str | None) -> Any:
+    async def _get_plugin_manager(self, server_id: str | None, *, kind: Literal["tool", "agent"] = "tool") -> Any:
         """Return the context-scoped plugin manager from the global factory.
 
         Args:
             server_id: Context identifier used to resolve a specific plugin manager.
+            kind: Resource type used for binding lookup and cache isolation.
 
         Returns:
             Plugin manager instance when plugins are enabled, otherwise ``None``.
         """
-        return await get_plugin_manager(server_id)
+        return await get_plugin_manager(server_id, kind=kind)

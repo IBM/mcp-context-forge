@@ -18,7 +18,6 @@ Tests cover:
 # Standard
 import asyncio
 import time
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -374,7 +373,7 @@ class TestReloadPluginContext:
         ):
             await reload_plugin_context("team-a::echo_text")
 
-        mock_factory.reload_tenant.assert_awaited_once_with("team-a::echo_text")
+        mock_factory.reload_tenant.assert_awaited_once_with("team-a::echo_text", kind="tool")
 
 
 # ---------------------------------------------------------------------------
@@ -485,15 +484,15 @@ class TestBuildManager:
 
         assert result is mock_manager
         mock_manager.initialize.assert_awaited_once()
-        assert "team::*" in factory._managers
-        assert "team::tool" not in factory._managers
+        assert ("tool", "team::*") in factory._managers
+        assert ("tool", "team::tool") not in factory._managers
 
     @pytest.mark.asyncio
     async def test_build_manager_shuts_down_old_manager(self, factory):
         """Replacing a manager for a context shuts the old manager down."""
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock()
-        factory._managers["team::tool"] = old_manager
+        factory._managers[("tool", "team::tool")] = old_manager
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
@@ -514,7 +513,7 @@ class TestBuildManager:
         """Shutdown failure on the old manager is logged but does not raise."""
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock(side_effect=RuntimeError("boom"))
-        factory._managers["team::tool"] = old_manager
+        factory._managers[("tool", "team::tool")] = old_manager
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
@@ -615,7 +614,7 @@ class TestGetManager:
     async def test_get_manager_returns_cached(self, factory):
         mock_manager = AsyncMock()
 
-        factory._managers["ctx"] = mock_manager
+        factory._managers[("tool", "ctx")] = mock_manager
         result = await factory.get_manager("ctx")
         assert result is mock_manager
 
@@ -624,8 +623,8 @@ class TestGetManager:
         mock_manager = AsyncMock()
         cached_manager = AsyncMock()
 
-        async def build_and_inject(context_id):
-            factory._managers[context_id] = cached_manager
+        async def build_and_inject(context_id, kind="tool"):
+            factory._managers[("tool", context_id)] = cached_manager
             return mock_manager
 
         with patch.object(factory, "_build_manager", side_effect=build_and_inject):
@@ -637,7 +636,7 @@ class TestGetManager:
     async def test_get_manager_never_expires_over_time(self, factory):
         """Ensure cached manager persists indefinitely across time advances."""
         mock_manager = AsyncMock()
-        factory._managers["ctx"] = mock_manager
+        factory._managers[("tool", "ctx")] = mock_manager
 
         with patch("time.monotonic", return_value=time.monotonic() + 1_000_000.0):
             result = await factory.get_manager("ctx")
@@ -660,7 +659,7 @@ class TestReloadTenant:
     async def test_reload_evicts_and_rebuilds(self, factory):
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock()
-        factory._managers["ctx"] = old_manager
+        factory._managers[("tool", "ctx")] = old_manager
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
@@ -678,7 +677,7 @@ class TestReloadTenant:
     @pytest.mark.asyncio
     async def test_reload_cancels_inflight(self, factory):
         never_done = asyncio.get_event_loop().create_future()
-        factory._inflight["ctx"] = asyncio.ensure_future(never_done)
+        factory._inflight[("tool", "ctx")] = asyncio.ensure_future(never_done)
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
@@ -697,7 +696,7 @@ class TestReloadTenant:
     async def test_reload_old_shutdown_failure_logged(self, factory):
         old_manager = AsyncMock()
         old_manager.shutdown = AsyncMock(side_effect=RuntimeError("shutdown boom"))
-        factory._managers["ctx"] = old_manager
+        factory._managers[("tool", "ctx")] = old_manager
 
         new_manager = AsyncMock()
         new_manager.initialize = AsyncMock()
@@ -730,8 +729,8 @@ class TestShutdown:
         m1.shutdown = AsyncMock()
         m2 = AsyncMock()
         m2.shutdown = AsyncMock()
-        factory._managers["a"] = m1
-        factory._managers["b"] = m2
+        factory._managers[("tool", "a")] = m1
+        factory._managers[("tool", "b")] = m2
 
         await factory.shutdown()
 
@@ -742,7 +741,7 @@ class TestShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_cancels_inflight(self, factory):
         future = asyncio.get_event_loop().create_future()
-        factory._inflight["ctx"] = asyncio.ensure_future(future)
+        factory._inflight[("tool", "ctx")] = asyncio.ensure_future(future)
 
         await factory.shutdown()
 
@@ -753,7 +752,7 @@ class TestShutdown:
     async def test_shutdown_manager_failure_logged(self, factory):
         m = AsyncMock()
         m.shutdown = AsyncMock(side_effect=RuntimeError("shutdown fail"))
-        factory._managers["a"] = m
+        factory._managers[("tool", "a")] = m
 
         await factory.shutdown()
         assert len(factory._managers) == 0
@@ -937,8 +936,6 @@ class TestApplyAttributeMapping:
         assert result is not attrs
 
 
-
-
 # ---------------------------------------------------------------------------
 # _BINDING_MODE_TO_PLUGIN_MODE: enforce_ignore_error DB binding path
 # ---------------------------------------------------------------------------
@@ -992,9 +989,9 @@ class TestInvalidateTeamPrefixSafety:
 
         mock_mgr = MagicMock()
         factory._managers = {
-            "t::tool_a": mock_mgr,
-            "t2::tool_b": mock_mgr,
-            "t::tool_c": mock_mgr,
+            ("tool", "t::tool_a"): mock_mgr,
+            ("tool", "t2::tool_b"): mock_mgr,
+            ("tool", "t::tool_c"): mock_mgr,
         }
         factory.reload_tenant = AsyncMock()
 
@@ -1009,8 +1006,6 @@ class TestInvalidateTeamPrefixSafety:
 # ---------------------------------------------------------------------------
 # Cache TTL default and config knob
 # ---------------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1038,7 +1033,7 @@ class TestSharedTeamManager:
     def _patch_build(factory, bindings_by_context, built):
         """Patch binding lookup, Redis overrides, and manager construction."""
 
-        async def fetch(context_id):
+        async def fetch(context_id, kind="tool"):
             return bindings_by_context.get(context_id, [])
 
         def make_manager(config, **_kwargs):
@@ -1064,7 +1059,7 @@ class TestSharedTeamManager:
 
         assert a is b is a_again
         assert len(built) == 1
-        assert list(factory._managers) == ["t::*"]
+        assert list(factory._managers) == [("tool", "t::*")]
 
     @pytest.mark.asyncio
     async def test_bound_tool_never_gets_unbound_manager(self, factory):
@@ -1078,7 +1073,7 @@ class TestSharedTeamManager:
 
         assert bound_mgr is not unbound
         assert [config for _, config in built] == ["BASE", "MERGED"]
-        assert "t::tool_b" in factory._managers
+        assert ("tool", "t::tool_b") in factory._managers
 
     @pytest.mark.asyncio
     async def test_bound_tool_config_independent_of_request_order(self, factory):
@@ -1113,15 +1108,15 @@ class TestSharedTeamManager:
         survivors = [m for m, _ in built if not m.shutdown.await_count]
         assert len(survivors) == 1
         assert m1 is m2 is survivors[0]
-        assert factory._managers["t::*"] is survivors[0]
+        assert factory._managers[("tool", "t::*")] is survivors[0]
 
     @pytest.mark.asyncio
     async def test_alias_returns_shared_manager(self):
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
             factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
         shared_manager = AsyncMock()
-        factory._managers["t::*"] = shared_manager
-        factory._aliases["t::tool_a"] = "t::*"
+        factory._managers[("tool", "t::*")] = shared_manager
+        factory._aliases[("tool", "t::tool_a")] = ("tool", "t::*")
 
         assert factory._cached_manager("t::tool_a") is shared_manager
 
@@ -1136,7 +1131,7 @@ class TestSharedTeamManager:
             unbound = await factory.get_manager("t::tool_a")
 
         assert [config for _, config in built] == ["MERGED", "BASE"]
-        assert factory._managers["t::*"] is unbound
+        assert factory._managers[("tool", "t::*")] is unbound
 
     @pytest.mark.asyncio
     async def test_invalidate_team_rebuilds_shared_slot(self, factory):
@@ -1174,7 +1169,7 @@ class TestSharedTeamManager:
 
         assert rebuilt is not shared
         assert [config for _, config in built] == ["BASE", "MERGED"]
-        assert "t::tool_a" not in factory._aliases
+        assert ("tool", "t::tool_a") not in factory._aliases
         shared.shutdown.assert_not_awaited()
 
 
@@ -1218,3 +1213,55 @@ class TestSharedTeamManagerWithRealBindings:
         factory = _make_factory(db_session)
         assert self._resolved_key(factory, "team-w::tool_a") == "team-w::*"
         assert self._resolved_key(factory, "team-w::tool_b") == "team-w::*"
+
+
+class TestAgentBindingIsolation:
+    """Verify real database resolution and independent resource caches."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("first_kind", ["tool", "agent"])
+    async def test_same_name_and_wildcard_use_independent_managers(self, db_session, first_kind):
+        """Keep agent policies independent in both cache loading orders."""
+        from mcpgateway.db import A2AAgentPluginBinding, ToolPluginBinding
+
+        for model, name_field, name, marker in [
+            (ToolPluginBinding, "tool_name", "*", "tool-wildcard"),
+            (A2AAgentPluginBinding, "agent_name", "*", "agent-wildcard"),
+            (ToolPluginBinding, "tool_name", "search", "tool-specific"),
+            (A2AAgentPluginBinding, "agent_name", "search", "agent-specific"),
+        ]:
+            db_session.add(model(team_id="team", plugin_id="HeaderFilter", config={"marker": marker},
+                                 created_by="admin@example.com", updated_by="admin@example.com", **{name_field: name}))
+        db_session.commit()
+        factory = _make_factory(db_session)
+
+        def make_manager(**kwargs):
+            manager = AsyncMock()
+            manager.overrides = kwargs["config"]
+            return manager
+
+        with (
+            patch.object(factory, "_merge_tenant_config", side_effect=lambda overrides: overrides),
+            patch.object(factory, "_apply_redis_mode_overrides", side_effect=lambda config: config),
+            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", side_effect=make_manager),
+        ):
+            second_kind = "agent" if first_kind == "tool" else "tool"
+            managers = {}
+            for kind in (first_kind, second_kind):
+                managers[kind] = await factory.get_manager("team::search", kind=kind)
+                assert managers[kind].overrides[0].config == {"marker": f"{kind}-specific"}
+                wildcard = await factory.get_manager("team::other", kind=kind)
+                assert wildcard.overrides[0].config == {"marker": f"{kind}-wildcard"}
+            assert managers["tool"] is not managers["agent"]
+            tool_before = await factory.get_manager("team::other", kind="tool")
+            await factory.invalidate_team("team", kind="agent")
+            assert await factory.get_manager("team::other", kind="tool") is tool_before
+            managers["tool"].shutdown.assert_not_awaited()
+            managers["agent"].shutdown.assert_awaited_once()
+            await factory.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_teamless_agent_has_no_database_bindings(self, db_session):
+        """Use base configuration for an agent without a team."""
+        factory = _make_factory(db_session)
+        assert await factory.get_config_from_db("agent-uuid", kind="agent") is None

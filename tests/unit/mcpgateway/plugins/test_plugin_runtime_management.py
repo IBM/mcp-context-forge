@@ -284,7 +284,7 @@ class TestManagerCache:
     async def test_cache_returns_cached_manager(self):
         """Cached manager is returned directly without rebuild."""
         cached = MagicMock()
-        factory = _make_bare_factory(_managers={"test::tool": cached})
+        factory = _make_bare_factory(_managers={("tool", "test::tool"): cached})
 
         manager = await factory.get_manager("test::tool")
         assert manager is cached
@@ -790,7 +790,7 @@ class TestPublishHelpers:
         pub_call = client.publish.call_args
         assert pub_call.args[0] == "plugin:invalidation"
         msg = _unwrap_published_message(pub_call.args[1])
-        assert msg == {"type": "binding_change", "context_id": "team_a::my_tool"}
+        assert msg == {"type": "binding_change", "context_id": "team_a::my_tool", "kind": "tool"}
 
 
 class TestPublishToListenerRoundTrip:
@@ -860,10 +860,10 @@ class TestFactoryInvalidateTeam:
     async def test_invalidates_only_matching_team(self):
         factory = _make_bare_factory(
             _managers={
-                "team_a::tool_1": MagicMock(),
-                "team_a::tool_2": MagicMock(),
-                "team_b::tool_1": MagicMock(),
-                "__global__": MagicMock(),
+                ("tool", "team_a::tool_1"): MagicMock(),
+                ("tool", "team_a::tool_2"): MagicMock(),
+                ("tool", "team_b::tool_1"): MagicMock(),
+                ("tool", "__global__"): MagicMock(),
             }
         )
         factory.reload_tenant = AsyncMock()
@@ -879,8 +879,8 @@ class TestFactoryInvalidateTeam:
         """Default separator is ``CONTEXT_ID_SEPARATOR`` — saves the listener from knowing it on the wire."""
         factory = _make_bare_factory(
             _managers={
-                "team_a::tool_1": MagicMock(),
-                "team_a-other::tool_1": MagicMock(),
+                ("tool", "team_a::tool_1"): MagicMock(),
+                ("tool", "team_a-other::tool_1"): MagicMock(),
             }
         )
         factory.reload_tenant = AsyncMock()
@@ -909,7 +909,7 @@ class TestTeamBindingChangeRoundTrip:
         pub_call = client.publish.call_args
         assert pub_call.args[0] == "plugin:invalidation"
         msg = _unwrap_published_message(pub_call.args[1])
-        assert msg == {"type": "team_binding_change", "team_id": "team_a"}
+        assert msg == {"type": "team_binding_change", "team_id": "team_a", "kind": "tool"}
 
     @pytest.mark.asyncio
     async def test_handler_evicts_every_per_tool_context_for_team(self):
@@ -920,9 +920,9 @@ class TestTeamBindingChangeRoundTrip:
         from mcpgateway.plugins import _handle_invalidation_message
         factory = _make_bare_factory(
             _managers={
-                "team_a::tool_1": MagicMock(),
-                "team_a::tool_2": MagicMock(),
-                "team_b::tool_1": MagicMock(),
+                ("tool", "team_a::tool_1"): MagicMock(),
+                ("tool", "team_a::tool_2"): MagicMock(),
+                ("tool", "team_b::tool_1"): MagicMock(),
             }
         )
         factory.reload_tenant = AsyncMock()
@@ -956,7 +956,7 @@ class TestSubscriberHandlesBindingChange:
         try:
             message = {"type": "message", "data": json.dumps({"type": "binding_change", "context_id": "team_a::tool_1"})}
             await framework._handle_invalidation_message(message)
-            mock_factory.reload_tenant.assert_called_once_with("team_a::tool_1")
+            mock_factory.reload_tenant.assert_called_once_with("team_a::tool_1", kind="tool")
         finally:
             framework._plugin_manager_factory = original_factory
 
@@ -1284,7 +1284,7 @@ class TestFactoryGetManagerBranches:
         fresh = MagicMock(name="fresh_manager")
         build_calls: list[str] = []
 
-        async def _fake_build(ctx):
+        async def _fake_build(ctx, kind="tool"):
             build_calls.append(ctx)
             return fresh
 
@@ -1356,7 +1356,7 @@ class TestInvalidateHelpers:
         import logging as _logging
 
         factory = _make_bare_factory()
-        factory._managers["ctx-a"] = MagicMock()
+        factory._managers[("tool", "ctx-a")] = MagicMock()
         factory.reload_tenant = AsyncMock(side_effect=RuntimeError("reload blew up"))
 
         with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
@@ -1371,7 +1371,7 @@ class TestInvalidateHelpers:
 
         factory = _make_bare_factory()
         factory.CONTEXT_ID_SEPARATOR = "::"
-        factory._managers["team-a::tool-1"] = MagicMock()
+        factory._managers[("tool", "team-a::tool-1")] = MagicMock()
         factory.reload_tenant = AsyncMock(side_effect=RuntimeError("reload blew up"))
 
         with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
@@ -1382,12 +1382,12 @@ class TestInvalidateHelpers:
     def test_iter_context_ids_returns_snapshot_list(self):
         """``iter_context_ids`` copies the cache keys so callers iterating without the lock are safe."""
         factory = _make_bare_factory()
-        factory._managers["ctx-a"] = MagicMock()
-        factory._managers["ctx-b"] = MagicMock()
+        factory._managers[("tool", "ctx-a")] = MagicMock()
+        factory._managers[("tool", "ctx-b")] = MagicMock()
 
         snapshot = factory.iter_context_ids()
         # Snapshot, not a live view — mutating the cache afterwards shouldn't touch the prior read.
-        factory._managers["ctx-c"] = MagicMock()
+        factory._managers[("tool", "ctx-c")] = MagicMock()
         assert set(snapshot) == {"ctx-a", "ctx-b"}
 
 
@@ -1933,3 +1933,33 @@ class TestListenerResyncOnSubscribe:
         await framework._plugin_invalidation_listener()
 
         assert order == ["subscribe", "invalidate_all"]
+
+
+class TestAgentBindingInvalidation:
+    """Verify signed messages preserve resource isolation."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wildcard", [False, True])
+    async def test_agent_publication_reloads_only_agent_cache(self, monkeypatch, wildcard):
+        """Round-trip the published frame through the receiver."""
+        import mcpgateway.plugins as framework
+
+        client = AsyncMock()
+        factory = _make_bare_factory(_managers={
+            ("tool", "team::search"): MagicMock(),
+            ("agent", "team::search"): MagicMock(),
+            ("agent", "other::search"): MagicMock(),
+        })
+        factory.reload_tenant = AsyncMock()
+        monkeypatch.setattr(framework, "_plugin_manager_factory", factory)
+        with _mock_redis(client=client):
+            if wildcard:
+                assert await framework.publish_team_binding_change("team", kind="agent")
+            else:
+                assert await framework.publish_binding_change("team::search", kind="agent")
+            raw = client.publish.call_args.args[1]
+            payload = _unwrap_published_message(raw)
+            assert payload["kind"] == "agent"
+            assert payload["type"] == ("agent_team_binding_change" if wildcard else "agent_binding_change")
+            await framework._handle_invalidation_message({"type": "message", "data": raw})
+        factory.reload_tenant.assert_awaited_once_with("team::search", kind="agent")

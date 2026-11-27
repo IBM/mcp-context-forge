@@ -411,6 +411,7 @@ class TestListBindings:
         assert len(result) == 1
         assert total == 1
         assert result[0].team_id == "team-a"
+
     def test_list_bindings_filters_by_allowed_teams(self, service, db_session):
         """Verify that allowed_teams parameter filters results at SQL level."""
         service.upsert_binding(
@@ -541,7 +542,6 @@ class TestListBindings:
         # Should return empty because team-b is not in allowed_teams
         assert len(result) == 0
         assert total == 0
-
 
 
 class TestGetBindingsForAgent:
@@ -743,3 +743,18 @@ class TestDeleteBindingsByReference:
     def test_delete_by_reference_nonexistent(self, service, db_session):
         deleted = service.delete_bindings_by_reference(db_session, "ref-nonexistent")
         assert deleted == []
+
+
+@pytest.mark.parametrize("allowed_teams, expected", [(None, 2), ({"team-a"}, 1), (set(), 0)])
+def test_agent_name_filter_preserves_team_scope_and_total(db_session, allowed_teams, expected):
+    """Apply the agent filter before pagination and retain team isolation."""
+    from mcpgateway.db import A2AAgentPluginBinding
+
+    for team, name in [("team-a", "search"), ("team-a", "other"), ("team-b", "search")]:
+        db_session.add(A2AAgentPluginBinding(team_id=team, agent_name=name, plugin_id="HeaderFilter",
+                       created_by="admin@example.com", updated_by="admin@example.com"))
+    db_session.commit()
+    bindings, total = A2AAgentPluginBindingService().list_bindings(db_session, agent_name="search", allowed_teams=allowed_teams, limit=1)
+    assert total == expected
+    assert len(bindings) == min(1, expected)
+    assert all(binding.agent_name == "search" for binding in bindings)
