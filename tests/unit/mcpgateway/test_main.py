@@ -348,6 +348,25 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
     assert main_module.OpenTelemetryRequestMiddleware in middleware_classes
 
 
+def test_security_headers_middleware_wraps_auth_middlewares():
+    """Security headers must wrap auth middleware so their rejections carry them."""
+    # Third-Party
+    from fastapi import FastAPI
+
+    # First-Party
+    import mcpgateway.main as main_module
+
+    bare_app = FastAPI()
+    main_module._register_middleware(bare_app)  # pylint: disable=protected-access
+
+    # Starlette inserts each newly added middleware at index 0, so earlier
+    # indexes wrap later ones.
+    names = [middleware.cls.__name__ for middleware in bare_app.user_middleware]
+    security_index = names.index("SecurityHeadersMiddleware")
+    assert security_index < names.index("DocsAuthMiddleware")
+    assert security_index < names.index("AdminAuthMiddleware")
+
+
 def test_get_csp_nonce_from_request_with_none():
     """Test get_csp_nonce_from_request returns empty string when request is None."""
     # First-Party

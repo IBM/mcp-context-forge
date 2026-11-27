@@ -3261,9 +3261,6 @@ def _register_middleware(app: FastAPI) -> tuple[Optional[Any], bool, list]:  # p
     else:
         logger.info("🚫 Response compression disabled")
 
-    # Add security headers middleware
-    app.add_middleware(SecurityHeadersMiddleware)
-
     # Add RFC 6585 § 5 header size validation middleware (before rate limiting for early rejection)
     if settings.header_size_validation_enabled:
         app.add_middleware(HeaderSizeMiddleware)
@@ -3326,6 +3323,11 @@ def _register_middleware(app: FastAPI) -> tuple[Optional[Any], bool, list]:  # p
     # Add AdminAuthMiddleware to protect admin routes (requires admin privileges)
     # This ensures all /admin/* routes (except login/logout) require admin status
     app.add_middleware(AdminAuthMiddleware)
+
+    # Add security headers middleware after the auth middlewares so their
+    # short-circuit 401/403 responses still receive the platform headers.
+    # Starlette wraps later registrations outside earlier ones.
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # Rewrite Host header from X-Forwarded-Host when behind a reverse proxy.
     # Uvicorn's ProxyHeadersMiddleware handles X-Forwarded-Proto and X-Forwarded-For
