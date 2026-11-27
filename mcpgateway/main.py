@@ -143,7 +143,11 @@ from mcpgateway.schemas import (
     A2AJsonRpcResponse,
     A2APushNotificationConfigRequest,
     A2ACardRefreshRequest,
+    A2ACardDecisionRequest,
+    A2ACardDecisionResponse,
     A2ACardRefreshResponse,
+    A2ACardVersionRead,
+    A2APendingCardRead,
     A2AStoredCardRead,
     A2ATaskMessageRequest,
     A2ATaskState,
@@ -198,6 +202,7 @@ from mcpgateway.services.a2a_service import (
     A2AAgentNameConflictError,
     A2AAgentNotFoundError,
     A2AAgentService,
+    A2ACardConflictError,
     A2ACardRefreshThrottledError,
     A2ATaskStateError,
     raise_if_a2a_disabled,
@@ -281,6 +286,7 @@ from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.paths import replace_api_path_alias, resolve_root_path
+from mcpgateway.utils.primary_worker import is_primary_worker
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -1347,6 +1353,27 @@ def _check_url_scheme_compliance() -> None:
         raise SystemExit(f"STRICT_SCHEME_ENFORCEMENT is enabled and {len(violations)} record(s) violate the URL scheme allowlist. Fix records or disable enforcement to start.")
 
 
+async def _run_a2a_card_sync_loop() -> None:
+    """Re-fetch the Agent Cards of registered agents at the configured interval, on the primary worker only.
+
+    Raises:
+        asyncio.CancelledError: When the loop is stopped
+    """
+    try:
+        while True:
+            await asyncio.sleep(settings.a2a_card_sync_interval)
+            if not is_primary_worker():
+                continue
+            try:
+                checked = await a2a_service.sync_cards()
+                logger.debug("Scheduled Agent Card re-sync checked %s agent(s)", checked)
+            except Exception as sync_error:
+                logger.warning("Scheduled Agent Card re-sync failed: %s", sync_error)
+    except asyncio.CancelledError:
+        logger.debug("Agent Card re-sync loop cancelled")
+        raise
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1369,6 +1396,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
     aggregation_stop_event: Optional[asyncio.Event] = None
     aggregation_loop_task: Optional[asyncio.Task] = None
+    a2a_card_sync_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
     dataplane_publisher_service: Optional[Any] = None
@@ -1801,6 +1829,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         elif settings.metrics_aggregation_enabled:
             logger.info("Metrics aggregation auto-start disabled; performance metrics will be generated on-demand when requested.")
 
+        if a2a_service and settings.a2a_card_sync_enabled:
+            a2a_card_sync_task = asyncio.create_task(_run_a2a_card_sync_loop())
+
         yield
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
@@ -1819,7 +1850,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         if aggregation_stop_event is not None:
             aggregation_stop_event.set()
-        for task in (aggregation_backfill_task, aggregation_loop_task):
+        for task in (aggregation_backfill_task, aggregation_loop_task, a2a_card_sync_task):
             if task:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -5064,16 +5095,19 @@ async def get_a2a_agent_card(
 async def get_a2a_agent_stored_card(
     agent_id: str,
     request: Request,
+    version: Optional[int] = Query(None, ge=1, description="Applied version to read instead of the current card"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> A2AStoredCardRead:
     """Return the Agent Card stored for a registered agent, as fetched.
 
     Every caller with ``a2a.read`` who can see the agent receives the card, including a card fetched with credentials.
+    The current card is returned unless ``version`` names an earlier applied version. A pending or rejected card is not returned.
 
     Args:
         agent_id (str): The ID of the agent.
         request (Request): The FastAPI request object for token scope retrieval.
+        version (Optional[int]): Applied version to read instead of the current card.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -5087,12 +5121,169 @@ async def get_a2a_agent_stored_card(
         raise HTTPException(status_code=503, detail="A2A service not available")
     user_email, token_teams = get_scoped_resource_access_context(request, user)
     try:
-        card = await a2a_service.get_stored_card(db, agent_id, user_email=user_email, token_teams=token_teams)
+        card = await a2a_service.get_stored_card(db, agent_id, user_email=user_email, token_teams=token_teams, version=version)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     if card is None:
         raise HTTPException(status_code=404, detail="No stored Agent Card for this agent")
     return card
+
+
+@a2a_router.get("/{agent_id}/stored-card/versions", response_model=List[A2ACardVersionRead])
+@require_permission("a2a.read")
+async def list_a2a_agent_card_versions(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[A2ACardVersionRead]:
+    """List the applied versions of the public Agent Card of a registered agent, newest first.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        List[A2ACardVersionRead]: One summary per applied version, without the card document.
+
+    Raises:
+        HTTPException: If the agent is not visible.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        return await a2a_service.list_card_versions(db, agent_id, user_email=user_email, token_teams=token_teams)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@a2a_router.get("/{agent_id}/stored-card/pending", response_model=A2APendingCardRead)
+@require_permission("a2a.update")
+async def get_a2a_agent_pending_card(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2APendingCardRead:
+    """Return the pending Agent Card beside the current card, with the dotted paths that differ.
+
+    The route needs ``a2a.update`` and agent ownership, like the apply and reject routes it supports.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2APendingCardRead: The pending and current cards.
+
+    Raises:
+        HTTPException: If the agent is not visible, the caller does not own it, or no card is pending.
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    user_email, token_teams = await _require_manageable_a2a_agent(a2a_service, db, request, user, agent_id)
+    try:
+        pending = await a2a_service.get_pending_card(db, agent_id, user_email=user_email, token_teams=token_teams)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if pending is None:
+        raise HTTPException(status_code=404, detail="No Agent Card is pending for this agent")
+    return pending
+
+
+@a2a_router.post("/{agent_id}/card/apply", response_model=A2ACardDecisionResponse)
+@require_permission("a2a.update")
+async def apply_a2a_agent_pending_card(
+    agent_id: str,
+    decision: A2ACardDecisionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2ACardDecisionResponse:
+    """Apply the pending Agent Card: make it current and update the agent fields the gateway calls the agent with.
+
+    The agent name, auth type and credentials never change. An endpoint on another origin is refused when the agent has credentials.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        decision (A2ACardDecisionRequest): The pending version the caller reviewed.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2ACardDecisionResponse: The decision with the changed agent fields.
+
+    Raises:
+        HTTPException: If the agent or pending card is not found, the version is stale, or the card cannot be applied.
+    """
+    return await _decide_a2a_pending_card(agent_id, decision, request, db, user, apply=True)
+
+
+@a2a_router.post("/{agent_id}/card/reject", response_model=A2ACardDecisionResponse)
+@require_permission("a2a.update")
+async def reject_a2a_agent_pending_card(
+    agent_id: str,
+    decision: A2ACardDecisionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> A2ACardDecisionResponse:
+    """Reject the pending Agent Card: keep the current card and mark the agent as drifted.
+
+    Args:
+        agent_id (str): The ID of the agent.
+        decision (A2ACardDecisionRequest): The pending version the caller reviewed.
+        request (Request): The FastAPI request object for token scope retrieval.
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        A2ACardDecisionResponse: The decision.
+
+    Raises:
+        HTTPException: If the agent or pending card is not found, or the version is stale.
+    """
+    return await _decide_a2a_pending_card(agent_id, decision, request, db, user, apply=False)
+
+
+async def _decide_a2a_pending_card(agent_id: str, decision: A2ACardDecisionRequest, request: Request, db: Session, user: Any, apply: bool) -> A2ACardDecisionResponse:
+    """Apply or reject the pending card after the ownership check, and audit the result.
+
+    Args:
+        agent_id: The ID of the agent.
+        decision: The pending version the caller reviewed.
+        request: The FastAPI request object.
+        db: The database session.
+        user: The authenticated user.
+        apply: ``True`` to apply the card, ``False`` to reject it.
+
+    Returns:
+        The decision.
+
+    Raises:
+        HTTPException: If the agent or pending card is not found (404), the version is stale (409), or the decision fails (400).
+    """
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+    user_email, token_teams = await _require_manageable_a2a_agent(a2a_service, db, request, user, agent_id)
+    action = a2a_service.apply_pending_card if apply else a2a_service.reject_pending_card
+    try:
+        result = await action(db, agent_id, decision.version, user_email=user_email, token_teams=token_teams)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2ACardConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _audit_a2a_card_decision(request, user, agent_id, result)
+    logger.info(f"User {safe_log_user(user)} {result.status} version {result.version} of the Agent Card of A2A agent {agent_id}")
+    return result
 
 
 @a2a_router.get("/{agent_id}/stored-card/extended", response_model=A2AStoredCardRead)
@@ -5660,6 +5851,23 @@ def _audit_a2a_card_refresh(request: Request, user: Any, agent_id: str, result: 
         request_path=request.url.path,
         request_method=request.method,
         details={"status": result.status, "version": result.version, "source_url": sanitize_url_for_logging(str(result.source_url))},
+    )
+
+
+def _audit_a2a_card_decision(request: Request, user: Any, agent_id: str, result: A2ACardDecisionResponse) -> None:
+    """Record an audit entry for applying or rejecting a pending Agent Card, which can change how the gateway calls the agent."""
+    user_email, _ = get_request_identity(request, user)
+    get_audit_trail_service().log_action(
+        action="apply_a2a_card" if result.status == "applied" else "reject_a2a_card",
+        resource_type="a2a_agent",
+        resource_id=agent_id,
+        user_id=user_email or "unknown",
+        user_email=user_email,
+        client_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        request_path=request.url.path,
+        request_method=request.method,
+        details={"status": result.status, "version": result.version, "applied_fields": result.applied_fields},
     )
 
 

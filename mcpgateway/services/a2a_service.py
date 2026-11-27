@@ -49,8 +49,12 @@ from mcpgateway.schemas import (
     A2AAgentAggregateMetrics,
     A2AAgentCreate,
     A2AAgentMetrics,
+    A2AAgentSkill,
     A2AAgentRead,
     A2AAgentUpdate,
+    A2ACardDecisionResponse,
+    A2ACardVersionRead,
+    A2APendingCardRead,
     A2ACardRefreshRequest,
     A2ACardRefreshResponse,
     A2AFetchCardRequest,
@@ -58,7 +62,7 @@ from mcpgateway.schemas import (
     A2AStoredCardRead,
     A2ATestError,
 )
-from mcpgateway.services.a2a_card_import import apply_extended_result, fetch_agent_card, fetch_stored_extended_card, same_origin
+from mcpgateway.services.a2a_card_import import apply_extended_result, changed_card_paths, fetch_agent_card, fetch_stored_extended_card, normalize_card, same_origin, suggest_agent_fields
 from mcpgateway.services.a2a_errors import A2AAgentError
 from mcpgateway.services.a2a_oauth import A2A_OAUTH_TOKEN_PURPOSE, forget_a2a_oauth_failures, resolve_a2a_agent_oauth_headers
 from mcpgateway.services.a2a_protocol import dump_agent_skills, get_agent_skills, is_terminal_task_state, is_v1_a2a_protocol, prepare_a2a_invocation, prepare_pinned_a2a_invocation, resolve_a2a_headers
@@ -531,6 +535,17 @@ class A2AAgentNotFoundError(A2AAgentError):
         ...     isinstance(e, A2AAgentError)  # Should inherit from A2AAgentError
         True
     """
+
+
+_CARD_CREDENTIAL_AUTH_TYPES = ("basic", "bearer", "authheaders")
+
+
+class A2ACardNotFoundError(A2AAgentNotFoundError):
+    """Raised when no Agent Card is pending for the agent."""
+
+
+class A2ACardConflictError(A2AAgentError):
+    """Raised when the caller reviewed a pending version that another refresh replaced."""
 
 
 class A2AAgentDisabledError(A2AAgentError):
@@ -1186,6 +1201,7 @@ class A2AAgentService(BaseService):
                     config=agent_data.config,
                     auth_type=auth_type,
                     auth_value=auth_value,  # This should be encrypted in practice
+                    unverified=auth_type in _CARD_CREDENTIAL_AUTH_TYPES and bool(auth_value),
                     auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
                     oauth_config=oauth_config,
                     tags=agent_data.tags,
@@ -1464,18 +1480,20 @@ class A2AAgentService(BaseService):
         return await fetch_agent_card(origin, None, self._card_credentials(agent, origin))
 
     @staticmethod
-    def _latest_card(db: Session, agent_id: str, kind: str = "public") -> Optional[A2AAgentCard]:
-        """Return the highest stored card version of one kind for an agent.
+    def _latest_card(db: Session, agent_id: str, kind: str = "public", status: str = "applied") -> Optional[A2AAgentCard]:
+        """Return the highest stored card version of one kind and status for an agent.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
             kind: ``public`` or ``extended``.
+            status: ``applied`` for the current card, ``pending`` for the card waiting for a decision, or ``rejected``.
 
         Returns:
-            The current card row of that kind, or ``None``.
+            The matching card row, or ``None``.
         """
-        return db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == kind).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
+        query = select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == kind, A2AAgentCard.status == status)
+        return db.execute(query.order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
 
     async def refresh_card(
         self,
@@ -1485,10 +1503,10 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> A2ACardRefreshResponse:
-        """Re-fetch the Agent Card of a registered agent and store a changed card as the next version.
+        """Re-fetch the Agent Card of a registered agent and hold a changed card as a pending version.
 
-        The caller must pass the ownership check first. The agent row is never written. A failed fetch
-        leaves the stored card unchanged. The database connection returns to the pool before the outbound fetch.
+        The caller must pass the ownership check first. The current card and the agent fields stay as they are
+        until a caller applies the pending version. A failed fetch leaves the stored cards unchanged.
 
         Args:
             db: Database session.
@@ -1498,12 +1516,27 @@ class A2AAgentService(BaseService):
             token_teams: Token team scope for visibility checks.
 
         Returns:
-            Whether the card is unchanged, updated, or created, with the changed top-level keys.
+            Whether the card is unchanged, pending, or created, with the dotted paths that changed.
+        """
+        await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+        return await self._refresh_card(db, agent_id, payload)
+
+    async def _refresh_card(self, db: Session, agent_id: str, payload: A2ACardRefreshRequest) -> A2ACardRefreshResponse:
+        """Fetch the card and record the result. The caller has checked access.
+
+        The database connection returns to the pool before the outbound fetch.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            payload: Optional ``base_url`` and request-only ``headers``.
+
+        Returns:
+            The refresh outcome.
 
         Raises:
             A2AAgentError: If no card could be fetched, or the stored card changed during the fetch.
         """
-        await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
         row = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one()
         agent = SimpleNamespace(endpoint_url=row.endpoint_url, auth_type=row.auth_type, auth_value=row.auth_value)
         stored = self._latest_card(db, agent_id)
@@ -1523,7 +1556,35 @@ class A2AAgentService(BaseService):
             result = await fetch_stored_extended_card(latest.card, latest.source_url, self._card_credentials(agent, latest.source_url))
             if result is not None:
                 apply_extended_result(fetched, result)
-        return self._record_card_check(db, agent_id, fetched, latest.version if latest is not None else None)
+        checked_url = fetched.source_url or (latest.source_url if latest is not None else "")
+        credential_checked = payload.base_url is None and bool(checked_url) and self._card_credentials(agent, checked_url) is not None
+        return self._record_card_check(db, agent_id, fetched, latest.version if latest is not None else None, credential_checked)
+
+    async def sync_cards(self) -> int:
+        """Re-fetch the card of every enabled agent that has a stored card, for the scheduled re-sync.
+
+        Each agent uses its own session and the per-agent minimum interval of the on-demand route.
+        A failure on one agent does not stop the others. Changed cards become pending versions and are never applied.
+
+        Returns:
+            The number of agents whose check ran without error.
+        """
+        # First-Party
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+
+        with SessionLocal() as db:
+            agent_ids = list(db.execute(select(DbA2AAgent.id).where(DbA2AAgent.enabled.is_(True), DbA2AAgent.id.in_(select(A2AAgentCard.a2a_agent_id).where(A2AAgentCard.kind == "public")))).scalars())
+        checked = 0
+        for agent_id in agent_ids:
+            try:
+                with SessionLocal() as db:
+                    await self._refresh_card(db, agent_id, A2ACardRefreshRequest())
+                checked += 1
+            except A2ACardRefreshThrottledError:
+                continue
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning("Scheduled Agent Card re-sync failed for A2A agent %s: %s", SecurityValidator.sanitize_log_message(agent_id), SecurityValidator.sanitize_log_message(str(exc)))
+        return checked
 
     @staticmethod
     def _same_json(first: Any, second: Any) -> bool:
@@ -1570,14 +1631,51 @@ class A2AAgentService(BaseService):
             )
         )
 
-    def _record_card_check(self, db: Session, agent_id: str, fetched: A2AFetchCardResponse, base_version: Optional[int] = None) -> A2ACardRefreshResponse:
-        """Store a changed card as the next version, or record the check of an unchanged card.
+    def _add_public_card(self, db: Session, agent_id: str, fetched: A2AFetchCardResponse, document: Dict[str, Any], status: str, now: Any) -> A2AAgentCard:
+        """Add a public card row as the next version and flush it.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            fetched: Fetch result that carries the metadata.
+            document: Card document as fetched.
+            status: ``applied`` or ``pending``.
+            now: Time of the check.
+
+        Returns:
+            The new row.
+        """
+        top = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent_id)).scalar() or 0
+        row = A2AAgentCard(
+            a2a_agent_id=agent_id,
+            version=top + 1,
+            kind="public",
+            status=status,
+            card=document,
+            detected_version=fetched.detected_version,
+            source_url=fetched.source_url,
+            etag=fetched.etag,
+            max_age=fetched.max_age,
+            fetched_at=now,
+            checked_at=now,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    def _record_card_check(self, db: Session, agent_id: str, fetched: A2AFetchCardResponse, base_version: Optional[int] = None, credential_checked: bool = False) -> A2ACardRefreshResponse:
+        """Record the check of the remote card against the current, pending and rejected cards.
+
+        The first card is applied. A card that differs from the current one becomes the pending version and
+        replaces an older pending version. A card equal to the current one drops the pending version and clears the
+        drift flag. A card equal to a rejected one leaves the agent drifted and creates no new pending version.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
             fetched: Fetch result with outcome ``found`` or ``not_modified``.
-            base_version: Version of the public card when the fetch started, or ``None`` when none existed.
+            base_version: Version of the current card when the fetch started, or ``None`` when none existed.
+            credential_checked: Whether the fetch sent the stored credential and the agent did not reject it.
 
         Returns:
             The refresh outcome.
@@ -1587,13 +1685,20 @@ class A2AAgentService(BaseService):
         """
         now = utc_now()
         try:
-            get_for_update(db, DbA2AAgent, agent_id)
+            agent = get_for_update(db, DbA2AAgent, agent_id)
             latest = self._latest_card(db, agent_id)
             if (latest.version if latest is not None else None) != base_version:
                 db.rollback()
                 raise A2AAgentError("The stored Agent Card changed during the refresh. Try again.")
+            if credential_checked and agent is not None:
+                agent.unverified = False
             document = (fetched.raw_card if fetched.raw_card is not None else fetched.card) or {}
+            pending = self._latest_card(db, agent_id, status="pending")
             if latest is not None and (fetched.outcome == "not_modified" or self._same_json(latest.card, document)):
+                if pending is not None:
+                    pending.status = "superseded"
+                if agent is not None:
+                    agent.drifted = False
                 self._store_refreshed_extended_card(db, agent_id, fetched, now)
                 latest.checked_at = now
                 if fetched.outcome == "not_modified":
@@ -1606,29 +1711,33 @@ class A2AAgentService(BaseService):
                     latest.etag = fetched.etag
                     latest.max_age = fetched.max_age
                 db.commit()
-                return A2ACardRefreshResponse(status="unchanged", version=latest.version, changed_keys=[], source_url=latest.source_url, checked_at=now)
-            previous = latest.card if latest is not None else {}
-            changed = sorted(key for key in set(previous) | set(document) if (key in previous) != (key in document) or not self._same_json(previous.get(key), document.get(key)))
-            top = db.execute(select(func.max(A2AAgentCard.version)).where(A2AAgentCard.a2a_agent_id == agent_id)).scalar() or 0
-            version = top + 1
-            db.add(
-                A2AAgentCard(
-                    a2a_agent_id=agent_id,
-                    version=version,
-                    kind="public",
-                    card=document,
-                    detected_version=fetched.detected_version,
-                    source_url=fetched.source_url,
-                    etag=fetched.etag,
-                    max_age=fetched.max_age,
-                    fetched_at=now,
-                    checked_at=now,
+                return A2ACardRefreshResponse(status="unchanged", version=latest.version, source_url=latest.source_url, checked_at=now)
+            if latest is None:
+                created = self._add_public_card(db, agent_id, fetched, document, "applied", now)
+                self._store_refreshed_extended_card(db, agent_id, fetched, now)
+                db.commit()
+                return A2ACardRefreshResponse(status="created", version=created.version, changed_keys=changed_card_paths({}, document), source_url=fetched.source_url, checked_at=now)
+            changed = changed_card_paths(latest.card, document)
+            drifted = bool(agent.drifted) if agent is not None else False
+            if pending is not None and self._same_json(pending.card, document):
+                pending.checked_at = now
+                db.commit()
+                return A2ACardRefreshResponse(
+                    status="pending", version=latest.version, pending_version=pending.version, changed_keys=changed, drifted=drifted, source_url=pending.source_url, checked_at=now
                 )
-            )
-            db.flush()
+            rejected = self._latest_card(db, agent_id, status="rejected")
+            if rejected is not None and rejected.version > latest.version and self._same_json(rejected.card, document):
+                rejected.checked_at = now
+                db.commit()
+                return A2ACardRefreshResponse(status="unchanged", version=latest.version, drifted=True, source_url=latest.source_url, checked_at=now)
+            if pending is not None:
+                pending.status = "superseded"
+            created = self._add_public_card(db, agent_id, fetched, document, "pending", now)
             self._store_refreshed_extended_card(db, agent_id, fetched, now)
             db.commit()
-            return A2ACardRefreshResponse(status="updated" if latest is not None else "created", version=version, changed_keys=changed, source_url=fetched.source_url, checked_at=now)
+            return A2ACardRefreshResponse(
+                status="pending", version=latest.version, pending_version=created.version, changed_keys=changed, drifted=drifted, source_url=fetched.source_url, checked_at=now
+            )
         except A2AAgentError:
             raise
         except IntegrityError as exc:
@@ -1639,6 +1748,178 @@ class A2AAgentService(BaseService):
             logger.warning("Failed to store refreshed Agent Card for A2A agent %s", agent_id, exc_info=True)
             raise A2AAgentError("Failed to store the Agent Card") from exc
 
+    async def get_pending_card(self, db: Session, agent_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> Optional[A2APendingCardRead]:
+        """Return the pending card beside the current card.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Requester email for visibility checks.
+            token_teams: Token team scope for visibility checks.
+
+        Returns:
+            The pending and current cards with the paths that differ, or ``None`` when no card is pending.
+        """
+        await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+        pending = self._latest_card(db, agent_id, status="pending")
+        if pending is None:
+            return None
+        current = self._latest_card(db, agent_id)
+        return A2APendingCardRead(
+            current=A2AStoredCardRead.model_validate(current) if current is not None else None,
+            pending=A2AStoredCardRead.model_validate(pending),
+            changed_keys=changed_card_paths(current.card if current is not None else {}, pending.card),
+        )
+
+    async def list_card_versions(self, db: Session, agent_id: str, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[A2ACardVersionRead]:
+        """List the applied versions of the public card, newest first.
+
+        Pending and rejected versions are not listed. Their readers need ``a2a.update``.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            user_email: Requester email for visibility checks.
+            token_teams: Token team scope for visibility checks.
+
+        Returns:
+            One summary per applied version.
+        """
+        await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+        query = select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == "public", A2AAgentCard.status == "applied")
+        return [A2ACardVersionRead.model_validate(row) for row in db.execute(query.order_by(A2AAgentCard.version.desc())).scalars()]
+
+    def _card_agent_fields(self, card: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+        """Map a stored card onto the agent fields the gateway calls the agent with.
+
+        Args:
+            card: Stored card document.
+
+        Returns:
+            ``(fields, warnings)``. ``fields`` holds ``endpoint_url``, ``protocol_version``, ``capabilities`` and, when valid, ``skills``.
+
+        Raises:
+            A2AAgentError: If the card has no callable interface.
+        """
+        normalized = normalize_card(card)[0]
+        try:
+            suggested, suggestion_warnings = suggest_agent_fields(normalized)
+        except (IndexError, KeyError, TypeError) as exc:
+            raise A2AAgentError("The pending Agent Card declares no callable interface") from exc
+        fields: Dict[str, Any] = {key: suggested[key] for key in ("endpoint_url", "protocol_version", "capabilities") if key in suggested}
+        warnings = [warning for warning in suggestion_warnings if "security scheme" in warning.lower() or "jsonrpc" in warning.lower()]
+        try:
+            fields["skills"] = dump_agent_skills([A2AAgentSkill.model_validate(skill) for skill in normalized.get("skills") or []])
+        except ValidationError:
+            warnings.append("The card skills do not match the skill format. The agent skills are unchanged.")
+        return fields, warnings
+
+    def _pending_for_decision(self, db: Session, agent_id: str, version: int) -> Tuple[Any, A2AAgentCard]:
+        """Lock the agent row and return it with the pending card the caller reviewed.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            version: Pending version the caller reviewed.
+
+        Returns:
+            ``(agent, pending)``.
+
+        Raises:
+            A2ACardNotFoundError: If no card is pending.
+            A2ACardConflictError: If the pending card has another version.
+        """
+        agent = get_for_update(db, DbA2AAgent, agent_id)
+        pending = self._latest_card(db, agent_id, status="pending")
+        if agent is None or pending is None:
+            db.rollback()
+            raise A2ACardNotFoundError("No Agent Card is pending for this agent")
+        if pending.version != version:
+            db.rollback()
+            raise A2ACardConflictError(f"The pending Agent Card is version {pending.version}, not {version}")
+        return agent, pending
+
+    async def apply_pending_card(self, db: Session, agent_id: str, version: int, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> A2ACardDecisionResponse:
+        """Apply the pending card: make it current and update the agent fields the gateway calls the agent with.
+
+        An endpoint on another origin is refused when the agent holds credentials, so a changed card cannot send them elsewhere.
+        The agent name, auth type and credentials are never changed. Security scheme changes come back as warnings.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            version: Pending version the caller reviewed.
+            user_email: Requester email for visibility checks.
+            token_teams: Token team scope for visibility checks.
+
+        Returns:
+            The decision with the changed agent fields.
+
+        Raises:
+            A2AAgentError: If the card endpoint is not allowed, or the write fails.
+        """
+        await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+        agent, pending = self._pending_for_decision(db, agent_id, version)
+        try:
+            fields, warnings = self._card_agent_fields(pending.card)
+            endpoint = fields.get("endpoint_url")
+            if endpoint is not None and endpoint != agent.endpoint_url:
+                try:
+                    SecurityValidator.validate_url(endpoint, "Agent endpoint URL")
+                    new_origin = TypeAdapter(AnyHttpUrl).validate_python(endpoint)
+                except (ValueError, ValidationError) as exc:
+                    raise A2AAgentError("The pending Agent Card declares an endpoint URL that is not allowed") from exc
+                if agent.auth_type and not same_origin(new_origin, agent.endpoint_url):
+                    raise A2AAgentError("The pending Agent Card moves the endpoint to another origin. Update the agent endpoint directly")
+            applied = [name for name, value in fields.items() if (getattr(agent, name) or ([] if name == "skills" else None)) != value]
+            for name in applied:
+                setattr(agent, name, fields[name])
+            pending.status = "applied"
+            agent.drifted = False
+            if applied:
+                agent.version += 1
+            db.commit()
+        except A2AAgentError:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            logger.warning("Failed to apply the pending Agent Card of A2A agent %s", agent_id, exc_info=True)
+            raise A2AAgentError("Failed to apply the Agent Card") from exc
+        if applied:
+            cache = _get_registry_cache()
+            await cache.invalidate_agents()
+            _schedule_a2a_invalidation(agent.name)
+        return A2ACardDecisionResponse(status="applied", version=pending.version, drifted=False, applied_fields=sorted(applied), warnings=warnings)
+
+    async def reject_pending_card(self, db: Session, agent_id: str, version: int, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> A2ACardDecisionResponse:
+        """Reject the pending card: keep the current card and mark the agent as drifted.
+
+        Args:
+            db: Database session.
+            agent_id: Agent ID.
+            version: Pending version the caller reviewed.
+            user_email: Requester email for visibility checks.
+            token_teams: Token team scope for visibility checks.
+
+        Returns:
+            The decision.
+
+        Raises:
+            A2AAgentError: If the write fails.
+        """
+        await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
+        agent, pending = self._pending_for_decision(db, agent_id, version)
+        try:
+            pending.status = "rejected"
+            agent.drifted = True
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.warning("Failed to reject the pending Agent Card of A2A agent %s", agent_id, exc_info=True)
+            raise A2AAgentError("Failed to reject the Agent Card") from exc
+        return A2ACardDecisionResponse(status="rejected", version=pending.version, drifted=True)
+
     async def get_stored_card(
         self,
         db: Session,
@@ -1646,8 +1927,9 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         kind: str = "public",
+        version: Optional[int] = None,
     ) -> Optional[A2AStoredCardRead]:
-        """Return the current stored Agent Card of a visible agent.
+        """Return the current stored Agent Card of a visible agent, or one earlier applied version.
 
         Args:
             db: Database session.
@@ -1655,12 +1937,16 @@ class A2AAgentService(BaseService):
             user_email: Requester email for visibility checks.
             token_teams: Token team scope for visibility checks.
             kind: ``public`` for the card read without credentials, ``extended`` for the authenticated extended card.
+            version: Applied version to read instead of the current one.
 
         Returns:
-            The highest stored card version of that kind, or ``None`` when the agent has none.
+            The highest applied card version of that kind, the requested version, or ``None`` when there is none.
         """
         await self.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
-        row = db.execute(select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == kind).order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
+        query = select(A2AAgentCard).where(A2AAgentCard.a2a_agent_id == agent_id, A2AAgentCard.kind == kind, A2AAgentCard.status == "applied")
+        if version is not None:
+            query = query.where(A2AAgentCard.version == version)
+        row = db.execute(query.order_by(A2AAgentCard.version.desc()).limit(1)).scalar_one_or_none()
         return A2AStoredCardRead.model_validate(row) if row else None
 
     async def list_agents(
@@ -2314,6 +2600,7 @@ class A2AAgentService(BaseService):
 
             # Track original auth_type and endpoint_url before updates
             original_auth_type = agent.auth_type
+            original_auth_value = agent.auth_value
             original_endpoint_url = agent.endpoint_url
 
             for field, value in update_data.items():
@@ -2549,6 +2836,12 @@ class A2AAgentService(BaseService):
                     logger.info("Generated UAID for existing agent %s (ID: %s): %r", agent.name, agent.id, uaid)
                 except Exception as uaid_error:
                     logger.warning("Failed to generate UAID for agent %s: %s. Continuing without UAID.", agent.name, uaid_error)
+
+            credential_stored = agent.auth_type in _CARD_CREDENTIAL_AUTH_TYPES and bool(agent.auth_value)
+            if not credential_stored:
+                agent.unverified = False
+            elif agent.auth_value != original_auth_value or agent.auth_type != original_auth_type:
+                agent.unverified = True
 
             # Update metadata
             if modified_by:
