@@ -311,6 +311,26 @@ def _is_cgnat_ip(ip_addr: ipaddress._BaseAddress) -> bool:
     return isinstance(ip_addr, ipaddress.IPv4Address) and ip_addr in _CGNAT_IPV4_NETWORK
 
 
+def _is_in_ssrf_allowed_networks(ip_addr: ipaddress._BaseAddress) -> bool:
+    """Return whether an IP falls inside an explicit ``SSRF_ALLOWED_NETWORKS`` entry.
+
+    Args:
+        ip_addr: Resolved destination address.
+
+    Returns:
+        True when any valid configured CIDR contains ``ip_addr``. Invalid CIDRs are logged and skipped.
+    """
+    for network_str in getattr(settings, "ssrf_allowed_networks", []) or []:
+        try:
+            network = _parse_ip_network_cached(network_str)
+        except ValueError:
+            logger.warning(f"Invalid CIDR in ssrf_allowed_networks: {network_str}")
+            continue
+        if ip_addr in network:
+            return True
+    return False
+
+
 def _classify_restricted_outbound_ip(ip_addr: ipaddress._BaseAddress) -> Optional[str]:
     """Classify non-public outbound IP ranges shared by URL validators."""
     if _is_cgnat_ip(ip_addr):
@@ -1540,7 +1560,7 @@ class SecurityValidator:
             - ssrf_blocked_hosts: Hostnames always blocked
             - ssrf_allow_localhost: If False, blocks 127.0.0.0/8 and localhost
             - ssrf_allow_private_networks: If False, blocks RFC 1918 private ranges
-            - ssrf_allowed_networks: Optional CIDR allowlist for private ranges
+            - ssrf_allowed_networks: Optional CIDR allowlist for private ranges and RFC 6598 shared address space (100.64.0.0/10)
 
         Examples:
             Cloud metadata (always blocked):
@@ -1621,7 +1641,7 @@ class SecurityValidator:
                     raise UrlPolicyError("url_destination_blocked", f"{field_name} contains IP address blocked by SSRF protection (network: {network_str})")
 
             restricted_ip_kind = _classify_restricted_outbound_ip(ip_addr)
-            if restricted_ip_kind == "cgnat":
+            if restricted_ip_kind == "cgnat" and not _is_in_ssrf_allowed_networks(ip_addr):
                 raise UrlPolicyError("url_private_network_blocked", f"{field_name} contains shared address space which is blocked by SSRF protection")
 
             # Check localhost/loopback (if not allowed)
@@ -1632,19 +1652,7 @@ class SecurityValidator:
             # Check private networks (if not allowed)
             if not settings.ssrf_allow_private_networks:
                 if ip_addr.is_private and not ip_addr.is_loopback:
-                    allowed_private = False
-                    allowed_networks = getattr(settings, "ssrf_allowed_networks", []) or []
-                    for network_str in allowed_networks:
-                        try:
-                            network = _parse_ip_network_cached(network_str)
-                        except ValueError:
-                            logger.warning(f"Invalid CIDR in ssrf_allowed_networks: {network_str}")
-                            continue
-                        if ip_addr in network:
-                            allowed_private = True
-                            break
-
-                    if not allowed_private:
+                    if not _is_in_ssrf_allowed_networks(ip_addr):
                         raise UrlPolicyError("url_private_network_blocked", f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
