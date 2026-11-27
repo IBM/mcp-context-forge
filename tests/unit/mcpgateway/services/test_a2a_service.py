@@ -541,6 +541,58 @@ class TestA2AAgentService:
         assert sample_db_agent.oauth_config["client_secret"] == existing_secret
         mock_db.commit.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "stored_discovery,new_discovery",
+        [
+            (
+                {"grant_type": "client_credentials", "openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"},
+                {"grant_type": "client_credentials", "openIdConnectUrl": "https://attacker.example.com/.well-known/openid-configuration"},
+            ),
+            (None, {"grant_type": "client_credentials", "openIdConnectUrl": "https://attacker.example.com/.well-known/openid-configuration"}),
+            ({"grant_type": "client_credentials", "openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"}, None),
+        ],
+    )
+    async def test_update_agent_masked_secret_with_changed_discovery_url_is_refused(self, service, mock_db, sample_db_agent, stored_discovery, new_discovery):
+        """A discovery URL change cannot redirect a preserved client secret to another host."""
+        sample_db_agent.version = 1
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        existing_secret = await encryption.encrypt_secret_async("existing-secret")
+        sample_db_agent.oauth_config = {"grant_type": "client_credentials", "client_secret": existing_secret, "discovery": stored_discovery}
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            update_data = A2AAgentUpdate(oauth_config={"grant_type": "client_credentials", "client_secret": settings.masked_auth_value, "discovery": new_discovery})
+            with pytest.raises(A2AAgentError, match="client secret again"):
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        assert sample_db_agent.oauth_config["discovery"] == stored_discovery
+        assert sample_db_agent.oauth_config["client_secret"] == existing_secret
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.parametrize("reenter_secret", [False, True])
+    async def test_update_agent_discovery_url_with_secret_is_accepted(self, service, mock_db, sample_db_agent, reenter_secret):
+        """An unchanged discovery URL preserves secrets; a new URL requires re-entry."""
+        sample_db_agent.version = 1
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        existing_secret = await encryption.encrypt_secret_async("existing-secret")
+        stored_discovery = {"grant_type": "client_credentials", "openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"}
+        sample_db_agent.oauth_config = {"grant_type": "client_credentials", "client_secret": existing_secret, "discovery": stored_discovery}
+        new_discovery = {"grant_type": "client_credentials", "openIdConnectUrl": "https://idp2.example.com/.well-known/openid-configuration"} if reenter_secret else dict(stored_discovery)
+        secret = "brand-new" if reenter_secret else settings.masked_auth_value  # pragma: allowlist secret
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate(oauth_config={"grant_type": "client_credentials", "client_secret": secret, "discovery": new_discovery})
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        assert sample_db_agent.oauth_config["discovery"] == new_discovery
+        if reenter_secret:
+            assert await encryption.decrypt_secret_async(sample_db_agent.oauth_config["client_secret"]) == secret
+        else:
+            assert sample_db_agent.oauth_config["client_secret"] == existing_secret
+
     async def test_update_agent_new_secret_with_changed_token_url_is_accepted(self, service, mock_db, sample_db_agent):
         """Sending the secret again lets the token URL change."""
         sample_db_agent.version = 1

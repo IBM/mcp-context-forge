@@ -68,8 +68,29 @@ def _effective_config(oauth_config: Dict[str, Any], endpoint_url: str) -> Dict[s
     return effective
 
 
+def _discovery_url(effective: Dict[str, Any]) -> str:
+    """Return the configured OIDC discovery URL, if any.
+
+    Args:
+        effective: Config from ``_effective_config()``.
+
+    Returns:
+        ``discovery.openIdConnectUrl``, or an empty string.
+
+    Examples:
+        >>> _discovery_url({"discovery": {"openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"}})
+        'https://idp.example.com/.well-known/openid-configuration'
+        >>> _discovery_url({"token_url": "https://idp.example.com/token"})
+        ''
+    """
+    discovery = effective.get("discovery")
+    if not isinstance(discovery, dict):
+        return ""
+    return str(discovery.get("openIdConnectUrl") or "")
+
+
 def _cache_fingerprint(effective: Dict[str, Any]) -> str:
-    """Return the cache fingerprint, which also covers the resource.
+    """Return the cache fingerprint, including resource, audience, and discovery URL.
 
     Args:
         effective: Config from ``_effective_config()``.
@@ -82,10 +103,13 @@ def _cache_fingerprint(effective: Dict[str, Any]) -> str:
         True
         >>> _cache_fingerprint({"audience": "a"}) != _cache_fingerprint({"audience": "b"})
         True
+        >>> _cache_fingerprint({"discovery": {"openIdConnectUrl": "https://idp.example.com/a"}}) != _cache_fingerprint({"discovery": {"openIdConnectUrl": "https://idp.example.com/b"}})
+        True
     """
     resource = str(effective.get("resource") or "")
     audience = str(effective.get("audience") or "")
-    return hashlib.sha256(f"{service_token_fingerprint(effective)}|{resource}|{audience}".encode("utf-8")).hexdigest()
+    discovery_url = _discovery_url(effective)
+    return hashlib.sha256(f"{service_token_fingerprint(effective)}|{resource}|{audience}|{discovery_url}".encode("utf-8")).hexdigest()
 
 
 def _raise_if_recently_failed(fingerprint: str, agent_id: str) -> None:

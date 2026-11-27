@@ -437,17 +437,18 @@ def _schedule_a2a_invalidation(agent_name: str) -> None:
 
 
 def _require_secret_reentry_on_token_url_change(new_config: Optional[Dict[str, Any]], stored_config: Optional[Dict[str, Any]]) -> None:
-    """Refuse to reuse a stored client secret for a different token URL.
+    """Refuse to reuse a stored client secret for a different token endpoint source.
 
-    A masked placeholder keeps the stored secret. If the token URL also changes, the
-    gateway would send that secret to the new host, so the caller must send the secret again.
+    A masked placeholder keeps the stored secret. If the token URL or OIDC discovery
+    URL changes, the gateway could send that secret to a new host, so the caller must
+    send the secret again.
 
     Args:
         new_config: Incoming ``oauth_config`` of an update.
         stored_config: ``oauth_config`` stored for the agent.
 
     Raises:
-        PublicValidationError: If a masked secret is kept while ``token_url`` changes.
+        PublicValidationError: If a masked secret is kept while the token or discovery URL changes.
 
     Examples:
         >>> _require_secret_reentry_on_token_url_change({"token_url": "https://a/t", "client_secret": "new"}, {"token_url": "https://b/t"})  # pragma: allowlist secret
@@ -459,7 +460,11 @@ def _require_secret_reentry_on_token_url_change(new_config: Optional[Dict[str, A
     """
     if not isinstance(new_config, dict) or not isinstance(stored_config, dict):
         return
-    if new_config.get("token_url") == stored_config.get("token_url"):
+    new_discovery = new_config.get("discovery")
+    stored_discovery = stored_config.get("discovery")
+    new_discovery_url = new_discovery.get("openIdConnectUrl") if isinstance(new_discovery, dict) else None
+    stored_discovery_url = stored_discovery.get("openIdConnectUrl") if isinstance(stored_discovery, dict) else None
+    if new_config.get("token_url") == stored_config.get("token_url") and new_discovery_url == stored_discovery_url:
         return
     if any(is_sensitive_oauth_key(key) and value == settings.masked_auth_value for key, value in new_config.items()):
         raise PublicValidationError("Send the OAuth client secret again when you change the token URL.")

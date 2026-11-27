@@ -172,6 +172,33 @@ def test_fingerprint_covers_audience():
     assert a2a_oauth._cache_fingerprint({**base, "audience": "a"}) != a2a_oauth._cache_fingerprint({**base, "audience": "b"})
 
 
+def test_fingerprint_covers_discovery_url():
+    base = {"grant_type": "client_credentials", "client_id": "c", "client_secret": "s"}  # pragma: allowlist secret
+    first = {**base, "discovery": {"openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"}}
+    second = {**base, "discovery": {"openIdConnectUrl": "https://idp2.example.com/.well-known/openid-configuration"}}
+    assert a2a_oauth._cache_fingerprint(first) != a2a_oauth._cache_fingerprint(second)
+    assert a2a_oauth._cache_fingerprint(first) == a2a_oauth._cache_fingerprint(dict(first))
+
+
+@pytest.mark.asyncio
+async def test_discovery_url_change_does_not_serve_the_old_token():
+    first_cfg = {
+        "grant_type": "client_credentials",
+        "client_id": "c",
+        "client_secret": "s",  # pragma: allowlist secret
+        "discovery": {"openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"},
+    }
+    second_cfg = {
+        **first_cfg,
+        "discovery": {"openIdConnectUrl": "https://idp2.example.com/.well-known/openid-configuration"},
+    }
+    first = _manager(_jwt("https://agent.example.com"))
+    await resolve_a2a_oauth_headers("a1", "agent", ENDPOINT, first_cfg, oauth_manager=first)
+    second = _manager(_jwt("https://agent.example.com"))
+    await resolve_a2a_oauth_headers("a1", "agent", ENDPOINT, second_cfg, oauth_manager=second)
+    second.get_client_credentials_token_response.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_audience_change_does_not_serve_the_old_token():
     first = _manager(_jwt("https://agent.example.com"))

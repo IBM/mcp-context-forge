@@ -42,7 +42,7 @@ from mcpgateway.common.oauth import (
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.cimd_service import CimdKeyError, CimdService, load_cimd_private_key
-from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, DcrService
+from mcpgateway.services.dcr_service import DcrError, DcrIssuerMismatchError, DcrService, validate_issuer_scoped_endpoint
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client, get_isolated_http_client
 from mcpgateway.services.security_logger import get_security_logger, SecuritySeverity
@@ -362,6 +362,27 @@ class OAuthManager:
 
         return runtime_credentials
 
+    def _oauth_http_client(self, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> Any:
+        """Return the HTTP client used for a pinned OAuth token or discovery request.
+
+        When CA or mTLS material is supplied, the client uses a custom SSL context
+        so private-CA and mTLS IdPs work the same way for discovery GETs and token
+        posts. Otherwise it uses an isolated client with redirects disabled, so the
+        request does not share the pooled connections used by other destinations.
+
+        Args:
+            ca_certificate: Optional PEM-encoded CA certificate.
+            client_cert: Optional client certificate for mTLS.
+            client_key: Optional client private key for mTLS.
+
+        Returns:
+            An async context manager that yields an HTTP client.
+        """
+        if ca_certificate or client_cert or client_key:
+            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
+            return httpx.AsyncClient(verify=ssl_context)
+        return get_isolated_http_client(follow_redirects=False)
+
     async def _post_token_request(
         self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, headers: Optional[Dict[str, str]] = None
     ) -> httpx.Response:
@@ -416,15 +437,14 @@ class OAuthManager:
             # httpx reads a list as a byte stream and fails on an async client. Encode repeated keys (RFC 8707 resource) as the form body.
             body = {"content": urlencode(data)}
             pinned_headers = {**pinned_headers, "Content-Type": "application/x-www-form-urlencoded"}
-        if ca_certificate or client_cert or client_key:
-            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
-            async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, follow_redirects=False, extensions=extensions, **body)
         # An isolated client keeps this pinned request out of the shared pool. httpcore keys pooled
         # connections by origin and ignores sni_hostname, so a pinned IP shared with another hostname
         # would reuse a connection whose certificate was verified for that other name.
-        async with get_isolated_http_client(follow_redirects=False) as client:
-            return await client.post(pinned_url, headers=pinned_headers, timeout=self.request_timeout, extensions=extensions, **body)
+        request_kwargs: Dict[str, Any] = {"headers": pinned_headers, "timeout": self.request_timeout, "extensions": extensions, **body}
+        if ca_certificate or client_cert or client_key:
+            request_kwargs["follow_redirects"] = False
+        async with self._oauth_http_client(ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key) as client:
+            return await client.post(pinned_url, **request_kwargs)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password", "subject_token", "actor_token", "client_assertion"})
@@ -821,6 +841,97 @@ class OAuthManager:
         token_response = await self.get_client_credentials_token_response(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         return token_response["access_token"]
 
+    async def _resolve_client_credentials_token_url(
+        self,
+        runtime_credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> str:
+        """Return the token URL, resolving it from OIDC discovery when it is not typed.
+
+        A2A Agent Cards may advertise an openIdConnectUrl instead of a token URL.
+        The stored oauth_config then carries that URL under discovery.openIdConnectUrl,
+        and the token endpoint is read from the discovery document at request time.
+
+        This is endpoint discovery, not full OIDC provider validation. It does
+        not validate the metadata issuer or use it to widen the configured URL's origin.
+        Discovered token endpoints must use the same scheme, host, and port as
+        the discovery URL. Cross-origin providers (for example, Google discovery
+        on accounts.google.com with tokens on oauth2.googleapis.com) are not
+        supported by this fallback. Configure token_url explicitly for them.
+        This helper also serves non-A2A client-credentials callers.
+
+        Args:
+            runtime_credentials: Decrypted OAuth configuration.
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
+            client_cert: Optional client certificate for mTLS (PEM format or file path).
+            client_key: Optional client private key for mTLS (PEM format or file path).
+
+        Returns:
+            The token endpoint URL to use for the client-credentials grant.
+
+        Raises:
+            OAuthError: If no token_url is present and discovery cannot supply one.
+        """
+        token_url = runtime_credentials.get("token_url")
+        if isinstance(token_url, str) and token_url:
+            return token_url
+
+        discovery = runtime_credentials.get("discovery")
+        oidc_url = discovery.get("openIdConnectUrl") if isinstance(discovery, dict) else None
+        if not isinstance(oidc_url, str) or not oidc_url.strip():
+            raise OAuthError("OAuth configuration missing valid token_url")
+
+        try:
+            oidc_url = validate_core_url(oidc_url, "OAuth config discovery.openIdConnectUrl")
+        except ValueError as exc:
+            raise OAuthError(f"OAuth discovery URL is invalid: {exc}") from exc
+
+        try:
+            pinned_target = await resolve_pinned_target(oidc_url, "OAuth discovery URL")
+            pinned_url = pinned_target.pin(oidc_url)
+            pinned_headers = pinned_target.apply_headers({})
+        except ValueError as exc:
+            raise OAuthError(f"OAuth discovery URL blocked by URL policy: {exc}") from exc
+
+        try:
+            async with self._oauth_http_client(ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key) as client:
+                response = await client.get(
+                    pinned_url,
+                    timeout=self.request_timeout,
+                    follow_redirects=False,
+                    headers=pinned_headers,
+                    extensions=pinned_target.extensions,
+                )
+        except httpx.HTTPError as exc:
+            raise OAuthError(f"Failed to fetch OAuth discovery document: {unexpected_error_detail(exc)}") from exc
+
+        if 300 <= response.status_code < 400:
+            raise OAuthError(f"OAuth discovery redirect refused (status: {response.status_code})")
+        if response.status_code != 200:
+            raise OAuthError(f"OAuth discovery document was not found (status: {response.status_code})")
+        try:
+            metadata = response.json()
+        except ValueError as exc:
+            raise OAuthError("OAuth discovery document is not valid JSON") from exc
+        if not isinstance(metadata, dict):
+            raise OAuthError("OAuth discovery document is not a JSON object")
+
+        token_endpoint = metadata.get("token_endpoint")
+        if not isinstance(token_endpoint, str) or not token_endpoint:
+            raise OAuthError("OAuth discovery document did not contain token_endpoint")
+
+        # Scope the discovered token endpoint to the configured discovery URL origin so a
+        # hostile document cannot send the client secret to another host.
+        try:
+            await validate_issuer_scoped_endpoint(token_endpoint, oidc_url, "token_endpoint")
+            token_endpoint = validate_core_url(token_endpoint, "OAuth config token_url")
+        except (DcrError, ValueError) as exc:
+            raise OAuthError(f"Discovered token_endpoint was rejected: {exc}") from exc
+
+        return token_endpoint
+
     async def get_client_credentials_token_response(
         self,
         credentials: Dict[str, Any],
@@ -832,9 +943,11 @@ class OAuthManager:
         """Run the client-credentials grant and return the parsed token response, including ``expires_in``.
 
         Callers that cache the token use this instead of ``get_access_token()`` to learn its lifetime.
+        If token_url is absent, discovery.openIdConnectUrl can supply a same-origin
+        endpoint. This fallback applies to every caller, not only A2A agents.
 
         Args:
-            credentials: OAuth configuration with client_id, client_secret, token_url
+            credentials: OAuth configuration with client_id, client_secret, and token_url or discovery.openIdConnectUrl
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
@@ -844,12 +957,13 @@ class OAuthManager:
             Parsed token endpoint response containing at least ``access_token``.
 
         Raises:
-            OAuthError: If token acquisition fails after all retries
+            OAuthError: If token_url and discovery are absent, discovery fails validation, or token acquisition fails after all retries
         """
-        runtime_credentials = await self._prepare_runtime_credentials(credentials, "client_credentials")
-        token_url = runtime_credentials["token_url"]
-        if not isinstance(token_url, str):
-            raise OAuthError("OAuth configuration missing valid token_url")
+        # Decryption failure can return the caller's original dict. Keep the resolved
+        # URL local, including for private_key_jwt assertion audiences and retries.
+        runtime_credentials = dict(await self._prepare_runtime_credentials(credentials, "client_credentials"))
+        token_url = await self._resolve_client_credentials_token_url(runtime_credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+        runtime_credentials["token_url"] = token_url
         scopes = runtime_credentials.get("scopes", [])
 
         # Prepare token request data and apply the configured client

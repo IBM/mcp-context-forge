@@ -8,7 +8,7 @@ token resolver, the exchange request, cache separation by mode, and audit.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -181,6 +181,19 @@ def _cc_manager(**kwargs):
 
 
 class TestResolveActorToken:
+    @pytest.mark.asyncio
+    async def test_actor_does_not_inherit_discovery_url_without_token_url(self):
+        """Actor config strips discovery metadata and fails locally instead of fetching it."""
+        config = _te_config(actor_token_source="client_credentials", discovery={"openIdConnectUrl": "https://idp.example.com/.well-known/openid-configuration"})
+        config.pop("token_url")
+        with patch("mcpgateway.services.oauth_manager.get_isolated_http_client") as http_client:
+            with pytest.raises(OAuthTokenExchangeError, match="Actor token request failed") as error:
+                await resolve_actor_token(OAuthManager(), config, gateway_id=None)
+        assert error.value.stage == "actor"
+        assert isinstance(error.value.__cause__, OAuthError)
+        assert "missing valid token_url" in str(error.value.__cause__)
+        http_client.assert_not_called()
+
     async def test_none_returns_no_actor(self, service_cache):
         manager = _cc_manager(return_value={"access_token": "actor-tok"})
         for cfg in (_te_config(), _te_config(actor_token_source="none")):
