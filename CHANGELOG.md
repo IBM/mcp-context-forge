@@ -11,6 +11,8 @@
 
 =======
 
+- **Virtual-server associations respect visibility** ([#7684](https://github.com/IBM/mcp-context-forge/issues/7684)) - Creating or updating a virtual server can attach only the tools, resources and prompts the caller can see. A missing ID and an invisible ID return the same not-found error, so the response does not reveal whether the item exists. An item already on the server stays allowed when a client sends back a read. The Admin UI create and update forms pass the caller's token teams into the same checks.
+
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.
   Configure credentials again after restoring into an empty registry. A gateway that needs credentials stays pending.
   The CLI removes `--rekey-secret`, and the import API rejects `rekey_secret` with HTTP 400.

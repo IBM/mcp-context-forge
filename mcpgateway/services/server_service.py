@@ -13,6 +13,7 @@ It also publishes event notifications for server changes.
 # Standard
 import asyncio
 import binascii
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Sequence, Union
 from uuid import uuid4
@@ -300,6 +301,173 @@ def _require_visible_a2a_agents(db: Session, agent_ids: Optional[Sequence[str]],
     unavailable = requested - visible
     if unavailable:
         raise ServerError(f"A2A Agents with ids {sorted(unavailable)} do not exist.")
+
+
+class _VisibilityHelper:
+    """Stand-in used to call service visibility helpers that do not use instance state."""
+
+
+_VISIBILITY_HELPER = _VisibilityHelper()
+
+
+def _requested_association_ids(raw_ids: Optional[Sequence[str]], attached: Sequence[Any] = ()) -> set[str]:
+    """Return association IDs the caller must be allowed to attach.
+
+    Args:
+        raw_ids: IDs from the request. Empty values are ignored.
+        attached: Items already on the server. Their IDs need no new check.
+
+    Returns:
+        Requested IDs that are not already attached.
+    """
+    already_attached = {item.id for item in attached}
+    return {id_.strip() for id_ in raw_ids or [] if id_ and str(id_).strip()} - already_attached
+
+
+async def _tool_visible_to(db: Session, tool: Any, user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
+    """Return whether the caller can see a tool, using ToolService._check_tool_access.
+
+    Args:
+        db: Database session.
+        tool: Tool ORM object or stand-in with visibility, team_id and owner_email.
+        user_email: Email of the caller, for owner matching.
+        token_teams: Teams of the caller token. ``None`` is the admin bypass, ``[]`` is public-only.
+
+    Returns:
+        True if the caller can see the tool.
+    """
+    # First-Party
+    from mcpgateway.services.tool_service import ToolService  # pylint: disable=import-outside-toplevel
+
+    payload = {
+        "visibility": getattr(tool, "visibility", "public"),
+        "team_id": getattr(tool, "team_id", None),
+        "owner_email": getattr(tool, "owner_email", None),
+    }
+    return await ToolService._check_tool_access(_VISIBILITY_HELPER, db, payload, user_email, token_teams)
+
+
+async def _resource_visible_to(db: Session, resource: Any, user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
+    """Return whether the caller can see a resource, using ResourceService._check_resource_access.
+
+    Args:
+        db: Database session.
+        resource: Resource ORM object or stand-in with visibility, team_id and owner_email.
+        user_email: Email of the caller, for owner matching.
+        token_teams: Teams of the caller token. ``None`` is the admin bypass, ``[]`` is public-only.
+
+    Returns:
+        True if the caller can see the resource.
+    """
+    # First-Party
+    from mcpgateway.services.resource_service import ResourceService  # pylint: disable=import-outside-toplevel
+
+    return await ResourceService._check_resource_access(_VISIBILITY_HELPER, db, resource, user_email, token_teams)
+
+
+async def _prompt_visible_to(db: Session, prompt: Any, user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
+    """Return whether the caller can see a prompt, using PromptService._check_prompt_access.
+
+    Args:
+        db: Database session.
+        prompt: Prompt ORM object or stand-in with visibility, team_id and owner_email.
+        user_email: Email of the caller, for owner matching.
+        token_teams: Teams of the caller token. ``None`` is the admin bypass, ``[]`` is public-only.
+
+    Returns:
+        True if the caller can see the prompt.
+    """
+    # First-Party
+    from mcpgateway.services.prompt_service import PromptService  # pylint: disable=import-outside-toplevel
+
+    return await PromptService._check_prompt_access(_VISIBILITY_HELPER, db, prompt, user_email, token_teams)
+
+
+async def _require_visible_items(
+    db: Session,
+    raw_ids: Optional[Sequence[str]],
+    *,
+    model: type[Base],
+    label: str,
+    user_email: Optional[str],
+    token_teams: Optional[List[str]],
+    attached: Sequence[Any] = (),
+    is_visible: Callable[[Session, Any, Optional[str], Optional[List[str]]], Awaitable[bool]],
+) -> None:
+    """Reject association IDs that the caller cannot see.
+
+    A missing item and an invisible item raise the same error, so the error does not reveal
+    whether an ID exists. Items already attached to the server stay allowed.
+
+    Args:
+        db: Database session.
+        raw_ids: IDs the request attaches to the server.
+        model: ORM model for the association type.
+        label: Human-readable type name used in the error.
+        user_email: Email of the caller, for owner matching.
+        token_teams: Teams of the caller token. ``None`` is the admin bypass, ``[]`` is public-only.
+        attached: Items already attached to the server. They need no new check.
+        is_visible: Async callable that applies the type's read-side visibility rule.
+
+    Raises:
+        ServerError: If any requested item is missing or not visible to the caller.
+    """
+    requested = _requested_association_ids(raw_ids, attached)
+    if not requested:
+        return
+    items = db.execute(select(model).where(model.id.in_(requested))).scalars().all()
+    visible = {item.id for item in items if await is_visible(db, item, user_email, token_teams)}
+    unavailable = requested - visible
+    if unavailable:
+        raise ServerError(f"{label}s with ids {sorted(unavailable)} do not exist.")
+
+
+async def _require_visible_tools(db: Session, tool_ids: Optional[Sequence[str]], user_email: Optional[str], token_teams: Optional[List[str]], attached: Sequence[DbTool] = ()) -> None:
+    """Reject tool IDs that the caller cannot see."""
+    await _require_visible_items(db, tool_ids, model=DbTool, label="Tool", user_email=user_email, token_teams=token_teams, attached=attached, is_visible=_tool_visible_to)
+
+
+async def _require_visible_resources(db: Session, resource_ids: Optional[Sequence[str]], user_email: Optional[str], token_teams: Optional[List[str]], attached: Sequence[DbResource] = ()) -> None:
+    """Reject resource IDs that the caller cannot see."""
+    await _require_visible_items(db, resource_ids, model=DbResource, label="Resource", user_email=user_email, token_teams=token_teams, attached=attached, is_visible=_resource_visible_to)
+
+
+async def _require_visible_prompts(db: Session, prompt_ids: Optional[Sequence[str]], user_email: Optional[str], token_teams: Optional[List[str]], attached: Sequence[DbPrompt] = ()) -> None:
+    """Reject prompt IDs that the caller cannot see."""
+    await _require_visible_items(db, prompt_ids, model=DbPrompt, label="Prompt", user_email=user_email, token_teams=token_teams, attached=attached, is_visible=_prompt_visible_to)
+
+
+async def _require_visible_server_entities(
+    db: Session,
+    associated_tools: Optional[Sequence[str]],
+    associated_resources: Optional[Sequence[str]],
+    associated_prompts: Optional[Sequence[str]],
+    user_email: Optional[str],
+    token_teams: Optional[List[str]],
+    *,
+    attached_tools: Sequence[DbTool] = (),
+    attached_resources: Sequence[DbResource] = (),
+    attached_prompts: Sequence[DbPrompt] = (),
+) -> None:
+    """Reject tool, resource and prompt IDs that the caller cannot see.
+
+    Args:
+        db: Database session.
+        associated_tools: Tool IDs the request attaches, or None to skip the check.
+        associated_resources: Resource IDs the request attaches, or None to skip the check.
+        associated_prompts: Prompt IDs the request attaches, or None to skip the check.
+        user_email: Email of the caller, for owner matching.
+        token_teams: Teams of the caller token. ``None`` is the admin bypass, ``[]`` is public-only.
+        attached_tools: Tools already attached to the server.
+        attached_resources: Resources already attached to the server.
+        attached_prompts: Prompts already attached to the server.
+
+    Raises:
+        ServerError: If any requested item is missing or not visible to the caller.
+    """
+    await _require_visible_tools(db, associated_tools, user_email, token_teams, attached=attached_tools)
+    await _require_visible_resources(db, associated_resources, user_email, token_teams, attached=attached_resources)
+    await _require_visible_prompts(db, associated_prompts, user_email, token_teams, attached=attached_prompts)
 
 
 def _associate_server_entities(db: Session, db_server: DbServer, server_in: ServerCreate) -> None:
@@ -691,7 +859,7 @@ class ServerService(BaseService):
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
             oauth_authorized: Whether the route authorizes explicit OAuth configuration.
-            token_teams: Teams of the caller token. Limits which A2A agents the caller can attach.
+            token_teams: Teams of the caller token. Limits which tools, resources, prompts and A2A agents the caller can attach.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -774,7 +942,9 @@ class ServerService(BaseService):
             logger.info("Adding server to DB session: %s", db_server.name)
             db.add(db_server)
 
-            _require_visible_a2a_agents(db, server_in.associated_a2a_agents, owner_email, token_teams)
+            caller_email = owner_email or created_by
+            await _require_visible_server_entities(db, server_in.associated_tools, server_in.associated_resources, server_in.associated_prompts, caller_email, token_teams)
+            _require_visible_a2a_agents(db, server_in.associated_a2a_agents, caller_email, token_teams)
             _associate_server_entities(db, db_server, server_in)
             _apply_server_interfaces(db_server, getattr(server_in, "interfaces", None))
 
@@ -1414,7 +1584,7 @@ class ServerService(BaseService):
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
             oauth_authorized: Whether the route authorizes explicit OAuth configuration.
-            token_teams: Teams of the caller token. Limits which A2A agents the caller can attach.
+            token_teams: Teams of the caller token. Limits which tools, resources, prompts and A2A agents the caller can attach.
             import_platform_admin: Verified unrestricted administrator for this import update.
 
         Returns:
@@ -1539,6 +1709,17 @@ class ServerService(BaseService):
             if server_update.team_id is not None:
                 server.team_id = server_update.team_id
 
+            await _require_visible_server_entities(
+                db,
+                getattr(server_update, "associated_tools", None),
+                getattr(server_update, "associated_resources", None),
+                getattr(server_update, "associated_prompts", None),
+                user_email,
+                token_teams,
+                attached_tools=server.tools,
+                attached_resources=server.resources,
+                attached_prompts=server.prompts,
+            )
             _require_visible_a2a_agents(db, getattr(server_update, "associated_a2a_agents", None), user_email, token_teams, attached=server.a2a_agents)
             _update_server_associations(db, server, server_update)
             _apply_server_interfaces(server, server_update.interfaces)
