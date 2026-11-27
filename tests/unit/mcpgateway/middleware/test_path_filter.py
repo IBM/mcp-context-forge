@@ -59,8 +59,25 @@ class TestObservabilitySkip:
             ("/servers/123/mcp/", False),
             ("/servers/123/sse", False),
             ("/servers/123/message", False),
-            ("/a2a", False),
-            ("/a2a/agents", False),
+            # A2A management CRUD is not a protocol surface
+            ("/a2a", True),
+            ("/a2a/", True),
+            ("/a2a/agents", True),
+            ("/a2a/demo", True),
+            ("/a2a/demo/state", True),
+            ("/a2a/demo/toggle", True),
+            ("/v1/a2a", True),
+            ("/v1/a2a/demo", True),
+            # A2A invocation routes remain traced
+            ("/a2a/invoke", False),
+            ("/a2a/invoke/", False),
+            ("/a2a/demo/invoke", False),
+            ("/a2a/demo/invoke/", False),
+            ("/a2a/demo/jsonrpc", False),
+            ("/a2a/demo/jsonrpc/", False),
+            ("/v1/a2a/invoke", False),
+            ("/v1/a2a/demo/invoke", False),
+            ("/v1/a2a/demo/jsonrpc", False),
         ],
     )
     def test_should_skip_observability(self, path: str, expected: bool):

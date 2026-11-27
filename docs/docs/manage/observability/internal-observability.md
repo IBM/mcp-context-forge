@@ -73,7 +73,7 @@ OBSERVABILITY_MAX_TRACES=100000
 OBSERVABILITY_SAMPLE_RATE=1.0
 
 # Include paths (JSON array of regex patterns)
-OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]
+OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a/invoke/?$","^/a2a/[^/]+/invoke/?$","^/a2a/[^/]+/jsonrpc/?$","^/v1/a2a/invoke/?$","^/v1/a2a/[^/]+/invoke/?$","^/v1/a2a/[^/]+/jsonrpc/?$"]
 
 # Exclude paths (JSON array of regex patterns, applied after include patterns)
 OBSERVABILITY_EXCLUDE_PATHS=["/health","/healthz","/ready","/metrics","/static/.*"]
@@ -123,7 +123,7 @@ http://localhost:4444/admin/observability
 | Variable | Description | Default | Range |
 |----------|-------------|---------|-------|
 | `OBSERVABILITY_SAMPLE_RATE` | Trace sampling rate | `1.0` | 0.0-1.0 |
-| `OBSERVABILITY_INCLUDE_PATHS` | Regex patterns to include for tracing | `["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]` | JSON array |
+| `OBSERVABILITY_INCLUDE_PATHS` | Regex patterns to include for tracing | `["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a/invoke/?$","^/a2a/[^/]+/invoke/?$","^/a2a/[^/]+/jsonrpc/?$","^/v1/a2a/invoke/?$","^/v1/a2a/[^/]+/invoke/?$","^/v1/a2a/[^/]+/jsonrpc/?$"]` | JSON array |
 | `OBSERVABILITY_EXCLUDE_PATHS` | Regex patterns to exclude (after include patterns) | `["/health","/healthz","/ready","/metrics","/static/.*"]` | JSON array |
 
 ### Feature Flags
@@ -395,7 +395,7 @@ Tune which paths are traced:
 
 ```bash
 # Limit tracing to MCP/A2A endpoints (default include list)
-OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]
+OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a/invoke/?$","^/a2a/[^/]+/invoke/?$","^/a2a/[^/]+/jsonrpc/?$","^/v1/a2a/invoke/?$","^/v1/a2a/[^/]+/invoke/?$","^/v1/a2a/[^/]+/jsonrpc/?$"]
 
 # Trace all endpoints (leave include list empty)
 OBSERVABILITY_INCLUDE_PATHS=[]

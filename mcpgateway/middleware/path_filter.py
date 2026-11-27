@@ -183,6 +183,10 @@ def should_skip_observability(path: str) -> bool:
         True
         >>> should_skip_observability("/rpc")
         False
+        >>> should_skip_observability("/a2a")
+        True
+        >>> should_skip_observability("/a2a/demo/invoke")
+        False
     """
     if path in OBSERVABILITY_SKIP_EXACT or _matches_prefix(path, OBSERVABILITY_SKIP_PREFIXES):
         return True
