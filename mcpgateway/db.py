@@ -5016,7 +5016,7 @@ class A2AAgent(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    endpoint_url: Mapped[str] = mapped_column(String(767), nullable=False)
+    endpoint_url: Mapped[str] = mapped_column(String(2048), nullable=False)  # matches settings.validation_max_url_length; PostgreSQL enforces it
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
     protocol_binding: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)  # "jsonrpc" or "http_json"; NULL uses the URL heuristic
     protocol_version: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0")
