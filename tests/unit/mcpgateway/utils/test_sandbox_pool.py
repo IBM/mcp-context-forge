@@ -16,6 +16,7 @@ import time
 import pytest
 
 # First-Party
+from mcpgateway.utils import sandbox_pool
 from mcpgateway.utils.sandbox_pool import SandboxBusy, SandboxError, SandboxPool, SandboxTimeout
 
 
@@ -105,6 +106,200 @@ def test_rebuild_after_a_kill_warms_workers_outside_the_call_budget():
         assert instance.submit(_echo, "warm") == "warm"
     finally:
         instance.shutdown()
+
+
+class _NeverReadyFuture:
+    """A warm-up future that never completes."""
+
+    def result(self, timeout=None):  # pylint: disable=unused-argument
+        """Fail the way a stuck worker start-up does.
+
+        Args:
+            timeout: Ignored.
+
+        Raises:
+            TimeoutError: Always.
+        """
+        raise TimeoutError("warm-up never completed")
+
+
+class _NeverReadyPool:
+    """Stand in for an executor whose workers never come up."""
+
+    def __init__(self):
+        self.shutdown_calls = []
+
+    def submit(self, _fn, *_args):
+        """Hand back a future that will time out.
+
+        Args:
+            _fn: Ignored.
+            *_args: Ignored.
+
+        Returns:
+            A future whose result never arrives.
+        """
+        return _NeverReadyFuture()
+
+    def shutdown(self, **kwargs):
+        """Record how the pool was torn down.
+
+        Args:
+            **kwargs: The shutdown options used.
+        """
+        self.shutdown_calls.append(kwargs)
+
+
+def _kill_pool(instance: SandboxPool) -> None:
+    """Drive a started pool through a timeout so its workers are killed and discarded.
+
+    Args:
+        instance: A started SandboxPool with a short timeout.
+    """
+    with pytest.raises(SandboxTimeout):
+        instance.submit(_runaway, r"^(a+)+$", "a" * 40 + "b")
+    assert instance._current_executor() is None  # pylint: disable=protected-access
+
+
+def test_rebuild_warmup_failure_raises_sandbox_error_and_leaves_pool_empty(monkeypatch):
+    """A rebuild whose workers never come up fails the call and tears the half-built pool down."""
+    instance = SandboxPool(name="test", workers_fn=lambda: 1, timeout_fn=lambda: 0.1)
+    instance.start()
+    try:
+        _kill_pool(instance)
+        failing_pool = _NeverReadyPool()
+        monkeypatch.setattr(instance, "_build", lambda _workers: failing_pool)
+        with pytest.raises(SandboxError, match="warm-up never completed"):
+            instance.submit(_echo, "x")
+        assert failing_pool.shutdown_calls == [{"wait": False, "cancel_futures": True}]
+        assert instance._current_executor() is None  # pylint: disable=protected-access
+    finally:
+        instance.shutdown()
+
+
+def test_pool_retries_build_after_failed_rebuild(monkeypatch):
+    """One failed rebuild does not wedge the pool: the next call builds again and succeeds."""
+    instance = SandboxPool(name="test", workers_fn=lambda: 1, timeout_fn=lambda: 0.1)
+    instance.start()
+    try:
+        _kill_pool(instance)
+        real_build = instance._build  # pylint: disable=protected-access
+        attempts = []
+
+        def flaky_build(workers):
+            attempts.append(workers)
+            if len(attempts) == 1:
+                return _NeverReadyPool()
+            return real_build(workers)
+
+        monkeypatch.setattr(instance, "_build", flaky_build)
+        with pytest.raises(SandboxError):
+            instance.submit(_echo, "x")
+        assert instance.submit(_echo, "recovered") == "recovered"
+        assert attempts == [1, 1]
+    finally:
+        instance.shutdown()
+
+
+def test_raising_timeout_function_during_rebuild_is_wrapped():
+    """A settings read that blows up inside the warm-up surfaces as SandboxError, not a bare exception."""
+    budgets = iter([0.1, 0.1])
+
+    def timeout_fn():
+        try:
+            return next(budgets)
+        except StopIteration:
+            raise RuntimeError("settings unavailable")  # pylint: disable=raise-missing-from
+
+    instance = SandboxPool(name="test", workers_fn=lambda: 1, timeout_fn=timeout_fn)
+    instance.start()  # first budget: start-up warm-up
+    try:
+        _kill_pool(instance)  # second budget: the call that times out
+        with pytest.raises(SandboxError, match="settings unavailable"):
+            instance.submit(_echo, "x")  # third read raises inside _build_warm
+        assert instance._current_executor() is None  # pylint: disable=protected-access
+    finally:
+        instance.shutdown()
+
+
+def test_concurrent_calls_after_a_kill_build_one_pool(monkeypatch):
+    """Two callers arriving during a rebuild share one new pool instead of forking twice."""
+    instance = SandboxPool(name="test", workers_fn=lambda: 2, timeout_fn=lambda: 0.5, initializer=_slow_init)
+    instance.start()
+    try:
+        _kill_pool(instance)
+        real_build = instance._build  # pylint: disable=protected-access
+        builds = []
+
+        def counting_build(workers):
+            builds.append(workers)
+            return real_build(workers)
+
+        monkeypatch.setattr(instance, "_build", counting_build)
+        results = {}
+
+        def call(label):
+            results[label] = instance.submit(_echo, label)
+
+        threads = [threading.Thread(target=call, args=(label,)) for label in ("a", "b")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert results == {"a": "a", "b": "b"}
+        assert builds == [2]
+    finally:
+        instance.shutdown()
+
+
+def test_private_idle_permit_attribute_still_exists(pool):
+    """The kill path hands the executor one idle permit per killed worker; pin the private name it uses."""
+    permits = getattr(pool._current_executor(), "_idle_worker_semaphore", None)  # pylint: disable=protected-access
+    assert isinstance(permits, type(threading.Semaphore())), "ProcessPoolExecutor._idle_worker_semaphore is gone; the kill path's replacement guard needs rewriting"
+
+
+class _KillableProcess:
+    """A worker process stand-in that records whether it was killed."""
+
+    def __init__(self):
+        self.killed = False
+
+    def kill(self):
+        """Record the kill."""
+        self.killed = True
+
+
+class _FakeExecutor:
+    """Just enough of ProcessPoolExecutor for the discard path."""
+
+    def __init__(self, worker_count: int):
+        self._processes = {pid: _KillableProcess() for pid in range(worker_count)}
+        self._idle_worker_semaphore = threading.Semaphore(0)
+        self.shutdown_calls = []
+
+    def shutdown(self, **kwargs):
+        """Record how the pool was torn down.
+
+        Args:
+            **kwargs: The shutdown options used.
+        """
+        self.shutdown_calls.append(kwargs)
+
+
+def test_discard_hands_the_executor_one_idle_permit_per_killed_worker():
+    """Killing N workers leaves N idle permits so the manager thread never forks a replacement."""
+    instance = SandboxPool(name="test", workers_fn=lambda: 3, timeout_fn=lambda: 1.0)
+    fake = _FakeExecutor(worker_count=3)
+    setattr(fake, sandbox_pool._OWNER_PID_ATTR, os.getpid())  # pylint: disable=protected-access
+    instance._pool = fake  # pylint: disable=protected-access
+    instance._pool_pid = os.getpid()  # pylint: disable=protected-access
+
+    instance.shutdown()
+
+    assert all(process.killed for process in fake._processes.values())  # pylint: disable=protected-access
+    assert fake.shutdown_calls == [{"wait": False, "cancel_futures": True}]
+    assert [fake._idle_worker_semaphore.acquire(blocking=False) for _ in range(4)] == [True, True, True, False]  # pylint: disable=protected-access
+    assert instance._current_executor() is None  # pylint: disable=protected-access
 
 
 def test_shutdown_kills_a_worker_running_a_runaway_call():
