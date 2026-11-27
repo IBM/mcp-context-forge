@@ -48,9 +48,12 @@ import mcp_types as types
 from mcp_types import PromptArgument
 import orjson
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 from starlette.types import Scope
 
 # First-Party
+from mcpgateway.db import A2AAgent, Base, Server, Tool
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 
 # ---------------------------------------------------------------------------
@@ -59,7 +62,7 @@ from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptUpstreamError, PromptValidationError
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceUpstreamError
-from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError
+from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.transports.streamablehttp_transport import (
     _MCPGATEWAY_CONTEXT_KEY,
@@ -480,6 +483,68 @@ async def test_call_tool_success(monkeypatch):
     assert isinstance(result[0], types.TextContent)
     assert result[0].type == "text"
     assert result[0].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_checks_a2a_feature_flag_for_persisted_binding(monkeypatch):
+    """Dispatch a linked tool through MCP. Recheck the feature flag on the next call."""
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    endpoint = "https://agent.example.com"
+    agent = A2AAgent(name="test-agent", endpoint_url=endpoint, visibility="public")
+    tool = Tool(original_name="a2a-test-agent", url=endpoint, integration_type="A2A", request_type="POST", visibility="public", input_schema={})
+    with Session(engine) as db:
+        db.add(agent)
+        db.flush()
+        tool.annotations = {"a2a_agent_id": agent.id}
+        agent.tool = tool
+        server = Server(name="test-server", visibility="public", tools=[tool])
+        db.add(server)
+        db.commit()
+        tool_name = tool.name
+        server_id = server.id
+
+    @asynccontextmanager
+    async def get_test_db():
+        with Session(engine) as db:
+            yield db
+
+    client = AsyncMock()
+    client.post.return_value = httpx.Response(200, json={"response": "A2A transport fixture"})
+
+    @asynccontextmanager
+    async def stub_http_client(**_kwargs):
+        yield client
+
+    service = ToolService()
+    monkeypatch.setattr(tr, "get_db", get_test_db)
+    monkeypatch.setattr(tr, "tool_service", service)
+    monkeypatch.setattr(tr, "_check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr(service, "_get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "_record_tool_metric_by_id", Mock())
+    monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", stub_http_client)
+    pin = AsyncMock(return_value=SimpleNamespace(endpoint_url=endpoint, headers={}, extensions={}))
+    monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", pin)
+    monkeypatch.setattr(tr.settings, "mcpgateway_a2a_enabled", True)
+    monkeypatch.setattr(tr.settings, "mcpgateway_session_affinity_enabled", False)
+    server_token = server_id_var.set(server_id)
+    headers_token = tr.request_headers_var.set({"x-mcp-session-id": "fixture-session"})
+    context_token = user_context_var.set({"email": "user@example.com", "is_authenticated": True, "teams": [], "scoped_permissions": ["tools.execute"]})
+    try:
+        result = await call_tool(tool_name, {"query": "hello"})
+        assert result[0].text == "A2A transport fixture"
+
+        monkeypatch.setattr(tr.settings, "mcpgateway_a2a_enabled", False)
+        denied = await call_tool(tool_name, {"query": "hello"})
+        assert denied.is_error is True
+        assert denied.content[0].text == f"Unknown tool: {tool_name}"
+        client.post.assert_awaited_once()
+        pin.assert_awaited_once()
+    finally:
+        user_context_var.reset(context_token)
+        tr.request_headers_var.reset(headers_token)
+        server_id_var.reset(server_token)
+        engine.dispose()
 
 
 @pytest.mark.parametrize(

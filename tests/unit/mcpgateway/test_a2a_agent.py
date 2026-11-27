@@ -427,7 +427,7 @@ class TestA2AToolsNotListedInGlobalTools:
             # Mock db.get to return a tool
             mock_tool = MagicMock(spec=DbTool)
             mock_tool.id = uuid.uuid4().hex
-            mock_db.get.return_value = mock_tool
+            mock_db.get.side_effect = [sample_a2a_agent_db, mock_tool]
 
             # Create tool from A2A agent
             _ = await tool_service.create_tool_from_a2a_agent(

@@ -5784,6 +5784,35 @@ class TestA2ABranchCoverage:
         assert response.status_code == 403
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("membership", ["team-1", None, "lookup-error"], ids=["active-member", "missing-member", "lookup-error"])
+    async def test_create_a2a_agent_checks_membership_before_registration(self, monkeypatch, membership):
+        """Forward the caller scope only after confirming active membership."""
+        import mcpgateway.main as main_mod
+        from sqlalchemy.exc import SQLAlchemyError
+
+        request = _make_request("/a2a", method="POST")
+        request.state.token_teams = ["team-1"]
+        register = AsyncMock()
+        monkeypatch.setattr(main_mod.a2a_service, "register_agent", register)
+        db = MagicMock()
+        db.scalar.return_value = membership
+        if membership == "lookup-error":
+            db.scalar.side_effect = SQLAlchemyError("membership lookup failed")
+        agent = main_mod.A2AAgentCreate(name="agent", endpoint_url="https://agent.example.com")
+        kwargs = {"team_id": "team-1", "visibility": "team", "db": db, "user": {"email": "user@example.com"}}
+
+        if membership != "team-1":
+            with pytest.raises(HTTPException) as exc:
+                await main_mod.create_a2a_agent.__wrapped__(agent, request, **kwargs)
+            assert exc.value.status_code == 403
+            register.assert_not_awaited()
+        else:
+            await main_mod.create_a2a_agent.__wrapped__(agent, request, **kwargs)
+            register.assert_awaited_once()
+            assert register.call_args.kwargs["token_teams"] == ["team-1"]
+            assert register.call_args.kwargs["team_id"] == "team-1"
+            assert register.call_args.kwargs["owner_email"] == "user@example.com"
+
     async def test_create_a2a_agent_team_mismatch_and_service_unavailable(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
@@ -5981,6 +6010,58 @@ class TestRpcHandling:
         if cursor is not None:
             result["nextCursor"] = cursor
         return result
+
+    @pytest.mark.parametrize("method", ["tools/call", "lookup"])
+    @pytest.mark.parametrize(
+        "jwt_payload,expected_scope,owner_teams",
+        [
+            pytest.param(None, None, [], id="non-jwt-admin"),
+            pytest.param({"is_admin": True, "teams": ["team-1"]}, ["team-1"], ["team-1"], id="scoped-admin"),
+            pytest.param({"is_admin": True, "teams": []}, [], [], id="public-only"),
+        ],
+    )
+    async def test_rpc_tool_uses_canonical_scope(self, monkeypatch, method, jwt_payload, expected_scope, owner_teams):
+        """Both RPC paths keep caller identity and use the canonical scope."""
+        import mcpgateway.main as main_mod
+
+        payload = {"jsonrpc": "2.0", "id": "scope-1", "method": method, "params": {"name": "lookup"} if method == "tools/call" else {}}
+        request = self._make_request(payload)
+        request.state = SimpleNamespace(_jwt_verified_payload=("test-token", jwt_payload) if jwt_payload is not None else None)
+        invoke = AsyncMock(return_value={"content": []})
+        register = AsyncMock()
+        monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", True)
+        monkeypatch.setattr(main_mod, "_ensure_rpc_permission", AsyncMock())
+        monkeypatch.setattr(main_mod.tool_service, "invoke_tool", invoke)
+        monkeypatch.setattr(main_mod.cancellation_service, "register_run", register)
+        monkeypatch.setattr(main_mod.cancellation_service, "get_status", AsyncMock(return_value=None))
+        monkeypatch.setattr(main_mod.cancellation_service, "unregister_run", AsyncMock())
+        user = {"email": "caller@example.com", "is_admin": True}
+        response = await main_mod.handle_rpc(request, db=MagicMock(), user=user)
+
+        assert "result" in response, response
+        invoke.assert_awaited_once()
+        assert invoke.call_args.kwargs["user_email"] == user["email"]
+        assert invoke.call_args.kwargs["token_teams"] == expected_scope
+        if method == "tools/call":
+            register.assert_awaited_once()
+            assert register.call_args.kwargs["owner_email"] == user["email"]
+            assert register.call_args.kwargs["owner_team_ids"] == owner_teams
+
+    async def test_app_bridge_uses_bound_agent_access_scope(self, monkeypatch):
+        """An app invocation uses the email and teams bound to its session."""
+        import mcpgateway.main as main_mod
+
+        invoke = AsyncMock(return_value={"content": []})
+        monkeypatch.setattr(main_mod.tool_service, "invoke_tool", invoke)
+        request = _make_request("/app-bridge", method="POST")
+        request.state.token_teams = ["ambient-team"]
+        session = SimpleNamespace(user_email="bound@example.com", token_teams=["bound-team"], server_id="server-1")
+        result = await main_mod._handle_app_bridge_tools_call(MagicMock(), request, session, {"name": "lookup"}, "bridge-id", "requester@example.com")
+
+        assert "result" in result
+        invoke.assert_awaited_once()
+        assert invoke.call_args.kwargs["user_email"] == session.user_email
+        assert invoke.call_args.kwargs["token_teams"] == session.token_teams
 
     async def test_handle_rpc_parse_error(self):
         request = MagicMock(spec=Request)
@@ -8465,14 +8546,15 @@ class TestRemainingCoverageGaps:
         from mcpgateway.services.resource_service import ResourceLockConflictError
         from mcpgateway.services.server_service import ServerError, ServerLockConflictError
 
+        request = _make_request("/servers/s1/state", method="POST")
         monkeypatch.setattr(main_mod.server_service, "set_server_state", AsyncMock(side_effect=ServerLockConflictError("locked")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_server_state.__wrapped__("s1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_server_state.__wrapped__("s1", request, activate=True, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 409
 
         monkeypatch.setattr(main_mod.server_service, "set_server_state", AsyncMock(side_effect=ServerError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_server_state.__wrapped__("s1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_server_state.__wrapped__("s1", request, activate=True, db=MagicMock(), user={"email": "u"})
         assert excinfo.value.status_code == 400
 
         monkeypatch.setattr(main_mod.resource_service, "set_resource_state", AsyncMock(side_effect=ResourceLockConflictError("locked")))
@@ -9199,9 +9281,14 @@ class TestRemainingCoverageGaps:
         # First-Party
         import mcpgateway.main as main_mod
 
-        monkeypatch.setattr(main_mod, "set_server_state", AsyncMock(return_value={"ok": True}))
+        request = _make_request("/servers/s1/toggle", method="POST")
+        db = MagicMock()
+        user = {"email": "u"}
+        set_server_state = AsyncMock(return_value={"ok": True})
+        monkeypatch.setattr(main_mod, "set_server_state", set_server_state)
         with pytest.warns(DeprecationWarning):
-            assert await main_mod.toggle_server_status.__wrapped__("s1", True, MagicMock(), {"email": "u"}) == {"ok": True}
+            assert await main_mod.toggle_server_status.__wrapped__("s1", request, True, db, user) == {"ok": True}
+        set_server_state.assert_awaited_once_with("s1", request, True, db, user)
 
         monkeypatch.setattr(main_mod, "set_tool_state", AsyncMock(return_value={"ok": True}))
         with pytest.warns(DeprecationWarning):

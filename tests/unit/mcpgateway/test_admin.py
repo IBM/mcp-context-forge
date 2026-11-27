@@ -970,6 +970,7 @@ class TestAdminServerRoutes:
         server_update = mock_update_server.call_args[0][2]
         assert "instructions" in server_update.model_fields_set
         assert server_update.instructions == expected
+        assert "associated_a2a_agents" not in server_update.model_fields_set
 
     @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_without_instructions_field_keeps_override(self, mock_update_server, mock_request, mock_db):
@@ -1382,7 +1383,7 @@ class TestAdminServerRoutes:
 
         result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
-        mock_set_state.assert_called_once_with(mock_db, "server-1", True, user_email="test-user")
+        mock_set_state.assert_called_once_with(mock_db, "server-1", True, user_email="test-user", token_teams=[])
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert result.headers["location"] == "/admin#catalog"
@@ -1396,7 +1397,7 @@ class TestAdminServerRoutes:
 
         result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
-        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
+        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user", token_teams=[])
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert result.headers["location"] == "/admin#catalog"
@@ -1410,7 +1411,7 @@ class TestAdminServerRoutes:
 
         result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
-        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
+        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user", token_teams=[])
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert result.headers["location"] == "/admin/?include_inactive=true#catalog"
@@ -6722,7 +6723,7 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_a2a_agent(mock_request, mock_db, user={"is_admin": True, "email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422  # matches your ValidationError handler
@@ -6740,7 +6741,7 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_a2a_agent(mock_request, mock_db, user={"is_admin": True, "email": "test-user", "db": mock_db})
 
         # Third-Party
         from starlette.responses import JSONResponse
@@ -10017,7 +10018,7 @@ class TestEdgeCasesAndErrorHandling:
             if form_field == "activate":
                 # Only "true" (case-insensitive) should be True
                 expected = value.lower() == "true"
-                mock_toggle.assert_called_with(mock_db, "server-1", expected, user_email="test-user")
+                mock_toggle.assert_called_with(mock_db, "server-1", expected, user_email="test-user", token_teams=[])
 
     async def test_json_field_valid_cases(self, mock_request, mock_db):
         """Test JSON field parsing with valid cases."""
@@ -16609,7 +16610,7 @@ class TestAdminAdditionalCoverage:
         form_data = FakeForm({"name": "Agent One", "endpoint_url": "http://example.com/agent"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        response = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_add_a2a_agent(mock_request, mock_db, user={"is_admin": True, "email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         mock_service.register_agent.assert_called_once()
 
@@ -16661,7 +16662,7 @@ class TestAdminAdditionalCoverage:
         form_data = FakeForm({"name": "Agent Default", "endpoint_url": "http://example.com/agent"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        response = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_add_a2a_agent(mock_request, mock_db, user={"is_admin": True, "email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         agent_data = mock_service.register_agent.call_args.args[1]
         assert agent_data.protocol_version == "1.0"
@@ -16693,7 +16694,7 @@ class TestAdminAdditionalCoverage:
         form_data = FakeForm({"name": "Agent Legacy", "endpoint_url": "http://example.com/agent", "protocol_version": "0.3"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        response = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_add_a2a_agent(mock_request, mock_db, user={"is_admin": True, "email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         agent_data = mock_service.register_agent.call_args.args[1]
         assert agent_data.protocol_version == "0.3"
@@ -20342,6 +20343,31 @@ async def test_admin_add_a2a_agent_disabled_features(monkeypatch, mock_db, allow
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("active_member", [True, False], ids=["active-member", "missing-member"])
+async def test_admin_a2a_registration_checks_scope_before_write(monkeypatch, mock_db, active_member):
+    """Forward the effective form scope after checking current membership."""
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    team_id = "70000000-0000-0000-0000-000000000001"
+    request.state = SimpleNamespace(token_teams=[team_id])
+    request.form = AsyncMock(return_value=FakeForm({"name": "Agent", "endpoint_url": "https://agent.example.com", "visibility": "team", "team_id": team_id}))
+    mock_db.scalar.return_value = team_id if active_member else None
+    register = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", SimpleNamespace(register_agent=register))
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+
+    response = await admin_add_a2a_agent.__wrapped__(request, mock_db, user={"email": "owner@example.com"})
+    if not active_member:
+        assert response.status_code == 403
+        register.assert_not_awaited()
+    else:
+        assert response.status_code == 200
+        register.assert_awaited_once()
+        assert register.call_args.kwargs["team_id"] == team_id
+        assert register.call_args.kwargs["token_teams"] == [team_id]
+
+
+@pytest.mark.asyncio
 async def test_admin_add_a2a_agent_oauth_config_parse_error(monkeypatch, mock_db, allow_permission):
     """Cover the oauth_config JSON parsing error branch."""
     form_data = FakeForm({"name": "Agent", "endpoint_url": "http://agent.example.com", "oauth_config": "{bad"})
@@ -20355,7 +20381,7 @@ async def test_admin_add_a2a_agent_oauth_config_parse_error(monkeypatch, mock_db
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
 
     team_service = MagicMock()
-    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr(
         "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
@@ -20365,7 +20391,7 @@ async def test_admin_add_a2a_agent_oauth_config_parse_error(monkeypatch, mock_db
     log_error = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.LOGGER.error", log_error, raising=True)
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com", "db": mock_db})
     assert response.status_code == 200
     assert log_error.called
     agent_data = service.register_agent.call_args.args[1]
@@ -20393,7 +20419,7 @@ async def test_admin_add_a2a_agent_oauth_auto_detect(monkeypatch, mock_db):
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
 
     team_service = MagicMock()
-    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     encryptor = MagicMock()
@@ -20404,7 +20430,7 @@ async def test_admin_add_a2a_agent_oauth_auto_detect(monkeypatch, mock_db):
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com"})
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -20441,7 +20467,7 @@ async def test_admin_add_a2a_agent_oauth_assembled_from_form_fields(monkeypatch,
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
 
     team_service = MagicMock()
-    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     encryptor = MagicMock()
@@ -20452,7 +20478,7 @@ async def test_admin_add_a2a_agent_oauth_assembled_from_form_fields(monkeypatch,
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com"})
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -20491,7 +20517,7 @@ async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
 
     team_service = MagicMock()
-    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     encryptor = MagicMock()
@@ -20502,7 +20528,7 @@ async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com"})
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -20575,14 +20601,14 @@ async def test_admin_add_a2a_agent_oauth_assembled_minimal_fields_covers_false_b
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
 
     team_service = MagicMock()
-    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr(
         "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com", "db": mock_db})
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -20613,14 +20639,14 @@ async def test_admin_add_a2a_agent_oauth_scopes_parse_empty_and_missing_client_i
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
 
     team_service = MagicMock()
-    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr(
         "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com", "db": mock_db})
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -20649,14 +20675,14 @@ async def test_admin_add_a2a_agent_oauth_config_without_client_secret(monkeypatc
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
 
     team_service = MagicMock()
-    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr(
         "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com", "db": mock_db})
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -20671,7 +20697,7 @@ async def test_admin_add_a2a_agent_error_handlers(monkeypatch, mock_db):
     request.scope = {"root_path": ""}
 
     team_service = MagicMock()
-    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    team_service.verify_team_for_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
     monkeypatch.setattr(
@@ -20683,15 +20709,15 @@ async def test_admin_add_a2a_agent_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
 
     service.register_agent = AsyncMock(side_effect=A2AAgentError("boom"))
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com"})
     assert response.status_code == 500
 
     service.register_agent = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("constraint")))
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com"})
     assert response.status_code == 409
 
     service.register_agent = AsyncMock(side_effect=Exception("unknown"))
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "user@example.com"})
     assert response.status_code == 500
 
 
@@ -20907,7 +20933,7 @@ async def test_admin_add_a2a_agent_with_custom_headers(monkeypatch, mock_db):
         ),
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "test@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(request, mock_db, user={"is_admin": True, "email": "test@example.com", "db": mock_db})
 
     assert response.status_code == 200
     service.register_agent.assert_called_once()

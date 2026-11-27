@@ -45,7 +45,7 @@ from mcpgateway.services.prompt_service import PromptError, PromptNameConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceURIConflictError
 from mcpgateway.services.root_service import RootServiceValidationError
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError
-from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolValidationError
+from mcpgateway.services.tool_service import guard_a2a_tool_update, ToolError, ToolNameConflictError, ToolValidationError
 from mcpgateway.services.tool_validation_policy import admit_tool, check_policy_permission, policy_changed, policy_text
 from mcpgateway.utils.create_slug import build_gateway_tool_invocation_name, slugify
 from mcpgateway.utils.header_filtering import is_tool_credential_header_name
@@ -650,6 +650,8 @@ class ImportService:
                 candidates = [root_state[uri]] if uri in root_state else []
             else:
                 federated = kind in {"tools", "resources", "prompts"} and is_gateway_item
+                if federated and kind == "tools" and clean.get("integration_type") == "A2A":
+                    raise ImportValidationError("Derived A2A tools use local agent bindings")
                 mapped_gateway = self._mapped_gateway(clean, indexes, mappings) if federated else None
                 if federated and mapped_gateway is None:
                     raise ImportValidationError("Federated file item has no matching destination gateway")
@@ -920,6 +922,9 @@ class ImportService:
             return (ServerCreate if create else ServerUpdate)(**payload), False
         needs_credentials = bool(data.get("credentials_required")) and create
         schema = self._catalog_import_schema(kind, data, create=create)
+        existing_type = getattr(existing, "integration_type", None)
+        if isinstance(schema, ToolUpdate) and "A2A" in (schema.integration_type, existing_type):
+            return guard_a2a_tool_update(existing, schema, portable=True), False
         if isinstance(schema, (GatewayCreate, GatewayUpdate)) and schema.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
             raise ImportValidationError("Direct-proxy gateways are disabled")
         if not isinstance(schema, (GatewayUpdate, ToolUpdate)):

@@ -201,6 +201,7 @@ from mcpgateway.services.a2a_service import (
     A2ACardRefreshThrottledError,
     A2ATaskStateError,
     raise_if_a2a_disabled,
+    require_a2a_registration_scope,
 )
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
@@ -4376,6 +4377,7 @@ async def approve_server_oauth(
 @require_permission("servers.update")
 async def set_server_state(
     server_id: str,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4385,6 +4387,7 @@ async def set_server_state(
 
     Args:
         server_id (str): The ID of the server to set state for.
+        request: Current request.
         activate (bool): Whether to activate or deactivate the server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
@@ -4398,7 +4401,7 @@ async def set_server_state(
     try:
         user_email = get_user_email(user)
         logger.debug(f"User {safe_log_user(user)} is setting server with ID {server_id} to {'active' if activate else 'inactive'}")
-        return await server_service.set_server_state(db, server_id, activate, user_email=user_email)
+        return await server_service.set_server_state(db, server_id, activate, user_email=user_email, token_teams=get_scoped_resource_access_context(request, user)[1])
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
@@ -4413,6 +4416,7 @@ async def set_server_state(
 @require_permission("servers.update")
 async def toggle_server_status(
     server_id: str,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -4423,6 +4427,7 @@ async def toggle_server_status(
 
     Args:
         server_id: The server ID.
+        request: Current request.
         activate: Whether to activate (True) or deactivate (False) the server.
         db: Database session.
         user: Authenticated user context.
@@ -4432,7 +4437,7 @@ async def toggle_server_status(
     """
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
-    return await set_server_state(server_id, activate, db, user)
+    return await set_server_state(server_id, request, activate, db, user)
 
 
 @server_router.post("/{server_id}/test-handshake", response_model=GatewayHandshakeResponse)
@@ -5215,11 +5220,10 @@ async def create_a2a_agent(
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
-        # Get user email and handle team assignment
-        user_email = get_user_email(user)
-
+        scoped_email, token_teams = get_scoped_resource_access_context(request, user)
+        user_email = scoped_email or get_user_email(user)
         token_team_id = getattr(request.state, "team_id", None)
-        token_teams = getattr(request.state, "token_teams", None)
+        visibility = visibility or agent.visibility
 
         # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
         is_public_only_token = token_teams is not None and len(token_teams) == 0
@@ -5242,6 +5246,8 @@ async def create_a2a_agent(
         else:
             team_id = team_id or token_team_id
 
+        require_a2a_registration_scope(db, user_email, token_teams, team_id, visibility)
+
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new A2A agent for team {team_id}")
         return await a2a_service.register_agent(
             db,
@@ -5255,7 +5261,12 @@ async def create_a2a_agent(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            token_teams=token_teams,
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    except PublicValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except A2AAgentNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except A2AAgentError as e:
@@ -9035,15 +9046,10 @@ async def _execute_rpc_tools_call(
     if not name:
         raise JSONRPCError(-32602, "Missing tool name in parameters", params)
 
-    # Layer-1 exception: run ownership is captured below from the raw context,
-    # before admin-bypass normalization is applied.
-    auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-    run_owner_email = auth_user_email
-    run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
-    if auth_is_admin and auth_token_teams is None:
-        auth_user_email = None
-    elif auth_token_teams is None:
-        auth_token_teams = []
+    # Layer-1 exception: run ownership records the raw caller and token scope.
+    run_owner_email, run_owner_scope, _ = get_rpc_filter_context(request, user)
+    run_owner_team_ids = [] if run_owner_scope is None else list(run_owner_scope)
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
     oauth_user_email = get_user_email(user)
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -9314,7 +9320,7 @@ async def _handle_app_bridge_tools_call(db: Session, request: Request, app_sessi
 
     try:
         token_teams = app_session.token_teams
-        tool_user_email = None if token_teams is None else app_session.user_email
+        tool_user_email = app_session.user_email
         request_headers = _app_bridge_request_headers(request)
         result = await tool_service.invoke_tool(
             db=db,
@@ -9986,15 +9992,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # This allows both old format (method=tool_name) and new format (method=tools/call)
             await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
 
-            # Get authorization context (same as tools/call)
-            # Layer-1 exception: tool-execution authorization, not resource visibility.
-            # Kept in sync with _execute_rpc_tools_call.
-            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-            if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
-                # auth_token_teams stays None (unrestricted)
-            elif auth_token_teams is None:
-                auth_token_teams = []  # Non-admin without teams = public-only
+            auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
             # Get user email for OAuth token selection
             oauth_user_email = get_user_email(user)

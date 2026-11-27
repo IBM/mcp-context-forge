@@ -13,9 +13,13 @@ from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import Base
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
@@ -590,7 +594,7 @@ class TestServerService:
         servers, cursor = result
         assert servers == [server_read]
         assert cursor is None
-        server_service.convert_server_to_read.assert_called_once_with(mock_server, include_metrics=False)
+        server_service.convert_server_to_read.assert_called_once_with(mock_server, include_metrics=False, db=test_db, user_email=None, token_teams=None)
 
     @pytest.mark.asyncio
     async def test_list_servers_for_user_includes_team_name(self, server_service, test_db):
@@ -623,7 +627,7 @@ class TestServerService:
         # Use a mock that captures the server's team value
         captured_servers = []
 
-        def capture_server(server, include_metrics=False):
+        def capture_server(server, **kwargs):
             captured_servers.append({"team": server.team, "team_id": server.team_id})
             return "converted_server"
 
@@ -2894,7 +2898,7 @@ class TestListServersTokenAccess:
 
         assert result == ["converted_server_with_metrics"]
         # Verify convert_server_to_read was called with include_metrics=True
-        mock_convert.assert_called_once_with(mock_server, include_metrics=True)
+        mock_convert.assert_called_once_with(mock_server, include_metrics=True, db=test_db, user_email=None, token_teams=None)
 
     @pytest.mark.asyncio
     async def test_team_scoped_token(self, server_service, test_db):
@@ -3357,7 +3361,9 @@ class TestServerServiceCoverageMissingBranches:
 
         class CachedServerRead:
             def __init__(self):
+                self.id = "server-1"
                 self.masked_called = False
+                self.associated_a2a_agents = ["stale-agent"]
 
             def masked(self):
                 self.masked_called = True
@@ -3373,7 +3379,44 @@ class TestServerServiceCoverageMissingBranches:
 
         assert servers == [cached_server_read]
         assert servers[0].masked_called is True
+        assert servers[0].associated_a2a_agents == []
         assert next_cursor == "n"
+
+    @pytest.mark.asyncio
+    async def test_cached_servers_refresh_agent_visibility(self, server_service):
+        """A cache hit returns only agent IDs still public and enabled."""
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            agent = DbA2AAgent(name="agent", endpoint_url="https://agent.example.com", visibility="public")
+            server = DbServer(name="server", visibility="public", a2a_agents=[agent])
+            db.add(server)
+            db.commit()
+            read = server_service.convert_server_to_read(server, db=db, token_teams=[])
+            cache = MagicMock()
+            cache.get = AsyncMock(return_value={"servers": [read.model_dump()]})
+
+            with patch("mcpgateway.services.server_service._get_registry_cache", return_value=cache):
+                servers, _ = await server_service.list_servers(db, token_teams=[])
+                assert servers[0].associated_a2a_agents == [agent.id]
+
+                agent.visibility = "private"
+                db.commit()
+                servers, _ = await server_service.list_servers(db, token_teams=[])
+                assert servers[0].associated_a2a_agents == []
+
+                agent.visibility = "public"
+                agent.enabled = False
+                db.commit()
+                servers, _ = await server_service.list_servers(db, token_teams=[])
+                assert servers[0].associated_a2a_agents == []
+
+                server.a2a_agents.clear()
+                db.delete(agent)
+                db.commit()
+                servers, _ = await server_service.list_servers(db, token_teams=[])
+                assert servers[0].associated_a2a_agents == []
+        engine.dispose()
 
     @pytest.mark.asyncio
     async def test_list_servers_team_scoped_token_user_email_and_visibility_filter(self, server_service):

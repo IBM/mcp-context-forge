@@ -1037,12 +1037,13 @@ class TestToolService:
         tool_service.register_tool = AsyncMock(return_value=tool_read)
 
         tool_db = MagicMock()
-        test_db.get = Mock(return_value=tool_db)
+        test_db.get = Mock(side_effect=[agent, tool_db])
 
         result = await tool_service.create_tool_from_a2a_agent(
             test_db,
             agent,
             created_by="creator@example.com",
+            token_teams=[agent.team_id],
         )
 
         tool_service.register_tool.assert_awaited_once()
@@ -1050,7 +1051,7 @@ class TestToolService:
         assert kwargs["team_id"] == agent.team_id
         assert kwargs["owner_email"] == agent.owner_email
         assert kwargs["visibility"] == agent.visibility
-        test_db.get.assert_called_once_with(DbTool, tool_read.id)
+        test_db.get.assert_called_with(DbTool, tool_read.id)
         assert result == tool_db
 
     @pytest.mark.asyncio
@@ -6108,6 +6109,9 @@ class TestToolService:
         resolved = ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=None)
         agent = SimpleNamespace(
             enabled=True,
+            id="agent-1",
+            tool_id="a2a-tool",
+            visibility="public",
             name="agent-one",
             endpoint_url="http://agent.example/a2a",
             agent_type="generic",
@@ -6164,6 +6168,9 @@ class TestToolService:
         oauth_config = {"grant_type": "client_credentials"}
         agent = SimpleNamespace(
             enabled=True,
+            id="agent-1",
+            tool_id="a2a-tool",
+            visibility="public",
             name="agent-one",
             endpoint_url="http://agent.example/a2a",
             agent_type="generic",
@@ -6213,6 +6220,9 @@ class TestToolService:
         resolved = ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=None)
         agent = SimpleNamespace(
             enabled=True,
+            id="agent-1",
+            tool_id="a2a-tool",
+            visibility="public",
             name="agent-one",
             endpoint_url="http://agent.example/a2a/",
             agent_type="generic",
@@ -7081,6 +7091,9 @@ class TestInvokeToolCancellationOutcome:
         resolved = ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=None)
         agent = SimpleNamespace(
             enabled=True,
+            id="agent-1",
+            tool_id="a2a-tool",
+            visibility="public",
             name="agent-one",
             endpoint_url="http://agent.example/a2a",
             agent_type="generic",
@@ -10906,6 +10919,7 @@ class TestToolServiceBulkImport:
         tool = _make_bulk_tool_create(name="owned-tool")
         existing_tool = SimpleNamespace(
             name=tool.name,
+            integration_type="REST",
             team_id="owner-team",
             url="https://old",
             headers={},

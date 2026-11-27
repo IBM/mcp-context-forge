@@ -28,8 +28,8 @@ import uuid
 from fastapi import HTTPException
 import httpx
 from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
-from sqlalchemy import and_, case, delete, desc, func, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, case, cast, delete, desc, func, or_, select, String, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -71,7 +71,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.utils.admin_check import is_user_admin
+from mcpgateway.utils.admin_check import agent_visible_to, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
@@ -638,6 +638,41 @@ def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target
         raise PublicValidationError("User membership in team not sufficient for this update.")
 
 
+def require_a2a_registration_scope(db: Session, user_email: Optional[str], token_teams: Optional[List[str]], team_id: Optional[str], visibility: str) -> None:
+    """Validate the caller's visibility on a proposed agent.
+
+    Args:
+        db: Database session for admin lookup.
+        user_email: Authenticated agent owner.
+        token_teams: Effective caller team scope.
+        team_id: Resolved agent team.
+        visibility: Proposed agent visibility.
+
+    Raises:
+        PermissionError: If the agent would fall outside the caller's scope.
+        PublicValidationError: If the visibility or team assignment is invalid.
+    """
+    if visibility not in {"public", "private", "team"}:
+        raise PublicValidationError("Invalid A2A agent visibility")
+    if visibility == "team" and not team_id:
+        raise PublicValidationError("Team visibility requires a team")
+    proposed = DbA2AAgent(visibility=visibility, team_id=team_id, owner_email=user_email)
+    denied = "The requested A2A agent is outside your access scope"
+    if (team_id and token_teams is not None and team_id not in token_teams) or not agent_visible_to(db, proposed, user_email, token_teams):
+        raise PermissionError(denied)
+    if team_id:
+        team_query = select(EmailTeam.id).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True))
+        if not (token_teams is None and is_user_admin(db, user_email)):
+            team_query = team_query.join(DbEmailTeamMember, DbEmailTeamMember.team_id == EmailTeam.id).where(DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active.is_(True))
+        try:
+            active_team_id = db.scalar(team_query)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            raise PermissionError(denied) from exc
+        if active_team_id != team_id:
+            raise PermissionError(denied)
+
+
 _SAFE_OAUTH_CONFIG_KEYS = ("grant_type", "authorization_url", "token_url", "scopes", "scope")
 
 
@@ -736,65 +771,6 @@ def _build_security_scheme(agent: DbA2AAgent) -> tuple[Optional[Dict[str, Any]],
     # repeated "list" field), verified against the installed a2a SDK's own
     # MessageToDict output — not {"list": []}.
     return {scheme_name: scheme}, [{"schemes": {scheme_name: {}}}]
-
-
-def agent_visible_to(db: Session, agent: DbA2AAgent, user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
-    """Check if a caller can see an agent based on visibility rules.
-
-    Access rules (matching tools/resources/prompts):
-    - public visibility: Always allowed
-    - token_teams is None AND user_email is None: Admin bypass — public + team agents only (private excluded per PR #4341)
-    - No user context (but not admin): Deny access to non-public agents
-    - team visibility: Allowed if agent.team_id in token_teams
-    - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
-
-    Args:
-        db: Database session for admin lookup
-        agent: The agent to check access for
-        user_email: User's email for owner matching
-        token_teams: Teams from JWT. None = admin bypass ONLY when user_email is also None; [] = public-only
-
-    Returns:
-        True if access allowed, False otherwise.
-    """
-    # Public agents are accessible by everyone
-    if agent.visibility == "public":
-        return True
-
-    # Admin bypass (PR #4341 invariant): never reveal another user's private agents.
-    # Anonymous bypass sees public + team only; a DB-resolved admin session
-    # additionally sees their own private agents. Mirrors _check_*_access in
-    # tool/prompt/resource services for consistency.
-    if token_teams is None and user_email is None:
-        return agent.visibility != "private"
-    if token_teams is None and user_email and is_user_admin(db, user_email):
-        return agent.visibility != "private" or agent.owner_email == user_email
-
-    # No user context (but not admin) = deny access to non-public agents
-    if not user_email:
-        return False
-
-    # Public-only tokens (empty teams array) can ONLY access public agents
-    is_public_only_token = token_teams is not None and len(token_teams) == 0
-    if is_public_only_token:
-        return False  # Already checked public above
-
-    # Owner can access their own private agents
-    if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
-        return True
-
-    # Team agents: check team membership
-    # token_teams=None with user_email set → admin context, allow all team agents if caller is admin
-    # ([] already handled by public-only check above)
-    if agent.visibility == "team":
-        if token_teams is None:
-            # Upstream token normalization prevents non-admins from reaching
-            # this state, but defend-in-depth: only admins get the unscoped
-            # team bypass here.
-            return is_user_admin(db, user_email)
-        return agent.team_id in token_teams
-
-    return False
 
 
 class A2AAgentService(BaseService):
@@ -1021,6 +997,7 @@ class A2AAgentService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
+        token_teams: Optional[List[str]] = None,
     ) -> A2AAgentRead:
         """Register a new A2A agent.
 
@@ -1036,6 +1013,7 @@ class A2AAgentService(BaseService):
             team_id (Optional[str]): ID of the team to assign the agent to.
             owner_email (Optional[str]): Email of the agent owner.
             visibility (Optional[str]): Visibility level ('public', 'team', 'private').
+            token_teams: Caller team scope.
 
         Returns:
             A2AAgentRead: The created agent object.
@@ -1246,21 +1224,21 @@ class A2AAgentService(BaseService):
                     tool_db = await tool_service.create_tool_from_a2a_agent(
                         db=db,
                         agent=new_agent,
+                        token_teams=token_teams,
+                        user_email=owner_email,
                         created_by=created_by,
                         created_from_ip=created_from_ip,
                         created_via=created_via,
                         created_user_agent=created_user_agent,
                     )
 
-                    # Associate the tool with the agent using the relationship
-                    # This sets both the tool_id foreign key and the tool relationship
-                    new_agent.tool = tool_db
-                    db.commit()
                     db.refresh(new_agent)
                     logger.info("Registered new A2A agent: %s (ID: %s) with tool ID: %s", new_agent.name, new_agent.id, tool_db.id)
                 except Exception as tool_error:
                     # Log the error but don't fail agent registration
                     # Agent was already committed above, so it persists even if tool creation fails
+                    db.rollback()
+                    db.refresh(new_agent)
                     logger.warning("Failed to create tool for A2A agent %s: %s", new_agent.name, tool_error)
                     structured_logger.warning(
                         f"A2A agent '{new_agent.name}' created without tool association",  # noqa: G004
@@ -1269,8 +1247,6 @@ class A2AAgentService(BaseService):
                         resource_id=str(new_agent.id),
                         custom_fields={"error": str(tool_error), "agent_name": new_agent.name},
                     )
-                    # Refresh the agent to ensure it's in a clean state after any rollback
-                    db.refresh(new_agent)
                     logger.info("Registered new A2A agent: %s (ID: %s) without tool", new_agent.name, new_agent.id)
 
                 # Log A2A agent registration for lifecycle tracking
@@ -2683,10 +2659,11 @@ class A2AAgentService(BaseService):
                 # failures propagate so the caller knows the operation was incomplete.
                 if agent.tool_id:
                     now = datetime.now(timezone.utc)
+                    expected_agent_reference = json.dumps(agent.id)
                     # A tool the validation policy refused stays disabled.
                     tool_result = db.execute(
                         update(DbTool)
-                        .where(DbTool.id == agent.tool_id)
+                        .where(DbTool.id == agent.tool_id, DbTool.integration_type == "A2A", cast(DbTool.annotations["a2a_agent_id"], String) == expected_agent_reference)
                         .where(DbTool.enabled != activate)
                         .values(enabled=case((DbTool.validation_refusal.is_(None), activate), else_=False), updated_at=now)
                     )
