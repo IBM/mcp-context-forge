@@ -11,6 +11,13 @@
 
 =======
 
+- **REST tool endpoint delegation and gateway credential inheritance** ([#7645](https://github.com/IBM/mcp-context-forge/issues/7645), [#5420](https://github.com/IBM/mcp-context-forge/issues/5420)) - A REST tool under a gateway can store a path in `endpoint`, and can set `auth_type: "inherit"` to use the credential of its gateway.
+    - ContextForge joins `endpoint` to the gateway URL on each call and keeps the gateway path as a prefix. A tool with `endpoint` stores no `url` and needs only gateway visibility.
+    - `auth_type: "inherit"` sends the gateway credential for `basic`, `bearer`, `authheaders`, and `oauth` with the `client_credentials` or `password` grant. The tool stores no credential. The caller must own the gateway, hold the team owner role for it, or be a platform admin. A public gateway does not grant its credential.
+    - Bulk registration and tool updates apply the same checks. An unknown gateway and a hidden gateway return the same error. Export skips tools that use `endpoint` or `inherit`.
+    - This is an explicit per-tool opt-in. It replaces the global `TOOL_INHERIT_FROM_GATEWAY` setting that issue #5420 proposed. SigV4 keeps its own inheritance.
+    - A new migration, `c4e8a1d7b392`, adds the nullable `tools.endpoint` column. Its downgrade disables tools that use `endpoint` or `inherit` and clears their `auth_type`. See [REST Tool Gateway Delegation](docs/docs/using/rest-tool-gateway-delegation.md).
+
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.
   Configure credentials again after restoring into an empty registry. A gateway that needs credentials stays pending.
   The CLI removes `--rekey-secret`, and the import API rejects `rekey_secret` with HTTP 400.
