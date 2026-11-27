@@ -12,11 +12,10 @@
 #     slash without re-checking the live document, since some providers do origin comparison on it.
 #   - Some entries (e.g. Atlassian) have no `resource` or empty `scopes` because the provider's
 #     discovery document doesn't publish one; leave unset rather than guessing.
-#   - The nine Microsoft-backed entries (microsoft-foundry, sentinel-data-exploration, power-bi,
-#     agent365-*) share Microsoft Entra ID's multi-tenant `organizations` endpoint, whose own
-#     metadata document literally publishes `issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"`
-#     as a template - `{tenantid}` is not a placeholder we introduced, it must be substituted with
-#     the resolved tenant ID at runtime and is not a fetchable URL as-is.
+#   - The 12 Microsoft-backed entries (microsoft-foundry, sentinel-data-exploration, power-bi,
+#     and the nine agent365-*) use Microsoft Entra ID's multi-tenant `organizations` endpoints.
+#     Their metadata publishes an issuer template containing `{tenantid}`, so these entries
+#     intentionally omit issuer rather than persisting an unresolved, non-fetchable URL.
 # A handful of entries (grafbase, waystation, invideo, rube, metro-mcp, stack-overflow, kollektiv)
 # publish no discoverable OAuth metadata at any standard path; they have no `oauth` block and fall
 # back to runtime discovery, per the issue's documented fallback behavior.
@@ -1664,7 +1663,6 @@ catalog_servers:
     repo: "https://github.com/microsoft/mcp"
     tags: ["ai", "azure", "models", "evaluation", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
       scopes: ["https://mcp.ai.azure.com/Foundry.Mcp.Tools"]
@@ -1682,7 +1680,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["security", "siem", "azure", "sentinel", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["4500ebfb-89b6-4b14-a480-7f749797bfcd/.default"]
@@ -1700,7 +1697,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["analytics", "bi", "power-bi", "fabric", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://api.fabric.microsoft.com/.default"]
@@ -1720,7 +1716,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["email", "outlook", "microsoft-365", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools/.default", "openid", "profile", "offline_access"]
@@ -1738,7 +1733,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["calendar", "outlook", "microsoft-365", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_CalendarTools/.default", "openid", "profile", "offline_access"]
@@ -1756,7 +1750,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["teams", "chat", "microsoft-365", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_TeamsTools/.default", "openid", "profile", "offline_access"]
@@ -1774,7 +1767,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["sharepoint", "onedrive", "documents", "microsoft-365", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_ODSPRemoteServer/.default", "openid", "profile", "offline_access"]
@@ -1792,7 +1784,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["sharepoint", "lists", "microsoft-365", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_SharepointListsTools/.default", "openid", "profile", "offline_access"]
@@ -1810,7 +1801,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["word", "documents", "microsoft-365", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_WordTools/.default", "openid", "profile", "offline_access"]
@@ -1828,7 +1818,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["identity", "users", "microsoft-365", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_UserProfile/.default", "openid", "profile", "offline_access"]
@@ -1846,7 +1835,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["admin", "management", "microsoft-365", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_M365AdminCenter/.default", "openid", "profile", "offline_access"]
@@ -1864,7 +1852,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["search", "copilot", "microsoft-365", "microsoft"]
     oauth:
-      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
       authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
       token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
       scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_M365Copilot/.default", "openid", "profile", "offline_access"]

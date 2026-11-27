@@ -428,8 +428,8 @@ class CatalogService:
 
         Args:
             oauth_credentials: Caller-supplied OAuth credential overrides (issuer, scopes, and
-                optionally client_id/client_secret/token_url/authorization_url/redirect_uri/
-                audience/resource), or None.
+                optionally client_id/client_secret/token_url/authorization_url/
+                registration_endpoint/redirect_uri/audience/resource), or None.
 
         Returns:
             A raw oauth_config dict with authorization_code/store_tokens/auto_refresh defaults
@@ -458,7 +458,7 @@ class CatalogService:
         # manually-created gateway can (#5967 follow-up). username/password are omitted:
         # grant_type is hardcoded to authorization_code above, so those password-grant-only
         # fields would never be read.
-        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"):
+        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "registration_endpoint", "redirect_uri", "audience"):
             value = oauth_credentials.get(key)
             if value is None or value == "":
                 continue
