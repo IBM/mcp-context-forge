@@ -159,8 +159,8 @@ def test_pool_failure_fails_closed(monkeypatch):
 
     shutdown_jq_pool()
     monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: True)
-    monkeypatch.setattr(jq_runner._SANDBOX, "_build", lambda: (_ for _ in ()).throw(OSError("no fork for you")))  # pylint: disable=protected-access
-    with pytest.raises(JqFilterError):
+    monkeypatch.setattr(jq_runner._SANDBOX, "_build", lambda *_: (_ for _ in ()).throw(OSError("no fork for you")))  # pylint: disable=protected-access
+    with pytest.raises(JqFilterError, match="no fork for you"):
         run_jq_filter(".a", {"a": 1})
 
 

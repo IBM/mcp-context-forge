@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **CEL sandbox rebuild no longer races the per-call timeout.** After a runaway expression gets its worker killed, the replacement pool now starts and warms its workers before taking the next call, as the pool already did at startup. The first call after a kill no longer spends its own budget on process creation, which made the recovery test flaky on loaded CI runners. The warm-up runs outside the pool's state lock, so a slow rebuild never delays shutdown or a concurrent timeout. Killing a worker no longer lets the executor fork a replacement mid-shutdown, which could leave an orphaned worker that wedged interpreter exit.
+
 =======
 
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.

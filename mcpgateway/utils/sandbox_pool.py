@@ -109,7 +109,11 @@ class SandboxPool:
         self._start_method = start_method
         self._pool: Optional[ProcessPoolExecutor] = None
         self._pool_pid: Optional[int] = None
+        # _lock guards the published pool pointer and is held only briefly. _build_lock
+        # serialises rebuilds, which can take seconds, so a slow warm-up never blocks
+        # _discard() or shutdown() waiting on _lock.
         self._lock = threading.Lock()
+        self._build_lock = threading.Lock()
 
     def is_available(self) -> bool:
         """Report whether this platform supports the configured start method.
@@ -141,32 +145,24 @@ class SandboxPool:
         """
         if not self.is_available():
             raise SandboxUnavailable(f"{self._name}: start method {self._start_method!r} is unavailable")
-        with self._lock:
-            if self._pool is not None and self._pool_pid == os.getpid():
+        with self._build_lock:
+            if self._current_owned() is not None:
                 return
             workers = self._workers_fn()
-            pool = self._build(workers)
-            try:
-                # Force creation of every worker now, while the process has the fewest
-                # threads, rather than mid-request on the first hostile input.  One future
-                # per worker ensures each process has been spawned and has imported its
-                # modules before start() returns; a single future only warms one of the
-                # N workers and leaves the rest to spawn lazily under a tight per-call
-                # timeout, which fails intermittently under heavy parallel load.
-                warmup_timeout = max(_WARMUP_MIN_SECONDS, self._timeout_fn())
-                futures = [pool.submit(_warmup) for _ in range(workers)]
-                for fut in futures:
-                    fut.result(timeout=warmup_timeout)
-            except Exception:
-                pool.shutdown(wait=False, cancel_futures=True)
-                raise
-            self._pool = pool
-            self._pool_pid = os.getpid()
+            pool = self._build_warm(workers)
+            with self._lock:
+                self._pool = pool
+                self._pool_pid = os.getpid()
             logger.info("%s sandbox started with %s worker(s)", self._name, workers)
 
     def shutdown(self) -> None:
-        """Kill this pool's workers and clear its state."""
-        self._discard(None)
+        """Kill this pool's workers and clear its state.
+
+        Waits for a rebuild in flight to publish its pool, then kills that too. Without
+        the wait a rebuild that finishes after shutdown would leave live workers behind.
+        """
+        with self._build_lock:
+            self._discard(None)
 
     def submit(self, fn: Callable[..., Any], *args: Any) -> Any:
         """Run one call in a worker under the wall-clock limit.
@@ -234,26 +230,79 @@ class SandboxPool:
         setattr(pool, _GATE_ATTR, threading.Semaphore(workers))
         return pool
 
+    def _build_warm(self, workers: int) -> ProcessPoolExecutor:
+        """Create a pool and wait until every worker process is up.
+
+        Forking a worker and running its initializer takes real time on a loaded host.
+        Doing it here, under the warm-up budget, keeps the per-call timeout for the
+        caller's work alone: the first call on a fresh pool, whether at startup or after
+        a kill, must not spend its budget on process creation. One future per worker,
+        because a single one only proves one of the N processes is up.
+
+        Args:
+            workers: Worker count.
+
+        Returns:
+            A new executor with all of its workers running.
+
+        Raises:
+            Exception: Whatever the warm-up raises; the half-built pool is shut down first.
+        """
+        pool = self._build(workers)
+        try:
+            warmup_timeout = max(_WARMUP_MIN_SECONDS, self._timeout_fn())
+            futures = [pool.submit(_warmup) for _ in range(workers)]
+            for fut in futures:
+                fut.result(timeout=warmup_timeout)
+        except Exception:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        return pool
+
     def _ensure(self) -> ProcessPoolExecutor:
-        """Return a live pool for this process, building one if needed.
+        """Return a live pool for this process, building and warming one if needed.
+
+        A rebuild blocks the caller until every worker is up or the warm-up budget,
+        ``max(_WARMUP_MIN_SECONDS, timeout)``, expires. Callers that arrive during a
+        rebuild wait for it and share the one new pool, so a burst after a kill forks
+        a single set of workers. The warm-up runs outside ``_lock``, so ``_discard()``
+        and ``shutdown()`` are never held up by it.
 
         Returns:
             The executor owned by this process.
 
         Raises:
-            SandboxError: If the pool cannot be created.
+            SandboxError: If the pool cannot be created or its workers do not come up.
+        """
+        pool = self._current_owned()
+        if pool is not None:
+            return pool
+        with self._build_lock:
+            pool = self._current_owned()
+            if pool is not None:
+                return pool
+            try:
+                pool = self._build_warm(self._workers_fn())
+            except Exception as exc:  # pylint: disable=broad-except
+                with self._lock:
+                    self._pool = None
+                    self._pool_pid = None
+                raise SandboxError(f"{self._name} sandbox unavailable: {exc}") from exc
+            with self._lock:
+                self._pool = pool
+                self._pool_pid = os.getpid()
+            return pool
+
+    def _current_owned(self) -> Optional[ProcessPoolExecutor]:
+        """Return the published pool when this process created it.
+
+        Returns:
+            The executor, or None when there is none or it was inherited across a fork.
         """
         with self._lock:
             if self._pool is not None and self._pool_pid == os.getpid():
                 return self._pool
-            try:
-                self._pool = self._build()
-                self._pool_pid = os.getpid()
-            except Exception as exc:  # pylint: disable=broad-except
-                self._pool = None
-                self._pool_pid = None
-                raise SandboxError(f"{self._name} sandbox unavailable: {exc}") from exc
-            return self._pool
+            return None
 
     def _owns(self, pool: ProcessPoolExecutor) -> bool:
         """Report whether this process created the pool's workers.
@@ -286,7 +335,16 @@ class SandboxPool:
                 # terminate_workers method is Python 3.14. The private mapping is the only
                 # route; a test pins it. shutdown() sets _processes to None to release file
                 # descriptors, so an already-shut-down pool must not blow up here.
-                for process in list((getattr(target, "_processes", None) or {}).values()):
+                processes = list((getattr(target, "_processes", None) or {}).values())
+                # The executor's manager thread treats a worker death as a worker to replace
+                # and forks a new one, unless it finds an idle permit first. A replacement
+                # forked while we are mid-shutdown can inherit a held queue lock, never read
+                # its stop sentinel, and wedge interpreter exit as an orphan. One permit per
+                # worker we are about to kill turns every replacement attempt into a no-op.
+                permits = getattr(target, "_idle_worker_semaphore", None)
+                for process in processes:
+                    if permits is not None:
+                        permits.release()
                     try:
                         process.kill()
                     except Exception:  # pylint: disable=broad-except
