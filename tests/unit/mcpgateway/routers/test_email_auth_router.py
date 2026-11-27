@@ -1620,6 +1620,7 @@ async def test_get_current_user_profile_reports_a2a_feature_flag(monkeypatch, a2
     from mcpgateway.routers.email_auth import get_current_user_profile
 
     monkeypatch.setattr(email_auth.settings, "mcpgateway_a2a_enabled", a2a_enabled)
+    monkeypatch.setattr(email_auth.settings, "insecure_allow_queryparam_auth", False)
     user = MagicMock(spec=EmailUser)
     user.email = "user@example.com"
     user.full_name = "User"
@@ -1632,7 +1633,32 @@ async def test_get_current_user_profile_reports_a2a_feature_flag(monkeypatch, a2
     user.is_email_verified = MagicMock(return_value=True)
 
     result = await get_current_user_profile(current_user=user)
-    assert result.features.model_dump() == {"a2a": a2a_enabled}
+    assert result.features.model_dump() == {"a2a": a2a_enabled, "query_param_auth": False}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query_param_auth", [True, False])
+async def test_get_current_user_profile_reports_query_param_auth_feature_flag(monkeypatch, query_param_auth):
+    """/me exposes the query parameter auth flag to any authenticated user."""
+    # First-Party
+    from mcpgateway.routers import email_auth
+    from mcpgateway.routers.email_auth import get_current_user_profile
+
+    monkeypatch.setattr(email_auth.settings, "mcpgateway_a2a_enabled", True)
+    monkeypatch.setattr(email_auth.settings, "insecure_allow_queryparam_auth", query_param_auth)
+    user = MagicMock(spec=EmailUser)
+    user.email = "user@example.com"
+    user.full_name = "User"
+    user.is_admin = False
+    user.is_active = True
+    user.auth_provider = "local"
+    user.created_at = datetime.now(timezone.utc)
+    user.last_login = None
+    user.password_change_required = False
+    user.is_email_verified = MagicMock(return_value=True)
+
+    result = await get_current_user_profile(current_user=user)
+    assert result.features.model_dump() == {"a2a": True, "query_param_auth": query_param_auth}
 
 
 class TestGetAuthEvents:
@@ -1910,7 +1936,6 @@ class TestAdminDeleteUserEdgeCases:
 
             assert exc.value.status_code == 500
 
-
     @pytest.mark.asyncio
     async def test_delete_user_orphan_value_error_returns_409(self):
         """ValueError from orphan-owner guard → 409 with the actionable message."""
@@ -1954,6 +1979,7 @@ class TestAdminDeleteUserEdgeCases:
                 )
 
         assert exc.value.status_code == 404
+
 
 @pytest.mark.asyncio
 async def test_forgot_password_success_response():
