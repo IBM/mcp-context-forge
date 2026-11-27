@@ -11,6 +11,7 @@ used for handling query parameter authentication with upstream MCP servers.
 
 import pytest
 
+from mcpgateway.utils.sigv4_names import SIGV4_WIRE_NAMES
 from mcpgateway.utils.url_auth import (
     STATIC_SENSITIVE_PARAMS,
     apply_query_param_auth,
@@ -259,9 +260,15 @@ class TestAwsSigV4PresignedParams:
 
     PRESIGNED = "https://bucket.s3.amazonaws.com/key?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAEXAMPLE%2F20260101%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260101T000000Z&X-Amz-Expires=300&X-Amz-Security-Token=SESSIONTOKENVALUE&X-Amz-SignedHeaders=host&X-Amz-Signature=deadbeefcafe"  # pragma: allowlist secret
 
-    @pytest.mark.parametrize("name", ["x-amz-signature", "x-amz-credential", "x-amz-security-token"])
+    @pytest.mark.parametrize("name", SIGV4_WIRE_NAMES)
     def test_names_are_in_the_static_set(self, name):
         assert name in STATIC_SENSITIVE_PARAMS
+
+    @pytest.mark.parametrize("name", SIGV4_WIRE_NAMES)
+    def test_sanitize_url_redacts_every_wire_name(self, name):
+        result = sanitize_url_for_logging(f"https://api.example.com/x?{name}=secretvalue")
+        assert "secretvalue" not in result
+        assert f"{name}=REDACTED" in result
 
     @pytest.mark.parametrize("name", ["X-Amz-Signature", "x-amz-signature", "X-AMZ-SIGNATURE", "x-Amz-Credential", "X-AMZ-CREDENTIAL", "X-Amz-Security-Token", "x-amz-security-token"])
     def test_url_redacts_each_name_in_any_case(self, name):

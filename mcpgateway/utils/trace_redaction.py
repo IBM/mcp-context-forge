@@ -13,7 +13,7 @@ from typing import Any
 
 # First-Party
 from mcpgateway.config import get_settings
-from mcpgateway.utils.sigv4 import SIGV4_REDACT_NAMES
+from mcpgateway.utils.sigv4_names import SIGV4_REDACT_NAMES
 from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging
 
 _DEFAULT_REDACT_FIELDS = ",".join(

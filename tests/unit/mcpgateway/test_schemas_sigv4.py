@@ -14,7 +14,7 @@ import pytest
 from mcpgateway.config import settings
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.encryption_service import protect_sigv4_config_sync
-from mcpgateway.utils.sigv4 import decrypt_sigv4_secret, is_encrypted_sigv4_secret
+from mcpgateway.utils.sigv4 import decrypt_sigv4_secret, is_encrypted_sigv4_secret, SIGV4_SENSITIVE_KEYS
 
 SECRET = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
 CONFIG = {"access_key_id": "AKIAIOSFODNN7EXAMPLE", "secret_access_key": SECRET, "region": "us-east-1", "service": "execute-api"}  # pragma: allowlist secret
@@ -43,9 +43,10 @@ class TestGatewayCreate:
         with pytest.raises(ValidationError, match=missing):
             _create(sigv4_config=config)
 
-    def test_rejects_masked_secret_on_create(self):
+    @pytest.mark.parametrize("key", sorted(SIGV4_SENSITIVE_KEYS))
+    def test_rejects_masked_secret_on_create(self, key):
         with pytest.raises(ValidationError, match="real secret_access_key"):
-            _create(sigv4_config={**CONFIG, "secret_access_key": settings.masked_auth_value})
+            _create(sigv4_config={**CONFIG, key: settings.masked_auth_value})
 
     def test_rejects_config_without_sigv4_auth(self):
         with pytest.raises(ValidationError, match="only valid when auth_type is 'sigv4'"):

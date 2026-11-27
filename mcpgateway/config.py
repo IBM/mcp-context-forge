@@ -78,7 +78,7 @@ from mcpgateway.config_sections import (
     TransportSettings,
 )
 from mcpgateway.utils.origin import is_exact_https_origin
-from mcpgateway.utils.sigv4 import SIGV4_REDACT_NAMES
+from mcpgateway.utils.sigv4_names import SIGV4_REDACT_NAMES
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -3374,9 +3374,26 @@ class Settings(  # pylint: disable=too-many-ancestors
     )
     otel_copy_resource_attrs_to_spans: bool = Field(default=False, description="Copy selected OTEL resource attributes onto spans")
     otel_redact_fields: str = Field(
-        default=(
-            "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_id,sessionid,"
-            + ",".join(SIGV4_REDACT_NAMES)
+        default=",".join(
+            [
+                "password",
+                "secret",
+                "token",
+                "api_key",
+                "authorization",
+                "credential",
+                "auth_value",
+                "access_token",
+                "refresh_token",
+                "auth_token",
+                "client_secret",
+                "cookie",
+                "set-cookie",
+                "private_key",
+                "session_id",
+                "sessionid",
+                *SIGV4_REDACT_NAMES,
+            ]
         ),
         description="Comma-separated trace payload field names to redact before export",
     )
