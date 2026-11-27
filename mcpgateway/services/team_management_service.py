@@ -38,6 +38,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.schemas import MAX_TEAM_MEMBER_SEEDS, TeamMemberSeed
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.redis_client import get_redis_client
@@ -90,6 +91,70 @@ def get_user_team_count(db: Session, user_email: str) -> int:
         int: Number of active team memberships
     """
     return db.query(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).count()
+
+
+def validate_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str], token_teams: Optional[List[str]] = None) -> None:
+    """Authorize a team assignment for create and update operations.
+
+    Admin bypass applies only through ``is_admin_bypass_granted``: a
+    platform admin with an unscoped token (``token_teams is None``). A
+    narrowed token never bypasses. Other callers must be active members of
+    the target team with the ``owner`` role. System and internal paths that
+    omit ``user_email`` skip the membership check.
+
+    Args:
+        db: Database session used for team and membership lookups.
+        user_email: Requesting user email. When omitted, membership checks are
+            skipped for system/internal paths.
+        target_team_id: Team identifier to validate.
+        token_teams: Token team scope from ``normalize_token_teams()`` /
+            ``resolve_session_teams()``. ``None`` means unscoped; ``[]`` means
+            public-only; a non-empty list means team-scoped. Narrowed values
+            (``[]`` or a list) never grant admin bypass.
+
+    Raises:
+        PublicValidationError: If ``target_team_id`` is missing or the team does not exist.
+        PermissionError: If ``user_email`` is neither an unscoped platform
+            admin nor an active owner of the target team.
+
+    Examples:
+        >>> from unittest.mock import MagicMock
+        >>> db = MagicMock()
+        >>> db.query.return_value.filter.return_value.first.return_value = object()
+        >>> validate_team_assignment(db, None, "team-1") is None
+        True
+        >>> validate_team_assignment(db, "owner@example.com", None)
+        Traceback (most recent call last):
+        ...
+        mcpgateway.utils.error_formatter.PublicValidationError: Cannot set visibility to 'team' without a team_id
+    """
+    if not target_team_id:
+        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
+
+    team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
+    if not team:
+        raise PublicValidationError(f"Team {target_team_id} not found")
+
+    # Preserve existing behavior for system/internal updates where
+    # user context may be intentionally omitted.
+    if not user_email:
+        return
+
+    if is_admin_bypass_granted(db, user_email, token_teams):
+        return
+
+    membership = (
+        db.query(EmailTeamMember)
+        .filter(
+            EmailTeamMember.team_id == target_team_id,
+            EmailTeamMember.user_email == user_email,
+            EmailTeamMember.is_active,
+            EmailTeamMember.role == "owner",
+        )
+        .first()
+    )
+    if not membership:
+        raise PermissionError("User membership in team not sufficient for this update.")
 
 
 class TeamManagementError(Exception):
@@ -1562,32 +1627,41 @@ class TeamManagementService:
             logger.error("Failed to get teams for user %s: %s", SecurityValidator.sanitize_log_message(user_email), e)
             return []
 
-    async def verify_team_for_user(self, user_email, team_id=None):
+    async def verify_team_for_user(self, user_email, team_id=None, token_teams=None):
         """
-        Retrieve a team ID for a user based on their membership and optionally a specific team ID.
+        Resolve the team ID to use for a user's request.
 
-        This function attempts to fetch all teams associated with the given user email.
-        If no `team_id` is provided, it returns the ID of the user's personal team (if any).
-        If a `team_id` is provided, it checks whether the user is a member of that team.
-        If the user is not a member of the specified team, it returns a JSONResponse with an error message.
+        When `team_id` is None, returns the ID of the user's personal team (if any).
+        When `team_id` is provided, returns `team_id` only when the user is a member
+        of that team, or ``[]`` otherwise. Admin bypass applies only through
+        ``is_admin_bypass_granted`` and validates that the team exists.
 
         Args:
             user_email (str): The email of the user whose teams are being queried.
             team_id (str or None, optional): Specific team ID to check for membership. Defaults to None.
+            token_teams (list or None, optional): Token team scope. ``None`` means
+                unscoped, ``[]`` means public-only, a non-empty list means
+                team-scoped. Narrowed values never grant admin bypass.
 
         Returns:
-            str or JSONResponse or None:
+            str or list or None:
                 - If `team_id` is None, returns the ID of the user's personal team or None if not found.
                 - If `team_id` is provided and the user is a member of that team, returns `team_id`.
-                - If `team_id` is provided but the user is not a member of that team, returns a JSONResponse with error.
-                - Returns None if an error occurs and no `team_id` was initially provided.
+                - If `team_id` is provided but the user is not a member of that team, returns `[]`.
+                - Returns `[]` if the membership lookup fails.
 
         Raises:
-            None explicitly, but any exceptions during the process are caught and logged.
+            PublicValidationError: If the caller has admin bypass and `team_id`
+                does not identify an existing team.
 
         Examples:
             Verifies user team if team_id provided otherwise finds its personal id.
         """
+        if team_id and is_admin_bypass_granted(self.db, user_email, token_teams):
+            if not self.db.get(EmailTeam, team_id):
+                raise PublicValidationError(f"Team {team_id} not found")
+            return team_id
+
         try:
             # Get all teams the user belongs to in a single query
             try:
@@ -1614,6 +1688,68 @@ class TeamManagementService:
             if not team_id:
                 team_id = None
 
+        return team_id
+
+    async def verify_team_for_user_strict(self, user_email, team_id=None, token_teams=None):
+        """
+        Resolve the team ID to use for a user's request, raising on failure.
+
+        Strict variant of :meth:`verify_team_for_user` for handlers that map
+        errors to HTTP responses (server add/edit). When `team_id` is None,
+        returns the ID of the user's personal team (if any). When `team_id` is
+        provided, returns `team_id` only when the user may act for that team:
+        callers with admin bypass and active members pass it. Membership and
+        lookup failures raise instead of returning a value the caller cannot use.
+
+        Args:
+            user_email (str): The email of the user whose teams are being queried.
+            team_id (str or None, optional): Specific team ID to check for membership. Defaults to None.
+            token_teams (list or None, optional): Token team scope. ``None`` means
+                unscoped, ``[]`` means public-only, a non-empty list means
+                team-scoped. Narrowed values never grant admin bypass.
+
+        Returns:
+            str or None:
+                - If `team_id` is None, returns the ID of the user's personal team or None if not found.
+                - If `team_id` is provided and the user may act for that team, returns `team_id`.
+
+        Raises:
+            PermissionError: If `team_id` is provided and the user is neither an
+                unscoped admin bypass caller nor an active member of that team.
+            PublicValidationError: If the membership lookup fails while `team_id`
+                is provided, or the caller has admin bypass and `team_id` does
+                not identify an existing team.
+
+        Examples:
+            Verifies user team if team_id provided otherwise finds its personal id.
+        """
+        if team_id and is_admin_bypass_granted(self.db, user_email, token_teams):
+            if not self.db.get(EmailTeam, team_id):
+                raise PublicValidationError(f"Team {team_id} not found")
+            return team_id
+
+        try:
+            # Get all teams the user belongs to in a single query
+            query = self.db.query(EmailTeam).join(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
+            user_teams = query.all()
+            self.db.commit()  # Release transaction to avoid idle-in-transaction
+
+            if not team_id:
+                # If no team_id is provided, try to get the personal team
+                personal_team = next((t for t in user_teams if getattr(t, "is_personal", False)), None)
+                return personal_team.id if personal_team else None
+
+            # Check if the provided team_id exists among the user's teams
+            is_team_present = any(team.id == team_id for team in user_teams)
+        except Exception as e:
+            self.db.rollback()
+            logger.error("Failed to get teams for user %s: %s", SecurityValidator.sanitize_log_message(user_email), e)
+            if team_id:
+                raise PublicValidationError("Unable to verify team membership for the requested team.") from e
+            return None
+
+        if not is_team_present:
+            raise PermissionError("User membership in team not sufficient for this update.")
         return team_id
 
     @staticmethod

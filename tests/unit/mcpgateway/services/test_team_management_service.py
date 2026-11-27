@@ -18,12 +18,15 @@ from uuid import uuid4
 # Third-Party
 import orjson
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
-from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, get_effective_max_members
+from mcpgateway.db import Base, EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, get_effective_max_members, validate_team_assignment
+from mcpgateway.utils.error_formatter import PublicValidationError
 
 
 class TestGetEffectiveMaxMembers:
@@ -106,7 +109,10 @@ class TestTeamManagementService:
     @pytest.fixture
     def mock_db(self):
         """Create mock database session."""
-        return MagicMock(spec=Session)
+        db = MagicMock(spec=Session)
+        # The admin-check memoization treats ``db.info`` as a plain dict.
+        db.info = {}
+        return db
 
     @pytest.fixture
     def service(self, mock_db):
@@ -2291,7 +2297,7 @@ class TestTeamManagementService:
         result = await service.update_member_role("team-1", "user@test.com", "member")
         assert result is False
 
-    # ---- verify_team_for_user ---- #
+    # ---- verify_team_for_user (lenient: values in, values out) ---- #
     @pytest.mark.asyncio
     async def test_verify_team_for_user_no_team_id_personal(self, service, mock_db):
         """verify_team_for_user returns personal team ID when no team_id provided."""
@@ -2316,7 +2322,7 @@ class TestTeamManagementService:
 
     @pytest.mark.asyncio
     async def test_verify_team_for_user_team_id_not_member(self, service, mock_db):
-        """verify_team_for_user returns empty list when user is not member of team."""
+        """verify_team_for_user returns [] when user is not a member of team."""
         team = MagicMock()
         team.id = "team-other"
         team.is_personal = False
@@ -2332,6 +2338,121 @@ class TestTeamManagementService:
         mock_db.rollback = MagicMock()
         result = await service.verify_team_for_user("user@test.com")
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_admin_bypass_skips_membership_lookup(self, service, mock_db, monkeypatch):
+        """verify_team_for_user returns team_id for an unscoped admin without a membership lookup."""
+        monkeypatch.setattr("mcpgateway.services.team_management_service.is_admin_bypass_granted", lambda db, email, token_teams: True)
+        mock_db.query.side_effect = AssertionError("membership lookup must not run for admin bypass callers")
+        mock_db.get.return_value = MagicMock()  # existing team
+        result = await service.verify_team_for_user("admin@test.com", team_id="team-1", token_teams=None)
+        assert result == "team-1"
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_admin_bypass_unknown_team_raises(self, service, mock_db, monkeypatch):
+        """verify_team_for_user rejects an admin-bypass team_id that matches no team."""
+        monkeypatch.setattr("mcpgateway.services.team_management_service.is_admin_bypass_granted", lambda db, email, token_teams: True)
+        mock_db.get.return_value = None
+        with pytest.raises(PublicValidationError, match="Team team-1 not found"):
+            await service.verify_team_for_user("admin@test.com", team_id="team-1", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_narrowed_token_forwards_scope(self, service, mock_db, monkeypatch):
+        """verify_team_for_user forwards token_teams to the bypass gate and denies on non-membership."""
+        seen = []
+
+        def fake_bypass(db, email, token_teams):
+            seen.append(token_teams)
+            return False
+
+        monkeypatch.setattr("mcpgateway.services.team_management_service.is_admin_bypass_granted", fake_bypass)
+        team = MagicMock()
+        team.id = "team-other"
+        team.is_personal = False
+        mock_db.query.return_value.join.return_value.filter.return_value.all.return_value = [team]
+        mock_db.commit = MagicMock()
+        result = await service.verify_team_for_user("admin@test.com", team_id="team-1", token_teams=["team-other"])
+        assert result == []
+        assert seen == [["team-other"]]
+
+    # ---- verify_team_for_user_strict (raising variant for server handlers) ---- #
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_strict_no_team_id_personal(self, service, mock_db):
+        """verify_team_for_user_strict returns personal team ID when no team_id provided."""
+        personal_team = MagicMock()
+        personal_team.id = "personal-1"
+        personal_team.is_personal = True
+        mock_db.query.return_value.join.return_value.filter.return_value.all.return_value = [personal_team]
+        mock_db.commit = MagicMock()
+        result = await service.verify_team_for_user_strict("user@test.com")
+        assert result == "personal-1"
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_strict_team_id_valid(self, service, mock_db):
+        """verify_team_for_user_strict returns team_id when user is a member."""
+        team = MagicMock()
+        team.id = "team-1"
+        team.is_personal = False
+        mock_db.query.return_value.join.return_value.filter.return_value.all.return_value = [team]
+        mock_db.commit = MagicMock()
+        result = await service.verify_team_for_user_strict("user@test.com", team_id="team-1")
+        assert result == "team-1"
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_strict_team_id_not_member(self, service, mock_db):
+        """verify_team_for_user_strict raises PermissionError when user is not member of team."""
+        team = MagicMock()
+        team.id = "team-other"
+        team.is_personal = False
+        mock_db.query.return_value.join.return_value.filter.return_value.all.return_value = [team]
+        mock_db.commit = MagicMock()
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            await service.verify_team_for_user_strict("user@test.com", team_id="team-1")
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_strict_db_error(self, service, mock_db):
+        """verify_team_for_user_strict degrades to None on DB error when no team_id is given."""
+        mock_db.query.side_effect = Exception("db error")
+        mock_db.rollback = MagicMock()
+        result = await service.verify_team_for_user_strict("user@test.com")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_strict_db_error_with_team_id_raises_public_validation(self, service, mock_db):
+        """verify_team_for_user_strict raises PublicValidationError on lookup failure when team_id is given."""
+        mock_db.query.side_effect = Exception("db error")
+        mock_db.rollback = MagicMock()
+        with pytest.raises(PublicValidationError, match="Unable to verify team membership for the requested team"):
+            await service.verify_team_for_user_strict("user@test.com", team_id="team-1")
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_strict_admin_bypass_skips_membership_lookup(self, service, mock_db, monkeypatch):
+        """verify_team_for_user_strict returns team_id for an unscoped admin without a membership lookup."""
+        monkeypatch.setattr("mcpgateway.services.team_management_service.is_admin_bypass_granted", lambda db, email, token_teams: True)
+        mock_db.query.side_effect = AssertionError("membership lookup must not run for admin bypass callers")
+        mock_db.get.return_value = MagicMock()  # existing team
+        result = await service.verify_team_for_user_strict("admin@test.com", team_id="team-1", token_teams=None)
+        assert result == "team-1"
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_strict_admin_bypass_unknown_team_raises(self, service, mock_db, monkeypatch):
+        """verify_team_for_user_strict rejects an admin-bypass team_id that matches no team."""
+        monkeypatch.setattr("mcpgateway.services.team_management_service.is_admin_bypass_granted", lambda db, email, token_teams: True)
+        mock_db.get.return_value = None
+        with pytest.raises(PublicValidationError, match="Team team-1 not found"):
+            await service.verify_team_for_user_strict("admin@test.com", team_id="team-1", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_verify_team_for_user_strict_narrowed_token_denied(self, service, mock_db, monkeypatch):
+        """An admin with a narrowed token gets no bypass and fails the membership check."""
+        monkeypatch.setattr("mcpgateway.services.team_management_service.is_admin_bypass_granted", lambda db, email, token_teams: False)
+        team = MagicMock()
+        team.id = "team-other"
+        team.is_personal = False
+        mock_db.query.return_value.join.return_value.filter.return_value.all.return_value = [team]
+        mock_db.commit = MagicMock()
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            await service.verify_team_for_user_strict("admin@test.com", team_id="team-1", token_teams=["team-other"])
 
     # ---- get_user_teams cache paths ---- #
     @pytest.mark.asyncio
@@ -3019,6 +3140,94 @@ class TestTransientTeamFromDict:
         assert rebuilt.is_active is True
         assert rebuilt.created_at is not None
         assert rebuilt.updated_at is not None
+
+
+_GATE_TEAM_ID = "team-gate-1"
+
+
+@pytest.fixture(scope="module")
+def gate_db():
+    """Real SQLite session with one team and one user per authorization scenario."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+
+    db.add(EmailUser(email="creator@example.test", password_hash="not-a-real-hash", full_name="Creator", is_admin=False, is_active=True))
+    db.flush()
+    db.add(EmailTeam(id=_GATE_TEAM_ID, name="Gate Team", slug="gate-team", created_by="creator@example.test", is_personal=False))
+    for email, role, is_active in (
+        ("owner@example.test", "owner", True),
+        ("member@example.test", "member", True),
+        ("inactive-owner@example.test", "owner", False),
+    ):
+        db.add(EmailUser(email=email, password_hash="not-a-real-hash", full_name=email, is_admin=False, is_active=True))
+        db.flush()
+        db.add(EmailTeamMember(team_id=_GATE_TEAM_ID, user_email=email, role=role, is_active=is_active))
+    db.add(EmailUser(email="admin@example.test", password_hash="not-a-real-hash", full_name="Admin", is_admin=True, is_active=True))
+    db.add(EmailUser(email="outsider@example.test", password_hash="not-a-real-hash", full_name="Outsider", is_admin=False, is_active=True))
+    db.commit()
+    yield db
+    db.close()
+
+
+class TestValidateTeamAssignment:
+    """Deny-path coverage for the shared team-assignment gate.
+
+    The owner-role requirement lives in the membership query itself, so these
+    tests run against a real SQLite session to pin the query semantics.
+    """
+
+    def test_active_owner_member_passes(self, gate_db):
+        """An active owner-role member may take the assignment."""
+        assert validate_team_assignment(gate_db, "owner@example.test", _GATE_TEAM_ID) is None
+
+    def test_member_without_owner_role_is_denied(self, gate_db):
+        """A member without the owner role does not satisfy the owner-role query."""
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            validate_team_assignment(gate_db, "member@example.test", _GATE_TEAM_ID)
+
+    def test_non_member_is_denied(self, gate_db):
+        """A user with no membership row is denied."""
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            validate_team_assignment(gate_db, "outsider@example.test", _GATE_TEAM_ID)
+
+    def test_inactive_owner_member_is_denied(self, gate_db):
+        """An inactive membership does not authorize the assignment."""
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            validate_team_assignment(gate_db, "inactive-owner@example.test", _GATE_TEAM_ID)
+
+    def test_platform_admin_bypasses_membership_check(self, gate_db):
+        """A platform admin may take the assignment without a membership row."""
+        assert validate_team_assignment(gate_db, "admin@example.test", _GATE_TEAM_ID) is None
+
+    def test_narrowed_admin_token_is_denied(self, gate_db):
+        """An admin with a narrowed token gets no bypass and needs owner membership."""
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            validate_team_assignment(gate_db, "admin@example.test", _GATE_TEAM_ID, ["team-outside-scope"])
+
+    def test_public_only_admin_token_is_denied(self, gate_db):
+        """An admin with a public-only token gets no bypass."""
+        with pytest.raises(PermissionError, match="membership in team not sufficient"):
+            validate_team_assignment(gate_db, "admin@example.test", _GATE_TEAM_ID, [])
+
+    def test_admin_unknown_team_raises_public_validation(self, gate_db):
+        """Admin bypass does not resurrect a nonexistent team."""
+        with pytest.raises(PublicValidationError, match="Team team-does-not-exist not found"):
+            validate_team_assignment(gate_db, "admin@example.test", "team-does-not-exist")
+
+    def test_missing_team_id_raises_public_validation(self, gate_db):
+        """A team assignment without a team_id fails validation before any lookup."""
+        with pytest.raises(PublicValidationError, match="Cannot set visibility to 'team' without a team_id"):
+            validate_team_assignment(gate_db, "owner@example.test", None)
+
+    def test_unknown_team_raises_public_validation(self, gate_db):
+        """A team_id that resolves to no team fails validation."""
+        with pytest.raises(PublicValidationError, match="Team team-ghost not found"):
+            validate_team_assignment(gate_db, "owner@example.test", "team-ghost")
+
+    def test_missing_user_email_skips_membership_check(self, gate_db):
+        """System and internal paths that omit user_email skip the membership check."""
+        assert validate_team_assignment(gate_db, None, _GATE_TEAM_ID) is None
 
 
 @pytest.fixture

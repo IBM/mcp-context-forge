@@ -31,8 +31,6 @@ from mcpgateway.common.models import DEFAULT_SERVER_INSTRUCTIONS
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Base
-from mcpgateway.db import EmailTeam as DbEmailTeam
-from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
@@ -53,7 +51,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import TeamManagementService, validate_team_assignment
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.error_formatter import PublicValidationError, unexpected_error_detail
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -145,38 +143,25 @@ def _get_tool_lookup_cache() -> Any:
     return _TOOL_LOOKUP_CACHE
 
 
-def _validate_server_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+def _validate_server_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str], token_teams: Optional[List[str]] = None) -> None:
     """Validate team assignment and ownership requirements for server updates.
+
+    Delegates to ``validate_team_assignment`` — the shared team-authorization
+    policy point (scoped admin bypass plus owner-role membership).
 
     Args:
         db: Database session used for membership checks.
         user_email: Requesting user email. When omitted, ownership checks are skipped
             for system/internal update paths.
         target_team_id: Team identifier to validate.
+        token_teams: Token team scope. ``None`` means unscoped; narrowed values
+            (``[]`` or a list) never grant admin bypass.
 
     Raises:
-        ValueError: If team ID is missing, team does not exist, or caller is not
-            an active team owner.
+        ValueError: If team ID is missing or the team does not exist.
+        PermissionError: If caller is not an unscoped platform admin or active team owner.
     """
-    if not target_team_id:
-        raise PublicValidationError("Cannot set visibility to 'team' without a team_id")
-
-    team = db.query(DbEmailTeam).filter(DbEmailTeam.id == target_team_id).first()
-    if not team:
-        raise PublicValidationError(f"Team {target_team_id} not found")
-
-    # Preserve existing behavior for system/internal updates where
-    # user context may be intentionally omitted.
-    if not user_email:
-        return
-
-    membership = (
-        db.query(DbEmailTeamMember)
-        .filter(DbEmailTeamMember.team_id == target_team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
-        .first()
-    )
-    if not membership:
-        raise PublicValidationError("User membership in team not sufficient for this update.")
+    validate_team_assignment(db, user_email, target_team_id, token_teams)
 
 
 # Initialize logging service first
@@ -690,6 +675,8 @@ class ServerService(BaseService):
             team_id (Optional[str]): Team ID to assign the server to.
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
+            token_teams (Optional[List[str]]): Token team scope. ``None`` means
+                unscoped; narrowed values (``[]`` or a list) never grant admin bypass.
             oauth_authorized: Whether the route authorizes explicit OAuth configuration.
             token_teams: Teams of the caller token. Limits which A2A agents the caller can attach.
 
@@ -698,6 +685,8 @@ class ServerService(BaseService):
 
         Raises:
             IntegrityError: If a database integrity error occurs.
+            PublicValidationError: If visibility is "team" without a resolvable team_id, or the team does not exist.
+            PermissionError: If visibility is "team" and the caller is neither an unscoped platform admin nor an active team owner.
             ServerNameConflictError: If a server name conflict occurs (public or team visibility).
             ServerError: If any associated tool, resource, or prompt does not exist, or if any other registration error occurs.
 
@@ -722,6 +711,10 @@ class ServerService(BaseService):
             >>> asyncio.run(service.register_server(db, server_in))
             'server_read'
         """
+        # The API has visibility as a separate Body param that should override schema default
+        effective_visibility = visibility or getattr(server_in, "visibility", None) or "public"
+        if effective_visibility == "team":
+            validate_team_assignment(db, owner_email or created_by, team_id, token_teams)
         try:
             logger.info("Registering server: %s", server_in.name)
             oauth_config = await protect_oauth_config_for_storage(getattr(server_in, "oauth_config", None))
@@ -734,9 +727,7 @@ class ServerService(BaseService):
                 tags=server_in.tags or [],
                 team_id=team_id,
                 owner_email=owner_email or created_by,
-                # IMPORTANT: Prefer function parameter over schema default
-                # The API has visibility as a separate Body param that should override schema default
-                visibility=visibility or getattr(server_in, "visibility", None) or "public",
+                visibility=effective_visibility,
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=oauth_config,
@@ -1413,6 +1404,8 @@ class ServerService(BaseService):
             modified_from_ip: IP address from which modification was made.
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
+            token_teams: Token team scope. ``None`` means unscoped; narrowed
+                values (``[]`` or a list) never grant admin bypass.
             oauth_authorized: Whether the route authorizes explicit OAuth configuration.
             token_teams: Teams of the caller token. Limits which A2A agents the caller can attach.
             import_platform_admin: Verified unrestricted administrator for this import update.
@@ -1422,11 +1415,11 @@ class ServerService(BaseService):
 
         Raises:
             ServerNotFoundError: If the server is not found.
-            PermissionError: If user doesn't own the server.
+            PermissionError: If user doesn't own the server or the target team.
             ServerNameConflictError: If a new name conflicts with an existing server.
             ServerError: For other update errors.
             IntegrityError: If a database integrity error occurs.
-            ValueError: If visibility or team constraints are violated.
+            PublicValidationError: If visibility or team constraints are violated.
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
@@ -1484,9 +1477,13 @@ class ServerService(BaseService):
                 if not await permission_service.check_resource_ownership(user_email, server):
                     raise PermissionError("Only the owner can update this server")
 
+            # An empty form field means "keep the current team", not "clear the team".
+            if server_update.team_id == "":
+                server_update.team_id = None
+
             # SECURITY: authorize the target team before any conflict check so a 409 never confirms a name in a foreign team.
             if server_update.team_id is not None and server_update.team_id != server.team_id:
-                _validate_server_team_assignment(db, user_email, server_update.team_id)
+                _validate_server_team_assignment(db, user_email, server_update.team_id, token_teams)
 
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:
@@ -1524,10 +1521,12 @@ class ServerService(BaseService):
             if server_update.visibility is not None:
                 new_visibility = server_update.visibility
 
-                # Validate visibility transitions
-                if new_visibility == "team":
+                # Validate visibility transitions. Saves that keep visibility
+                # "team" unchanged do not re-run the owner check; the team
+                # reassignment gate above covers team changes (#5791).
+                if new_visibility == "team" and server.visibility != "team":
                     target_team_id = server_update.team_id if server_update.team_id is not None else server.team_id
-                    _validate_server_team_assignment(db, None if import_platform_admin else user_email, target_team_id)
+                    _validate_server_team_assignment(db, None if import_platform_admin else user_email, target_team_id, token_teams)
 
                 elif new_visibility == "public":
                     # Optional: Check if user has permission to make resources public
@@ -1714,6 +1713,23 @@ class ServerService(BaseService):
                 user_email=user_email,
             )
             raise snce
+        except PublicValidationError:
+            db.rollback()
+            raise
+        except PermissionError as pe:
+            db.rollback()
+            self._structured_logger.log(
+                level="WARNING",
+                message="Server update denied: caller is not an active team owner",
+                event_type="server_update_permission_denied",
+                component="server_service",
+                server_id=server_id,
+                error_type=type(pe).__name__,
+                error_message=str(pe),
+                modified_by=user_email,
+                user_email=user_email,
+            )
+            raise
         except Exception as e:
             db.rollback()
 

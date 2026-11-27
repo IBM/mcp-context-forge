@@ -441,6 +441,104 @@ describe("handleServerFormSubmit", () => {
 
     expect(globalThis.fetch).toHaveBeenCalled();
   });
+
+  test.each(["private", "public"])(
+    "sends the page-scoped team_id, not the picker pick, when visibility is %s (#5791 AC3)",
+    async (visibility) => {
+      Object.defineProperty(window, "location", {
+        value: {
+          href: "http://localhost/admin?team_id=page-team",
+          search: "?team_id=page-team",
+          pathname: "/admin",
+        },
+        writable: true,
+        configurable: true,
+      });
+      const event = createFormEvent(`
+      <form>
+        <input name="name" value="TestServer" />
+        <input type="radio" name="visibility" value="private" ${visibility === "private" ? "checked" : ""} />
+        <input type="radio" name="visibility" value="public" ${visibility === "public" ? "checked" : ""} />
+        <input type="radio" name="visibility" value="team" />
+        <div>
+          <select name="team_id" id="add-server-team-id">
+            <option value="">Personal team</option>
+            <option value="team-picked" selected>Team Picked</option>
+          </select>
+        </div>
+      </form>
+      <div id="serverFormError"></div>
+      <div id="add-server-loading" style="display:none"></div>
+    `);
+
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+      safeParseJsonResponse.mockResolvedValue({ success: true });
+
+      await handleServerFormSubmit(event);
+
+      const body = globalThis.fetch.mock.calls[0][1].body;
+      expect(body.get("team_id")).toBe("page-team");
+    }
+  );
+
+  test("sends the picked team_id when visibility is team (#5791 AC1)", async () => {
+    const event = createFormEvent(`
+      <form>
+        <input name="name" value="TestServer" />
+        <input type="radio" name="visibility" value="team" checked />
+        <div>
+          <select name="team_id" id="add-server-team-id">
+            <option value="">Personal team</option>
+            <option value="team-picked" selected>Team Picked</option>
+          </select>
+        </div>
+      </form>
+      <div id="serverFormError"></div>
+      <div id="add-server-loading" style="display:none"></div>
+    `);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+    safeParseJsonResponse.mockResolvedValue({ success: true });
+
+    await handleServerFormSubmit(event);
+
+    const body = globalThis.fetch.mock.calls[0][1].body;
+    expect(body.get("team_id")).toBe("team-picked");
+  });
+
+  test("falls back to the page-scoped team when the team picker is empty", async () => {
+    Object.defineProperty(window, "location", {
+      value: {
+        href: "http://localhost/admin?team_id=page-team",
+        search: "?team_id=page-team",
+        pathname: "/admin",
+      },
+      writable: true,
+      configurable: true,
+    });
+    const event = createFormEvent(`
+      <form>
+        <input name="name" value="TestServer" />
+        <input type="radio" name="visibility" value="team" checked />
+        <div>
+          <select name="team_id" id="add-server-team-id" data-scope-team-id="page-team">
+            <option value="" selected>Personal team</option>
+            <option value="team-picked">Team Picked</option>
+          </select>
+        </div>
+      </form>
+      <div id="serverFormError"></div>
+      <div id="add-server-loading" style="display:none"></div>
+    `);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+    safeParseJsonResponse.mockResolvedValue({ success: true });
+
+    await handleServerFormSubmit(event);
+
+    const body = globalThis.fetch.mock.calls[0][1].body;
+    expect(body.get("team_id")).toBe("page-team");
+  });
 });
 
 // ---------------------------------------------------------------------------

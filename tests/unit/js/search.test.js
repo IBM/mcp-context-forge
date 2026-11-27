@@ -41,6 +41,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   getCookie: vi.fn(() => "mock-token"),
   getCurrentTeamId: vi.fn(() => null),
+  getPickerTeamId: vi.fn(() => null),
   isAdminUser: vi.fn(() => false),
   fetchWithAuth: vi.fn(),
 }));

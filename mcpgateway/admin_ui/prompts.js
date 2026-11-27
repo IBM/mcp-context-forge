@@ -8,6 +8,7 @@ import {
   decodeHtml,
   fetchWithTimeout,
   getCurrentTeamId,
+  getPickerTeamId,
   handleFetchError,
   isInactiveChecked,
   makeCopyIdButton,
@@ -747,7 +748,7 @@ export const initPromptSelect = function (
           const selectedGatewayIds = getSelectedGatewayIds
             ? getSelectedGatewayIds()
             : [];
-          const selectedTeamId = getCurrentTeamId();
+          const selectedTeamId = getPickerTeamId(container);
           const searchInputId =
             selectId === "edit-server-prompts"
               ? "searchEditPrompts"

@@ -51,6 +51,11 @@ def install_admin_user(mock_db: MagicMock, email: str = "admin@test.com") -> Mag
     admin_user.email = email
     admin_user.is_admin = True
 
+    # The admin-check memoization reads and writes ``db.info`` like a plain
+    # dict; a real dict keeps the cache path behaving as it does in production.
+    if not isinstance(getattr(mock_db, "info", None), dict):
+        mock_db.info = {}
+
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = admin_user
     mock_db.execute.return_value = mock_result

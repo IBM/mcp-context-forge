@@ -67,6 +67,7 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   decodeHtml: vi.fn((s) => s || ""),
   fetchWithTimeout: vi.fn(),
   getCurrentTeamId: vi.fn(() => null),
+  getPickerTeamId: vi.fn(() => null),
   handleFetchError: vi.fn((e) => e.message),
   isAdminUser: vi.fn(() => true),
   isInactiveChecked: vi.fn(() => false),

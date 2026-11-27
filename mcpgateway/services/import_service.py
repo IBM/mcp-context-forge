@@ -1136,7 +1136,7 @@ class ImportService:
             kwargs: dict[str, Any] = {"created_by": actor, "created_via": "import", "team_id": team_id, "owner_email": actor, "visibility": data.get("visibility", "team")}
             if kind == "gateways":
                 kwargs["import_requires_credentials"] = needs_credentials
-            elif kind == "tools":
+            elif kind in ("tools", "servers"):
                 kwargs["token_teams"] = token_teams
             return await getattr(service, f"register_{name}")(db, schema, **kwargs)
         kwargs = {"modified_by": actor, "modified_via": "import", "user_email": actor, "import_platform_admin": admin}
@@ -1144,7 +1144,7 @@ class ImportService:
             kwargs["import_clear_credentials"] = True
         if kind == "gateways":
             kwargs["import_requires_credentials"] = needs_credentials
-        elif kind == "tools":
+        elif kind in ("tools", "servers"):
             kwargs["token_teams"] = token_teams
         return await getattr(service, f"update_{name}")(db, existing.id, schema, **kwargs)
 

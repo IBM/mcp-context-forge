@@ -9,6 +9,11 @@ import {
   validateUrl,
 } from "./security";
 import { getEditSelections } from "./servers";
+import {
+  resolveFormTeamId,
+  showTeamSelectError,
+  validateTeamVisibilitySelection,
+} from "./teams";
 import { isInactiveChecked, safeGetElement, showErrorMessage, showSkippedToolsWarning } from "./utils";
 
 // ===================================================================
@@ -445,6 +450,13 @@ export const handleServerFormSubmit = async function (e) {
   const status = safeGetElement("serverFormError");
   const loading = safeGetElement("add-server-loading"); // Add a loading spinner if needed
 
+  const teamError = validateTeamVisibilitySelection(form);
+  if (teamError) {
+    showTeamSelectError(form, teamError);
+    return;
+  }
+  showTeamSelectError(form, null);
+
   try {
     const name = formData.get("name");
 
@@ -468,7 +480,13 @@ export const handleServerFormSubmit = async function (e) {
 
     formData.set("visibility", formData.get("visibility"));
     const teamId = new URL(window.location.href).searchParams.get("team_id");
-    teamId && formData.append("team_id", teamId);
+    // The selector applies only to team visibility (#5791); other saves keep the page-scoped team.
+    const teamSelect = form.querySelector("select[name='team_id']");
+    const usePicker = formData.get("visibility") === "team" && teamSelect;
+    formData.set(
+      "team_id",
+      usePicker ? resolveFormTeamId(teamSelect) : teamId || ""
+    );
 
     // Build tools selection from Map (includes selections across pagination + search)
     const toolsContainer = document.getElementById("associatedTools");
@@ -1043,6 +1061,13 @@ export const handleEditServerFormSubmit = async function (e) {
   e.preventDefault();
   const form = e.target;
   const formData = new FormData(form);
+
+  const teamError = validateTeamVisibilitySelection(form);
+  if (teamError) {
+    showTeamSelectError(form, teamError);
+    return;
+  }
+  showTeamSelectError(form, null);
 
   try {
     // Validate inputs

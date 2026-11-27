@@ -83,11 +83,15 @@ async def test_selection_named_team_and_repeat_update(registry, importer):
 
 @pytest.mark.asyncio
 async def test_default_non_admin_import_matches_owned_server(registry, importer):
-    """Create and update the caller's server beside a teammate's server."""
+    """Create and update the caller's server beside a teammate's server.
+
+    The teammate owns the target team: team-visibility creates require
+    owner-or-admin on every path, imports included (#5791).
+    """
     teammate = "teammate@example.com"
     registry.add(EmailUser(email=teammate, password_hash="unused", full_name="Teammate"))
     registry.flush()
-    registry.add(EmailTeamMember(team_id="target", user_email=teammate, role="member"))
+    registry.add(EmailTeamMember(team_id="target", user_email=teammate, role="owner"))
     registry.commit()
     shared = envelope(servers=[{"name": "shared", "description": "teammate"}])
     assert (await importer.import_configuration(registry, shared, imported_by=teammate, team_name="Target", token_teams=["target"])).created_entities == 1
@@ -100,6 +104,36 @@ async def test_default_non_admin_import_matches_owned_server(registry, importer)
     assert (await importer.import_configuration(registry, config, **scope)).updated_entities == 1
     rows = {row.owner_email: (row.team_id, row.description) for row in registry.scalars(select(Server))}
     assert rows == {ACTOR: ("personal", "updated"), teammate: ("target", "teammate")}
+
+
+@pytest.mark.asyncio
+async def test_member_import_create_of_team_server_is_denied(registry, importer):
+    """Team-visibility creates require owner-or-admin on every path, imports included (#5791)."""
+    teammate = "teammate@example.com"
+    registry.add(EmailUser(email=teammate, password_hash="unused", full_name="Teammate"))
+    registry.flush()
+    registry.add(EmailTeamMember(team_id="target", user_email=teammate, role="member"))
+    registry.commit()
+    shared = envelope(servers=[{"name": "shared", "description": "teammate"}])
+    status = await importer.import_configuration(registry, shared, imported_by=teammate, team_name="Target", token_teams=["target"])
+    assert status.created_entities == 0
+    assert status.failed_entities == 1
+    assert registry.scalar(select(Server.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_narrowed_admin_import_create_never_bypasses_owner_gate(registry, importer):
+    """A narrowed token scope never grants the import path an owner-gate bypass."""
+    narrowed = "narrowed@example.com"
+    registry.add(EmailUser(email=narrowed, password_hash="unused", full_name="Narrowed", is_admin=True))
+    registry.flush()
+    registry.add(EmailTeamMember(team_id="target", user_email=narrowed, role="member"))
+    registry.commit()
+    shared = envelope(servers=[{"name": "shared", "description": "narrowed"}])
+    status = await importer.import_configuration(registry, shared, imported_by=narrowed, team_name="Target", token_teams=["target"])
+    assert status.created_entities == 0
+    assert status.failed_entities == 1
+    assert registry.scalar(select(Server.id)) is None
 
 
 @pytest.mark.asyncio
