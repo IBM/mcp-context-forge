@@ -32,8 +32,23 @@ permissions:
   contents: read
 
 jobs:
+  pre-commit-gate:
+    name: Pre-commit gate
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/wait-pre-commit
+
   compose-ui-config-check:
     name: compose-ui-config-check
+    needs: pre-commit-gate
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 5
