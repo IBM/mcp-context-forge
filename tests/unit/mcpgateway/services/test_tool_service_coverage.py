@@ -8271,6 +8271,60 @@ class TestInvokeToolA2A:
         assert post_kwargs["headers"] == {"Host": "agent.example.com"}
         assert post_kwargs["extensions"] == {"sni_hostname": "agent.example.com"}
 
+    @pytest.mark.asyncio
+    async def test_a2a_auth_failure_keeps_status_and_challenge(self, tool_service, monkeypatch):
+        """An A2A 401 keeps the upstream status and challenge on the tool result."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        a2a_agent.endpoint_url = "https://agent.example.com/a2a"
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        pinned = SimpleNamespace(endpoint_url="https://203.0.113.10/a2a", headers={"Host": "agent.example.com"}, extensions={"sni_hostname": "agent.example.com"})
+
+        class Client:
+            async def post(self, url, **kwargs):
+                response = MagicMock()
+                response.status_code = 403
+                response.text = "forbidden"
+                response.headers = {"WWW-Authenticate": 'Bearer error="insufficient_scope"'}
+                return response
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                return Client()
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", AsyncMock(return_value=pinned))
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **kwargs: IsolatedClientCtx())
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "status"})
+
+        assert result.is_error is True
+        assert result.structured_content == {"status_code": 403, "www_authenticate": 'Bearer error="insufficient_scope"'}
+        assert "HTTP 403" in result.content[0].text
+
     async def _invoke_a2a_tool_via_invoke_tool(self, tool_service, response_json):
         """Helper: invoke an A2A tool through invoke_tool with a given HTTP 200 JSON response."""
         tp = _make_tool_payload(

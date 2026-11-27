@@ -1165,6 +1165,22 @@ class ToolInvocationError(ToolError):
         True
     """
 
+    def __init__(self, message: str, *, upstream_status_code: Optional[int] = None, upstream_www_authenticate: Optional[str] = None) -> None:
+        """Store an upstream 401 or 403 when the failure is an authorization rejection.
+
+        Args:
+            message: Human-readable error description.
+            upstream_status_code: HTTP status from the upstream response.
+            upstream_www_authenticate: Sanitized upstream WWW-Authenticate value.
+        """
+        super().__init__(message)
+        if isinstance(upstream_status_code, int) and not isinstance(upstream_status_code, bool) and upstream_status_code in (401, 403):
+            self.upstream_status_code: Optional[int] = upstream_status_code
+            self.upstream_www_authenticate = _sanitize_www_authenticate(upstream_www_authenticate)
+        else:
+            self.upstream_status_code = None
+            self.upstream_www_authenticate = None
+
 
 class ToolTimeoutError(ToolInvocationError):
     """Raised when tool invocation times out.
@@ -1189,6 +1205,81 @@ class ToolTimeoutError(ToolInvocationError):
         """
         super().__init__(message)
         self.retry_delay_ms = retry_delay_ms
+
+
+def _sanitize_www_authenticate(value: Any) -> Optional[str]:
+    """Return a WWW-Authenticate value that is safe to store.
+
+    Args:
+        value: Raw upstream header value.
+
+    Returns:
+        The trimmed challenge, or None when the value is not a short printable string.
+    """
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed or len(trimmed) > 512:
+        return None
+    if any(ord(char) < 32 or ord(char) > 126 for char in trimmed):
+        return None
+    return trimmed
+
+
+def _challenge_from_headers(headers: Any) -> Optional[str]:
+    """Read a safe WWW-Authenticate value from response headers.
+
+    Args:
+        headers: Upstream response headers, or None.
+
+    Returns:
+        The sanitized challenge, or None when the header is absent or unsafe.
+    """
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return None
+    for name in ("www-authenticate", "WWW-Authenticate"):
+        try:
+            challenge = _sanitize_www_authenticate(getter(name))
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if challenge:
+            return challenge
+    return None
+
+
+def _response_status_content(response: Any) -> Optional[Dict[str, Any]]:
+    """Build structured content for an HTTP error response.
+
+    Args:
+        response: Upstream HTTP response.
+
+    Returns:
+        A dict with ``status_code`` and, when present, ``www_authenticate``.
+        None when the response has no integer status.
+    """
+    status_code = getattr(response, "status_code", None)
+    if not isinstance(status_code, int) or isinstance(status_code, bool):
+        return None
+    content: Dict[str, Any] = {"status_code": status_code}
+    challenge = _challenge_from_headers(getattr(response, "headers", None))
+    if challenge:
+        content["www_authenticate"] = challenge
+    return content
+
+
+def _http_error_structured_content(exc: BaseException) -> Optional[Dict[str, Any]]:
+    """Build structured content from an httpx or httpx2 status error.
+
+    Args:
+        exc: Exception raised by an upstream HTTP call.
+
+    Returns:
+        Structured content for the HTTP error, or None for other exceptions.
+    """
+    if not isinstance(exc, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
+        return None
+    return _response_status_content(getattr(exc, "response", None))
 
 
 def _coerce_retry_policy_int(raw_value: Any, *, default: int, minimum: int) -> int:
@@ -6425,7 +6516,7 @@ class ToolService(BaseService):
                             tool_result = ToolResult(
                                 content=content,
                                 is_error=True,
-                                structured_content={"status_code": response.status_code},
+                                structured_content=_response_status_content(response),
                             )
                             # Don't mark as successful — success remains False
 
@@ -6961,9 +7052,7 @@ class ToolService(BaseService):
                             )
                             # Include HTTP status code in structured_content so the retry plugin can
                             # honour retry_on_status (e.g. 429, 503) on this transport.
-                            exc_structured: Optional[Dict[str, Any]] = None
-                            if isinstance(root_cause, httpx.HTTPStatusError):
-                                exc_structured = {"status_code": root_cause.response.status_code}
+                            exc_structured = _http_error_structured_content(root_cause)
                             # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
                             error_code = root_cause.code if isinstance(root_cause, MCPError) else None
                             return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, error_code=error_code)
@@ -7087,9 +7176,7 @@ class ToolService(BaseService):
                             )
                             # Include HTTP status code in structured_content so the retry plugin can
                             # honour retry_on_status (e.g. 429, 503) on this transport.
-                            exc_structured: Optional[Dict[str, Any]] = None
-                            if isinstance(root_cause, httpx.HTTPStatusError):
-                                exc_structured = {"status_code": root_cause.response.status_code}
+                            exc_structured = _http_error_structured_content(root_cause)
                             # A JSON-RPC error keeps the same isError shape; its code is reported in _meta.
                             error_code = root_cause.code if isinstance(root_cause, MCPError) else None
                             return self._make_mcp_tool_error(sanitized_error, structured_content=exc_structured, error_code=error_code)
@@ -7339,7 +7426,7 @@ class ToolService(BaseService):
                         else:
                             error_message = f"HTTP {status_code}: {response_text}"
                             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
-                            tool_result = ToolResult(content=content, is_error=True)
+                            tool_result = ToolResult(content=content, is_error=True, structured_content=_response_status_content(http_response))
                 elif tool_integration_type == "gRPC" and tool_grpc_service_id:
                     # gRPC tool invocation using the registered gRPC service
                     try:
@@ -7536,9 +7623,7 @@ class ToolService(BaseService):
                 plugin_manager = await self._get_plugin_manager(plugin_context_id)
                 if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
                     try:
-                        exc_structured: Optional[Dict[str, Any]] = None
-                        if isinstance(root_cause, httpx.HTTPStatusError):
-                            exc_structured = {"status_code": root_cause.response.status_code}
+                        exc_structured = _http_error_structured_content(root_cause)
                         exception_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation failed: {error_message}")], is_error=True, structured_content=exc_structured)
                         exc_post_result, _ = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_POST_INVOKE,
@@ -7584,7 +7669,12 @@ class ToolService(BaseService):
                         request_state=request_state,
                     )
 
-                raise ToolInvocationError(f"Tool invocation failed: {error_message}")
+                http_error = _http_error_structured_content(root_cause) or {}
+                raise ToolInvocationError(
+                    f"Tool invocation failed: {error_message}",
+                    upstream_status_code=http_error.get("status_code"),
+                    upstream_www_authenticate=http_error.get("www_authenticate"),
+                )
             finally:
                 # Calculate duration
                 duration_ms = (time.monotonic() - start_time) * 1000

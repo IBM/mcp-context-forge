@@ -6507,6 +6507,36 @@ class TestToolService:
         assert post_invoke_result["structuredContent"] == {"status_code": 404}
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rest_401_returns_status_and_challenge(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A REST 401 stays a tool error result and keeps the upstream status and challenge."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.headers = {"www-authenticate": 'Bearer error="invalid_token", error_description="expired"'}
+        mock_response.json.return_value = {"error": "expired"}
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("Unauthorized", request=MagicMock(), response=mock_response)
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        assert result.is_error is True
+        assert result.structured_content == {
+            "status_code": 401,
+            "www_authenticate": 'Bearer error="invalid_token", error_description="expired"',
+        }
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_timeout_path_retry_fires(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """When a tool times out and the retry plugin requests a retry via ToolTimeoutError.retry_delay_ms, the gateway must retry."""
         mock_tool.integration_type = "REST"
