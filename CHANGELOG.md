@@ -11,8 +11,8 @@
 
 =======
 
-- **A2A tools and virtual servers** - Tool calls respect `MCPGATEWAY_A2A_ENABLED` and the caller’s agent access.
-  Virtual server responses list enabled agents within the caller’s scope. An explicit API list replaces the caller-visible associations, including disabled ones.
+- **A2A tools and virtual servers** - Tool calls respect `MCPGATEWAY_A2A_ENABLED` and the caller's agent access.
+  Virtual server responses list enabled agents within the caller's scope. An explicit API list replaces the caller-visible associations, including disabled ones.
   Register an agent to create its derived tool. Manual A2A tool creation is rejected.
   An update may repeat the existing A2A integration type. Valid requests that change agent-managed tool fields receive HTTP 400. Update the agent to change those fields.
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.

@@ -1201,18 +1201,10 @@ def guard_a2a_tool_update(
     elif update.headers is not None:
         stored_headers = _mask_a2a_tool_headers(stored_headers)
 
-    if (
-        update.url is not None and str(update.url) != stored_url
-        or update.request_type not in (None, tool.request_type)
-        or update.headers not in (None, stored_headers)
-    ):
+    if update.url is not None and str(update.url) != stored_url or update.request_type not in (None, tool.request_type) or update.headers not in (None, stored_headers):
         raise ToolValidationError("Cannot change A2A tool transport")
     auth = update.auth
-    if (
-        clear_credentials
-        or update.sigv4_config is not None
-        or auth is not None and (auth.auth_type not in (None, tool.auth_type) or auth.auth_value not in (None, settings.masked_auth_value))
-    ):
+    if clear_credentials or update.sigv4_config is not None or auth is not None and (auth.auth_type not in (None, tool.auth_type) or auth.auth_value not in (None, settings.masked_auth_value)):
         raise ToolValidationError("Cannot change A2A tool credentials")
     return update.model_copy(update=dict.fromkeys(("url", "request_type", "headers", "visibility", "auth", "sigv4_config")))
 

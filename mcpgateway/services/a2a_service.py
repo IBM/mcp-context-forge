@@ -663,9 +663,7 @@ def require_a2a_registration_scope(db: Session, user_email: Optional[str], token
     if team_id:
         team_query = select(EmailTeam.id).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True))
         if not (token_teams is None and is_user_admin(db, user_email)):
-            team_query = team_query.join(DbEmailTeamMember, DbEmailTeamMember.team_id == EmailTeam.id).where(
-                DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active.is_(True)
-            )
+            team_query = team_query.join(DbEmailTeamMember, DbEmailTeamMember.team_id == EmailTeam.id).where(DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active.is_(True))
         try:
             active_team_id = db.scalar(team_query)
         except SQLAlchemyError as exc:
