@@ -29,7 +29,7 @@ from fastapi import HTTPException
 import httpx
 from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 from sqlalchemy import and_, case, cast, delete, desc, func, or_, select, String, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -636,6 +636,43 @@ def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target
     )
     if not membership:
         raise PublicValidationError("User membership in team not sufficient for this update.")
+
+
+def require_a2a_registration_scope(db: Session, user_email: Optional[str], token_teams: Optional[List[str]], team_id: Optional[str], visibility: str) -> None:
+    """Validate the caller's visibility on a proposed agent.
+
+    Args:
+        db: Database session for admin lookup.
+        user_email: Authenticated agent owner.
+        token_teams: Effective caller team scope.
+        team_id: Resolved agent team.
+        visibility: Proposed agent visibility.
+
+    Raises:
+        PermissionError: If the agent would fall outside the caller's scope.
+        PublicValidationError: If the visibility or team assignment is invalid.
+    """
+    if visibility not in {"public", "private", "team"}:
+        raise PublicValidationError("Invalid A2A agent visibility")
+    if visibility == "team" and not team_id:
+        raise PublicValidationError("Team visibility requires a team")
+    proposed = DbA2AAgent(visibility=visibility, team_id=team_id, owner_email=user_email)
+    denied = "The requested A2A agent is outside your access scope"
+    if (team_id and token_teams is not None and team_id not in token_teams) or not agent_visible_to(db, proposed, user_email, token_teams):
+        raise PermissionError(denied)
+    if team_id:
+        team_query = select(EmailTeam.id).where(EmailTeam.id == team_id, EmailTeam.is_active.is_(True))
+        if not (token_teams is None and is_user_admin(db, user_email)):
+            team_query = team_query.join(DbEmailTeamMember, DbEmailTeamMember.team_id == EmailTeam.id).where(
+                DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active.is_(True)
+            )
+        try:
+            active_team_id = db.scalar(team_query)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            raise PermissionError(denied) from exc
+        if active_team_id != team_id:
+            raise PermissionError(denied)
 
 
 _SAFE_OAUTH_CONFIG_KEYS = ("grant_type", "authorization_url", "token_url", "scopes", "scope")

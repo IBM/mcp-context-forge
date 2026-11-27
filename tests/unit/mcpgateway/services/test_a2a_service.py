@@ -19,7 +19,7 @@ import uuid
 
 # Third-Party
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -218,6 +218,28 @@ class TestA2AAgentService:
         created_agent, created_tool = [entry.args[0] for entry in mock_db.add.call_args_list]
         assert created_agent.tool is created_tool
         assert service.convert_agent_to_read.called
+
+    async def test_register_agent_retains_committed_agent_after_tool_failure(self, service, monkeypatch):
+        """Roll back an unfinished tool write and retain the committed agent."""
+        async def failed_tool_creation(db, **_kwargs):
+            tool = DbTool(original_name="pending-tool", url="https://agent.example.com", integration_type="A2A", request_type="POST", input_schema={})
+            db.add(tool)
+            db.flush()
+            raise RuntimeError("Tool step failed")
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.tool_service.create_tool_from_a2a_agent", failed_tool_creation)
+        agent = A2AAgentCreate(name="Agent", endpoint_url="https://agent.example.com")
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        try:
+            with Session(engine) as db:
+                created = await service.register_agent(db, agent, created_by="owner@example.com")
+                assert created.tool_id is None
+            with Session(engine) as db:
+                assert db.scalar(select(DbA2AAgent.id)) == created.id
+                assert db.scalar(select(DbTool.id)) is None
+        finally:
+            engine.dispose()
 
     async def test_register_agent_encrypts_oauth_sensitive_values(self, service, mock_db):
         """register_agent encrypts oauth_config secret values before persistence."""

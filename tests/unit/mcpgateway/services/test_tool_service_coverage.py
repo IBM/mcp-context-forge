@@ -1655,6 +1655,7 @@ class TestProcessSingleToolForBulk:
         )
 
         assert result["status"] == "fail"
+        assert result["error"] == f"Cannot overwrite A2A tool {source.name}"
         assert vars(stored) == original
 
     def test_update_on_conflict_rest_type(self, tool_service):
@@ -7910,6 +7911,26 @@ def _make_a2a_agent(*, enabled=True, agent_type="jsonrpc", auth_type=None, auth_
 
 
 class TestInvokeToolA2A:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("agent_visibility", ["private", "team"])
+    async def test_unrestricted_claim_does_not_grant_stale_admin_agent_access(self, tool_service, agent_visibility):
+        """An unrestricted token still requires current admin status for bypass."""
+        payload = _make_tool_payload(integration_type="A2A", request_type="POST", annotations={"a2a_agent_id": "agent-uuid-1"})
+        agent = _make_a2a_agent()
+        agent.visibility = agent_visibility
+        agent.owner_email = "owner@example.com"
+        agent.team_id = "team-1"
+        db = MagicMock()
+        db.info = {}
+        db.execute.side_effect = [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=agent)),
+            MagicMock(scalar_one_or_none=MagicMock(return_value=SimpleNamespace(is_admin=False))),
+        ]
+        with _setup_cache_for_invoke(payload), patch("mcpgateway.services.tool_service.prepare_a2a_invocation") as prepare:
+            with pytest.raises(ToolNotFoundError, match="^Tool not found: test_tool$"):
+                await tool_service.invoke_tool(db, "test_tool", {}, user_email="stale-admin@example.com", token_teams=None)
+        prepare.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_invisible_agent_returns_not_found_before_schema_errors(self, tool_service):
         """Return the same error for invalid arguments to an invisible agent."""

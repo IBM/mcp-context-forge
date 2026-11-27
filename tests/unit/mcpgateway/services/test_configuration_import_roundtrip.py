@@ -7,14 +7,20 @@ Exercise import transaction, matching, and portable associations against SQLite.
 """
 
 # Standard
+import base64
 from datetime import datetime, timezone
+import json
 from types import SimpleNamespace
+from urllib.parse import urlencode
+from unittest.mock import AsyncMock
 
 # Third-Party
 import httpx
+from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine, event, select, update
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 # First-Party
 from mcpgateway.config import settings
@@ -104,12 +110,14 @@ async def test_import_rejects_overwrite_of_derived_tool(registry, importer):
             tool("manual", integration_type="A2A", request_type="POST"),
             tool("derived", integration_type="A2A", request_type="POST", url=derived.url, annotations={"a2a_agent_id": "other-agent"}),
             tool("derived", integration_type="A2A", request_type="POST"),
+            tool("derived", integration_type="A2A", request_type="POST", url=derived.url, headers={"X-Test": "changed"}),
+            tool("derived", integration_type="A2A", request_type="POST", url=derived.url, visibility="public"),
         ]
     )
 
     for dry_run in (True, False):
         result = await importer.import_configuration(registry, configuration, imported_by=ACTOR, team_name="Target", token_teams=["target"], dry_run=dry_run)
-        assert (result.created_entities, result.updated_entities, result.failed_entities) == (0, 0, 4)
+        assert (result.created_entities, result.updated_entities, result.failed_entities) == (0, 0, 6)
 
     registry.refresh(derived)
     assert derived.integration_type == "A2A"
@@ -121,6 +129,7 @@ async def test_import_rejects_overwrite_of_derived_tool(registry, importer):
 async def test_a2a_metadata_update_preserves_transport(registry, importer):
     """Preserve the derived tool's binding and credentials during metadata edits."""
     auth_value = encode_auth({"Authorization": "Bearer fixture-value"})
+    headers = _protect_tool_headers_for_storage({"X-API-Key": "fixture-header", "X-Label": "keep"})
     derived = Tool(
         original_name="derived",
         url="https://agent.example.com",
@@ -133,14 +142,40 @@ async def test_a2a_metadata_update_preserves_transport(registry, importer):
         annotations={"a2a_agent_id": "agent-id"},
         auth_type="bearer",
         auth_value=auth_value,
+        headers=headers,
     )
     registry.add(derived)
     registry.commit()
-    schema = ToolUpdate(integration_type="A2A", description="Direct edit")
+    schema = ToolUpdate(
+        integration_type="A2A",
+        url=derived.url,
+        request_type="POST",
+        annotations=derived.annotations,
+        visibility="team",
+        auth={"auth_type": "bearer", "auth_value": settings.masked_auth_value},
+        headers={"X-API-Key": settings.masked_auth_value, "X-Label": "keep"},
+        description="Direct edit",
+    )
     await importer.tool_service.update_tool(registry, derived.id, schema, user_email=ACTOR)
     assert derived.description == "Direct edit"
     with pytest.raises(ToolError, match="Cannot change A2A tool binding"):
         await importer.tool_service.update_tool(registry, derived.id, ToolUpdate(annotations={"a2a_agent_id": "other-agent"}), user_email=ACTOR)
+    with pytest.raises(ValidationError, match="not allowed for A2A"):
+        ToolUpdate(integration_type="A2A", request_type="GET")
+    changes = (
+        ("transport", {"url": "https://other.example.com"}),
+        ("transport", {"headers": {"X-Test": "changed"}}),
+        ("transport", {"headers": {"X-API-Key": "fixture-header", "X-Label": "keep"}}),
+        ("transport", {"headers": {"X-API-Key": settings.masked_auth_value, "X-Label": "changed"}}),
+        ("credentials", {"auth_type": "bearer", "auth_token": "fixture-value"}),
+        ("credentials", {"auth_type": "bearer", "auth_token": "different"}),
+        ("scope", {"visibility": "public"}),
+    )
+    for field, payload in changes:
+        with pytest.raises(ToolError, match=f"Cannot change A2A tool {field}"):
+            await importer.tool_service.update_tool(registry, derived.id, ToolUpdate(**payload), user_email=ACTOR)
+        assert derived.description == "Direct edit"
+        assert (derived.url, derived.visibility, derived.request_type, derived.auth_value) == ("https://agent.example.com", "team", "POST", auth_value)
 
     configuration = envelope(
         tools=[tool("derived", integration_type="A2A", request_type="POST", url=derived.url, annotations=derived.annotations, description="Imported edit", credentials_required=True)]
@@ -156,6 +191,83 @@ async def test_a2a_metadata_update_preserves_transport(registry, importer):
     assert derived.url == "https://agent.example.com"
     assert derived.annotations == {"a2a_agent_id": "agent-id"}
     assert derived.auth_value == auth_value
+    assert derived.headers == headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auth_type", ["basic", "bearer", "authheaders"])
+async def test_admin_a2a_form_preserves_managed_credentials(registry, importer, monkeypatch, auth_type):
+    """Save metadata from rendered Admin form values and reject managed changes."""
+    from mcpgateway import admin
+
+    stored_auth = {
+        "basic": {"Authorization": "Basic " + base64.b64encode(b"fixture-user:fixture-value").decode()},
+        "bearer": {"Authorization": "Bearer fixture-value"},
+        "authheaders": {"X-Agent-Auth": "fixture-value", "X-Second-Auth": "fixture-other"},
+    }
+    auth_value = encode_auth(stored_auth[auth_type])
+    headers = _protect_tool_headers_for_storage({"X-API-Key": "fixture-header", "X-Label": "keep"})
+    derived = Tool(
+        original_name="derived",
+        url="https://agent.example.com",
+        integration_type="A2A",
+        request_type="POST",
+        visibility="team",
+        team_id="target",
+        owner_email=ACTOR,
+        input_schema={"type": "object"},
+        annotations={"a2a_agent_id": "agent-id"},
+        auth_type=auth_type,
+        auth_value=auth_value,
+        headers=headers,
+    )
+    registry.add(derived)
+    registry.commit()
+    monkeypatch.setattr(admin, "tool_service", importer.tool_service)
+    rendered = importer.tool_service.convert_tool_to_read(derived, requesting_user_email=ACTOR)
+    assert rendered.headers == {"X-API-Key": settings.masked_auth_value, "X-Label": "keep"}
+    assert rendered.auth is not None
+    form = {
+        "name": rendered.name,
+        "customName": rendered.custom_name,
+        "url": rendered.url,
+        "description": "Edited from Admin",
+        "integrationType": rendered.integration_type,
+        "requestType": rendered.request_type,
+        "visibility": rendered.visibility,
+        "team_id": derived.team_id,
+        "headers": json.dumps(rendered.headers),
+        "annotations": json.dumps(rendered.annotations),
+        "input_schema": json.dumps(rendered.input_schema),
+        "auth_type": rendered.auth.auth_type,
+    }
+    if auth_type == "basic":
+        form.update(auth_username=rendered.auth.username, auth_password="*****")
+        replacement = {"auth_password": "new-fixture-value"}
+    elif auth_type == "bearer":
+        form["auth_token"] = "*****"
+        replacement = {"auth_token": "new-fixture-value"}
+    else:
+        form["auth_headers"] = json.dumps(rendered.auth.authHeaders)
+        replacement = {"auth_headers": json.dumps([{"key": "X-Agent-Auth", "value": "new-fixture-value"}, {"key": "X-Second-Auth", "value": settings.masked_auth_value}])}
+
+    async def submit(overrides):
+        path = f"/admin/tools/{derived.id}/edit"
+        receive = AsyncMock(return_value={"type": "http.request", "body": urlencode({**form, **overrides}).encode(), "more_body": False})
+        request = Request({"type": "http", "method": "POST", "path": path, "headers": [(b"content-type", b"application/x-www-form-urlencoded")]}, receive)
+        return await admin.admin_edit_tool.__wrapped__(derived.id, request, registry, {"email": ACTOR})
+
+    saved = await submit({})
+    assert saved.status_code == 200, saved.body
+    assert derived.description == "Edited from Admin"
+
+    denied = await submit({**replacement, "description": "Rejected change"})
+    assert denied.status_code == 400, denied.body
+    assert json.loads(denied.body)["message"] == "Cannot change A2A tool credentials"
+    denied_header = await submit({"headers": json.dumps({"X-API-Key": "new-fixture-header", "X-Label": "keep"}), "description": "Rejected change"})
+    assert denied_header.status_code == 400, denied_header.body
+    assert json.loads(denied_header.body)["message"] == "Cannot change A2A tool transport"
+    assert (derived.description, derived.auth_value, derived.headers) == ("Edited from Admin", auth_value, headers)
 
 
 @pytest.mark.asyncio

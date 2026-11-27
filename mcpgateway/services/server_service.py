@@ -1560,7 +1560,7 @@ class ServerService(BaseService):
             associated_agent_ids = getattr(server_update, "associated_a2a_agents", None)
             _require_visible_a2a_agents(db, associated_agent_ids, user_email, token_teams, attached=server.a2a_agents)
             if associated_agent_ids is not None:
-                hidden_ids = [agent.id for agent in server.a2a_agents if not agent.enabled or not agent_visible_to(db, agent, user_email, token_teams)]
+                hidden_ids = [agent.id for agent in server.a2a_agents if not agent_visible_to(db, agent, user_email, token_teams)]
                 server_update = server_update.model_copy(update={"associated_a2a_agents": list(dict.fromkeys(associated_agent_ids + hidden_ids))})
             _update_server_associations(db, server, server_update)
             _apply_server_interfaces(server, server_update.interfaces)

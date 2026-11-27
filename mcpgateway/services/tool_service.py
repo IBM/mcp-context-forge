@@ -132,6 +132,7 @@ from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.portable_credentials import without_file_credentials
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.safe_jsonschema import validate_safely
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -519,6 +520,11 @@ def _decrypt_tool_headers_for_runtime(headers: Optional[Dict[str, Any]]) -> Dict
     # before this validation existed, so runtime outbound requests self-heal without
     # requiring a manual re-save.
     return {key: SecurityValidator.sanitize_credential_value(_decrypt_tool_header_value(value)) for key, value in headers.items()}
+
+
+def _mask_a2a_tool_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the header values callers can send back for a derived tool."""
+    return {key: settings.masked_auth_value if is_sensitive_tool_header_name(key) or _is_encrypted_tool_header_value(value) else value for key, value in headers.items()}
 
 
 #: Top-level keys that the MCP ``CallToolResult`` envelope admits (including
@@ -1145,6 +1151,70 @@ class ToolValidationError(ToolError):
         >>> isinstance(err, ToolError)
         True
     """
+
+
+def guard_a2a_tool_update(
+    tool: DbTool,
+    update: ToolUpdate,
+    *,
+    portable: bool = False,
+    agent: Optional[DbA2AAgent] = None,
+    clear_credentials: bool = False,
+) -> ToolUpdate:
+    """Validate an A2A tool update and retain storage values for unchanged fields.
+
+    Args:
+        tool: Stored tool.
+        update: Requested edit.
+        portable: Compare the URL and headers against their portable representations.
+        agent: Agent performing a trusted sync.
+        clear_credentials: Whether the caller requests removal of stored credentials.
+
+    Returns:
+        The update with protected fields omitted when they match storage.
+
+    Raises:
+        ToolValidationError: If the request changes a protected field.
+    """
+    requested_type = update.integration_type
+    existing_type = getattr(tool, "integration_type", None)
+    if requested_type is not None and requested_type != existing_type and "A2A" in (requested_type, existing_type):
+        raise ToolValidationError("Cannot change A2A tool integration type")
+    if existing_type != "A2A":
+        return update
+    if update.annotations is not None:
+        if not isinstance(tool.annotations, dict) or update.annotations.get("a2a_agent_id") != tool.annotations.get("a2a_agent_id"):
+            raise ToolValidationError("Cannot change A2A tool binding")
+    if update.visibility not in (None, tool.visibility) or update.gateway_id not in (None, tool.gateway_id):
+        raise ToolValidationError("Cannot change A2A tool scope")
+    if agent is not None:
+        if agent.tool_id != tool.id or not a2a_tool_references_agent(tool, agent.id):
+            raise ToolValidationError("Cannot sync an unlinked A2A tool")
+        return update
+
+    stored_url = tool.url
+    stored_headers = tool.headers or {}
+    if portable:
+        stored_transport, _ = without_file_credentials({"url": stored_url, "headers": stored_headers})
+        stored_url = stored_transport["url"]
+        stored_headers = stored_transport["headers"]
+    elif update.headers is not None:
+        stored_headers = _mask_a2a_tool_headers(stored_headers)
+
+    if (
+        update.url is not None and str(update.url) != stored_url
+        or update.request_type not in (None, tool.request_type)
+        or update.headers not in (None, stored_headers)
+    ):
+        raise ToolValidationError("Cannot change A2A tool transport")
+    auth = update.auth
+    if (
+        clear_credentials
+        or update.sigv4_config is not None
+        or auth is not None and (auth.auth_type not in (None, tool.auth_type) or auth.auth_value not in (None, settings.masked_auth_value))
+    ):
+        raise ToolValidationError("Cannot change A2A tool credentials")
+    return update.model_copy(update=dict.fromkeys(("url", "request_type", "headers", "visibility", "auth", "sigv4_config")))
 
 
 class ToolInvocationError(ToolError):
@@ -1879,8 +1949,6 @@ class ToolService(BaseService):
         # Safe default: if no requester context is provided, mask everything.
         headers = tool_dict.get("headers")
         if headers:
-            tool_dict["headers"] = _decrypt_tool_headers_for_runtime(headers)
-            headers = tool_dict["headers"]
             can_view = requesting_user_is_admin
             if not can_view and getattr(tool, "owner_email", None) == requesting_user_email:
                 can_view = True
@@ -1894,6 +1962,10 @@ class ToolService(BaseService):
                 can_view = True
             if not can_view:
                 tool_dict["headers"] = {k: settings.masked_auth_value for k in headers}
+            elif tool.integration_type == "A2A":
+                tool_dict["headers"] = _mask_a2a_tool_headers(headers)
+            else:
+                tool_dict["headers"] = _decrypt_tool_headers_for_runtime(headers)
 
         return ToolRead.model_validate(tool_dict)
 
@@ -2507,11 +2579,11 @@ class ToolService(BaseService):
             if tool.integration_type == "A2A":
                 persisted_agent = db.get(DbA2AAgent, a2a_agent.id, populate_existing=True, with_for_update=True) if a2a_agent is not None else None
                 if persisted_agent is None or persisted_agent.tool_id or not agent_visible_to(db, persisted_agent, a2a_requester_email or created_by, token_teams):
-                    raise ToolError("A2A tools must be created from an accessible agent")
+                    raise ToolValidationError("A2A tools must be created from an accessible agent")
                 team_id, owner_email, visibility = persisted_agent.team_id, persisted_agent.owner_email, persisted_agent.visibility
                 tool = tool.model_copy(update={"annotations": {**(tool.annotations or {}), "a2a_agent_id": persisted_agent.id}})
             elif a2a_agent is not None:
-                raise ToolError("Agent binding requires an A2A tool")
+                raise ToolValidationError("Agent binding requires an A2A tool")
             if tool.auth is None:
                 auth_type = None
                 auth_value = None
@@ -8024,6 +8096,8 @@ class ToolService(BaseService):
         token_teams: Optional[List[str]] = None,
         import_clear_credentials: bool = False,
         import_platform_admin: bool = False,
+        *,
+        a2a_sync_agent: Optional[DbA2AAgent] = None,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -8041,6 +8115,7 @@ class ToolService(BaseService):
             token_teams (Optional[List[str]]): Token team scope of the requester, used when the tool inherits a SigV4 gateway credential. None means admin bypass, [] means public-only.
             import_platform_admin: Verified unrestricted administrator for this import update.
             import_clear_credentials: Clear credentials tied to the previous origin.
+            a2a_sync_agent: Agent that owns a trusted derived-tool sync.
 
         Returns:
             The updated ToolRead object.
@@ -8091,12 +8166,7 @@ class ToolService(BaseService):
                 if not await permission_service.check_resource_ownership(user_email, tool):
                     raise PermissionError("Only the owner can update this tool")
 
-            requested_type = tool_update.integration_type
-            if requested_type is not None and requested_type != tool.integration_type and "A2A" in (requested_type, tool.integration_type):
-                raise ToolError("Cannot change A2A tool integration type")
-            if tool.integration_type == "A2A" and tool_update.annotations is not None:
-                if not isinstance(tool.annotations, dict) or tool_update.annotations.get("a2a_agent_id") != tool.annotations.get("a2a_agent_id"):
-                    raise ToolError("Cannot change A2A tool binding")
+            tool_update = guard_a2a_tool_update(tool, tool_update, agent=a2a_sync_agent, clear_credentials=import_clear_credentials)
 
             # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
             # Convert to string to handle both string and non-string inputs
@@ -8403,6 +8473,9 @@ class ToolService(BaseService):
                 error=tnce,
             )
             raise tnce
+        except ToolValidationError:
+            db.rollback()
+            raise
         except Exception as ex:
             db.rollback()
 
@@ -8878,6 +8951,7 @@ class ToolService(BaseService):
             modified_from_ip=modified_from_ip,
             modified_via=modified_via or "a2a_sync",
             modified_user_agent=modified_user_agent,
+            a2a_sync_agent=agent,
         )
 
     async def delete_tool_from_a2a_agent(self, db: Session, agent: DbA2AAgent, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:

@@ -201,6 +201,7 @@ from mcpgateway.services.a2a_service import (
     A2ACardRefreshThrottledError,
     A2ATaskStateError,
     raise_if_a2a_disabled,
+    require_a2a_registration_scope,
 )
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
@@ -5219,11 +5220,10 @@ async def create_a2a_agent(
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
-        # Get user email and handle team assignment
-        user_email = get_user_email(user)
-
+        scoped_email, token_teams = get_scoped_resource_access_context(request, user)
+        user_email = scoped_email or get_user_email(user)
         token_team_id = getattr(request.state, "team_id", None)
-        token_teams = getattr(request.state, "token_teams", None)
+        visibility = visibility or agent.visibility
 
         # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
         is_public_only_token = token_teams is not None and len(token_teams) == 0
@@ -5246,6 +5246,8 @@ async def create_a2a_agent(
         else:
             team_id = team_id or token_team_id
 
+        require_a2a_registration_scope(db, user_email, token_teams, team_id, visibility)
+
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new A2A agent for team {team_id}")
         return await a2a_service.register_agent(
             db,
@@ -5259,8 +5261,12 @@ async def create_a2a_agent(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
-            token_teams=get_scoped_resource_access_context(request, user)[1],
+            token_teams=token_teams,
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    except PublicValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except A2AAgentNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except A2AAgentError as e:
@@ -9040,12 +9046,10 @@ async def _execute_rpc_tools_call(
     if not name:
         raise JSONRPCError(-32602, "Missing tool name in parameters", params)
 
-    # Layer-1 exception: run ownership is captured below from the raw context,
-    # before admin-bypass normalization is applied.
-    run_owner_email, run_owner_scope, auth_is_admin = get_rpc_filter_context(request, user)
+    # Layer-1 exception: run ownership records the raw caller and token scope.
+    run_owner_email, run_owner_scope, _ = get_rpc_filter_context(request, user)
     run_owner_team_ids = [] if run_owner_scope is None else list(run_owner_scope)
-    auth_user_email = run_owner_email
-    auth_token_teams = run_owner_scope if auth_is_admin else run_owner_team_ids
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
     oauth_user_email = get_user_email(user)
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -9988,11 +9992,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # This allows both old format (method=tool_name) and new format (method=tools/call)
             await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
 
-            # Get authorization context (same as tools/call)
-            # Layer-1 exception: Match the tool-execution scope used by tools/call.
-            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-            if auth_token_teams is None and not auth_is_admin:
-                auth_token_teams = []
+            auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
             # Get user email for OAuth token selection
             oauth_user_email = get_user_email(user)

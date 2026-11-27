@@ -174,7 +174,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
-from mcpgateway.services.a2a_service import a2a_enabled, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, raise_if_a2a_disabled
+from mcpgateway.services.a2a_service import a2a_enabled, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, raise_if_a2a_disabled, require_a2a_registration_scope
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
@@ -213,7 +213,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
-from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService, ToolValidationError
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, PublicValidationError, safe_error_detail, sanitize_validation_error_for_log, unexpected_error_detail
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -12571,7 +12571,7 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
         raise e  # Re-raise for now, or return a 500 JSONResponse if preferred for API consistency
 
 
-def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
+def _build_auth_obj_from_form(form: Any, *, preserve_masked: bool = False) -> Optional[dict[str, Any]]:
     """Parse auth fields from a form and return a serialized auth object, or None.
 
     Custom headers are validated by the same ``_encode_auth_headers_list`` helper the JSON
@@ -12582,6 +12582,7 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
 
     Args:
         form: Multipart form data containing auth_type and credential fields.
+        preserve_masked: Keep the credential for an A2A form that sends a mask.
 
     Returns:
         A dict with auth_type and encrypted auth_value, or None if no valid auth provided.
@@ -12606,24 +12607,25 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
     if auth_type and auth_type.lower() == "oauth":
         raise HTTPException(status_code=422, detail="auth_type 'oauth' is not supported on tools; configure OAuth on the gateway instead")
     auth_obj: Optional[dict[str, Any]] = None
+    masks = (settings.masked_auth_value, "*****") if preserve_masked else ()
     if auth_type:
         if auth_type == "basic":
             username = form.get("auth_username", "")
             password = form.get("auth_password", "")
             if username and password:
                 creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
-                auth_value = encode_auth({"Authorization": f"Basic {creds}"})
+                auth_value = settings.masked_auth_value if password in masks else encode_auth({"Authorization": f"Basic {creds}"})
                 auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
         elif auth_type == "bearer":
             token = form.get("auth_token", "")
             if token:
-                auth_value = encode_auth({"Authorization": f"Bearer {token}"})
+                auth_value = settings.masked_auth_value if token in masks else encode_auth({"Authorization": f"Bearer {token}"})
                 auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
         elif auth_type == "authheaders":
             populated_headers = [h for h in auth_headers if isinstance(h, dict) and h.get("key")]
             if populated_headers:
                 try:
-                    auth_value = _encode_auth_headers_list(populated_headers)
+                    auth_value = settings.masked_auth_value if all(header.get("value") in masks for header in populated_headers) else _encode_auth_headers_list(populated_headers)
                 except ValueError as exc:
                     raise HTTPException(status_code=422, detail=str(exc)) from exc
                 auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
@@ -12631,7 +12633,7 @@ def _build_auth_obj_from_form(form: Any) -> Optional[dict[str, Any]]:
                 header_key = form.get("auth_header_key", "")
                 header_value = form.get("auth_header_value", "")
                 if header_key and header_value:
-                    auth_value = encode_auth({header_key: header_value})
+                    auth_value = settings.masked_auth_value if header_value in masks else encode_auth({header_key: header_value})
                     auth_obj = {"auth_type": auth_type, "auth_value": auth_value}
     return auth_obj
 
@@ -12795,6 +12797,8 @@ async def admin_add_tool(
     except ToolNameConflictError as ex:
         LOGGER.error(f"ToolNameConflictError in admin_add_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except ToolValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except ToolError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # This block should catch ValidationError
@@ -12865,9 +12869,6 @@ async def admin_edit_tool(
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
-    # Build auth object from form fields
-    auth_obj = _build_auth_obj_from_form(form)
-
     visibility = str(form.get("visibility", "private"))
     _check_public_visibility_allowed(visibility, team_id=team_id)
 
@@ -12905,7 +12906,6 @@ async def admin_edit_tool(
         "output_schema": output_schema,
         "annotations": annotations,
         "jsonpath_filter": form.get("jsonpathFilter", ""),
-        "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         "owner_email": user_email,
@@ -12919,11 +12919,12 @@ async def admin_edit_tool(
         tool_data["request_type"] = form.get("requestType")
     LOGGER.debug(f"Tool update data built: {tool_data}")
     try:
+        current_tool = db.get(DbTool, tool_id)
+        tool_data["auth"] = _build_auth_obj_from_form(form, preserve_masked=getattr(current_tool, "integration_type", None) == "A2A")
         tool_data.update(_tool_validation_policy_from_form(form))
         tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
 
         # Get current tool to extract current version
-        current_tool = db.get(DbTool, tool_id)
         current_version = getattr(current_tool, "version", 0) if current_tool else 0
 
         # Extract modification metadata
@@ -12941,6 +12942,8 @@ async def admin_edit_tool(
             user_id=get_canonical_user_id(user),
         )
         return ORJSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
+    except HTTPException:
+        raise
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(
@@ -12954,6 +12957,8 @@ async def admin_edit_tool(
     except ToolNameConflictError as ex:
         LOGGER.error(f"ToolNameConflictError in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except ToolValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except ToolError as ex:
         LOGGER.error(f"ToolError in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -16995,11 +17000,15 @@ async def admin_add_a2a_agent(
     try:
         LOGGER.info("A2A agent creation form fields: %s", sorted(str(key) for key in form.keys()))
 
-        _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=team_id)
-
-        user_email = get_user_email(user)
-        team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
+        visibility = str(form.get("visibility", "private"))
+        _check_public_visibility_allowed(visibility, team_id=team_id)
+        scoped_email, token_teams = get_scoped_resource_access_context(request, user)
+        user_email = scoped_email or get_user_email(user)
+        requested_team_id = team_id or getattr(request.state, "team_id", None)
+        requested_team_id = requested_team_id if isinstance(requested_team_id, str) else None
+        team_id = requested_team_id
+        if team_id is None and token_teams != []:
+            team_id = await TeamManagementService(db).verify_team_for_user(user_email) or None
 
         # Process tags
         ts_val = form.get("tags", "")
@@ -17084,7 +17093,7 @@ async def admin_add_a2a_agent(
                 "auth_query_param_key": str(form.get("auth_query_param_key", "")) or None,
                 "auth_query_param_value": str(form.get("auth_query_param_value", "")) or None,
                 "tags": tags,
-                "visibility": form.get("visibility", "private"),
+                "visibility": visibility,
                 "team_id": team_id,
                 "owner_email": user_email,
                 "passthrough_headers": passthrough_headers,
@@ -17096,6 +17105,7 @@ async def admin_add_a2a_agent(
             }
         )
 
+        require_a2a_registration_scope(db, user_email, token_teams, team_id, visibility)
         LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
 
         # Extract metadata from request
@@ -17112,8 +17122,8 @@ async def admin_add_a2a_agent(
             federation_source=metadata["federation_source"],
             team_id=team_id,
             owner_email=user_email,
-            visibility=form.get("visibility", "private"),
-            token_teams=get_scoped_resource_access_context(request, user)[1],
+            visibility=visibility,
+            token_teams=token_teams,
         )
 
         return ORJSONResponse(
@@ -17121,6 +17131,10 @@ async def admin_add_a2a_agent(
             status_code=200,
         )
 
+    except PermissionError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except PublicValidationError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except CoreValidationError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except A2AAgentNameConflictError as ex:

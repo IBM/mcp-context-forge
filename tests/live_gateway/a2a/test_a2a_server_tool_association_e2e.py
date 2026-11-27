@@ -255,9 +255,12 @@ def test_derived_tool_requires_execute_and_agent_visibility(gateway, other_admin
     wrong_scope = _request(gateway, "POST", "/rpc", scopes={"permissions": ["tools.read"]}, json=body)
     non_owner = _request(gateway, "POST", "/rpc", email=other_admin, scopes=execute, json=body)
     public_only = _request(gateway, "POST", "/rpc", teams=[], scopes=execute, json=body)
-    assert login_required.status_code in (401, 403)
-    for denied in (wrong_scope, non_owner, public_only):
-        assert denied.status_code in (403, 404) or "error" in denied.json(), denied.text
+    assert login_required.status_code == 401, login_required.text
+    assert wrong_scope.status_code == 200, wrong_scope.text
+    assert wrong_scope.json()["error"]["code"] == -32003
+    for denied in (non_owner, public_only):
+        assert denied.status_code == 200, denied.text
+        assert denied.json()["error"]["code"] == -32601
     assert requests == []
 
     allowed = _request(gateway, "POST", "/rpc", scopes=execute, json=body)
@@ -266,3 +269,35 @@ def test_derived_tool_requires_execute_and_agent_visibility(gateway, other_admin
     assert "result" in result, result
     assert "derived tool stub" in result["result"]["content"][0]["text"]
     assert len(requests) == 1
+
+
+def test_a2a_tool_edit_rejects_transport_changes(gateway):  # noqa: F811
+    """A valid tool edit can retain transport and update metadata."""
+    agent = _agent(gateway)
+    path = f"/tools/{agent['toolId']}"
+    original = _request(gateway, "GET", path).json()
+    updated = _request(gateway, "PUT", path, json={"integration_type": "A2A", "url": original["url"], "description": "tool metadata"})
+    assert updated.status_code == 200, updated.text
+    rejected = _request(gateway, "PUT", path, json={"integration_type": "A2A", "url": "http://127.0.0.1:9/new", "description": "rejected metadata"})
+    assert rejected.status_code == 400, rejected.text
+    assert rejected.json()["detail"] == "Cannot change A2A tool transport"
+    latest = _request(gateway, "GET", path).json()
+    assert (latest["url"], latest["description"]) == (original["url"], "tool metadata")
+
+
+def test_server_explicit_edit_removes_disabled_visible_association(gateway):  # noqa: F811
+    """Explicit replacement can detach an agent omitted from reads while disabled."""
+    agent = _agent(gateway)
+    server_id = _server(gateway, associated_a2a_agents=[agent["id"]])
+    path = f"/servers/{server_id}"
+    state_path = f"/a2a/{agent['id']}/state"
+    assert _request(gateway, "POST", state_path, params={"activate": False}).status_code == 200
+    assert _request(gateway, "GET", path).json()["associatedA2aAgents"] == []
+    assert _request(gateway, "PUT", path, json={"description": "omit associations"}).status_code == 200
+    assert _request(gateway, "POST", state_path, params={"activate": True}).status_code == 200
+    assert _request(gateway, "GET", path).json()["associatedA2aAgents"] == [agent["id"]]
+
+    assert _request(gateway, "POST", state_path, params={"activate": False}).status_code == 200
+    assert _request(gateway, "PUT", path, json={"associated_a2a_agents": []}).status_code == 200
+    assert _request(gateway, "POST", state_path, params={"activate": True}).status_code == 200
+    assert _request(gateway, "GET", path).json()["associatedA2aAgents"] == []
