@@ -9,7 +9,7 @@
 
 ## [Unreleased]
 
-=======
+### Breaking Changes
 
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.
   Configure credentials again after restoring into an empty registry. A gateway that needs credentials stays pending.
@@ -24,7 +24,7 @@
   Review each issuer with unrestricted administrator credentials, then approve the reviewed server version through
   `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
   See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
-
+- **`cforge` CLI and deployment builder removed** ([#5824](https://github.com/IBM/mcp-context-forge/issues/5824)) - The `cforge` console script and `mcpgateway.tools.*` import paths are removed. Replace `cforge gateway` and `mcp-stack.yaml` deployments with PyPI/uvx, the GHCR container image, docker compose, or Helm. Replace `cforge plugin` with `mcpplugins`; for example, `cforge plugin bootstrap` becomes `mcpplugins bootstrap`. Import the packaging hook from `mcpgateway.build_hooks`.
 
 ## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
 

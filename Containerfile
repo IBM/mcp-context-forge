@@ -180,7 +180,7 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 #   1. pyproject.toml (dependency manifest — plugins come from the [plugins]
 #      extra, resolved from PyPI)
 #   2. The setuptools build_py hook module (pyproject.toml's
-#      [tool.setuptools.cmdclass] points at mcpgateway.tools.builder.build_hooks,
+#      [tool.setuptools.cmdclass] points at mcpgateway.build_hooks,
 #      so setuptools must be able to import it while resolving "."'s build
 #      metadata below — copy just this module's import chain, not the rest of
 #      mcpgateway/, to keep the dep layer cache intact for normal source edits)
@@ -189,8 +189,7 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
 COPY mcpgateway/__init__.py /app/mcpgateway/__init__.py
-COPY mcpgateway/tools/builder/__init__.py /app/mcpgateway/tools/builder/__init__.py
-COPY mcpgateway/tools/builder/build_hooks.py /app/mcpgateway/tools/builder/build_hooks.py
+COPY mcpgateway/build_hooks.py /app/mcpgateway/build_hooks.py
 COPY --from=wheels /wheels /tmp/wheels
 
 # ----------------------------------------------------------------------------

@@ -202,13 +202,6 @@ class SSLCacheSettings(EnvironmentSettings):
         return None if isinstance(value, str) and not value.strip() else value
 
 
-class BuilderSettings(EnvironmentSettings):
-    """Configure deployment artifact generation."""
-
-    mcp_deploy_dir: str = Field(default="./deploy", description="Deployment artifact directory (MCP_DEPLOY_DIR).")
-    mcp_debug: str = Field(default="", description="Nonempty value enables builder diagnostics (MCP_DEBUG).")
-
-
 class ToolOpsSettings(EnvironmentSettings):
     """Configure ToolOps providers with typed credentials and legacy token aliases."""
 

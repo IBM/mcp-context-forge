@@ -9,7 +9,6 @@ Regression tests for shared environment configuration and standalone consumers.
 # Standard
 import importlib
 import json
-import os
 from pathlib import Path
 import runpy
 import secrets
@@ -23,7 +22,6 @@ import pytest
 from mcpgateway import cli
 from mcpgateway.config import Settings
 from mcpgateway.config_sections import (
-    BuilderSettings,
     ClientAuthSettings,
     DatabaseSettings,
     ListenerHostSettings,
@@ -314,19 +312,5 @@ def test_disabled_toolops_does_not_validate_provider_settings(isolated_config, m
 def test_gateway_schema_excludes_standalone_sections():
     """Gateway settings expose only configuration owned by gateway consumers."""
     fields = Settings.model_fields
-    for model in (BuilderSettings, ClientAuthSettings, ReverseProxySettings, SSLCacheSettings, ToolOpsSettings):
+    for model in (ClientAuthSettings, ReverseProxySettings, SSLCacheSettings, ToolOpsSettings):
         assert not fields.keys() & model.model_fields.keys()
-
-
-def test_builder_reads_file_without_exporting_values(isolated_config, monkeypatch):
-    """Builder settings read file values without changing the process environment."""
-    from mcpgateway.tools.builder.common import get_deploy_dir
-
-    monkeypatch.delenv("MCP_DEPLOY_DIR", raising=False)
-    monkeypatch.delenv("MCP_DEBUG", raising=False)
-    target = isolated_config / "artifacts"
-    (isolated_config / ".env").write_text(f"MCP_DEPLOY_DIR={target}\nMCP_DEBUG=1\n")
-    assert get_deploy_dir() == target
-    assert BuilderSettings().mcp_debug == "1"
-    assert "MCP_DEPLOY_DIR" not in os.environ
-    assert "MCP_DEBUG" not in os.environ
