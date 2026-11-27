@@ -881,22 +881,32 @@ export const restoreMemberOverrides = function (teamId) {
 }
 
 export const debouncedMemberSearch = function (teamId, searchTerm, delay = 300) {
+  const query =
+    searchTerm && typeof searchTerm === "object" && searchTerm.target && "value" in searchTerm.target
+      ? searchTerm.target.value
+      : (searchTerm ?? "");
+  const timeoutDelay = typeof delay === "number" ? delay : 300;
   if (AppState.memberSearchTimers[teamId]) {
     clearTimeout(AppState.memberSearchTimers[teamId]);
   }
   AppState.memberSearchTimers[teamId] = setTimeout(() => {
-    serverSideMemberSearch(teamId, searchTerm);
-  }, delay);
-}
+    serverSideMemberSearch(teamId, query);
+  }, timeoutDelay);
+};
 
 export const debouncedNonMemberSearch = function (teamId, searchTerm, delay = 300) {
+  const query =
+    searchTerm && typeof searchTerm === "object" && searchTerm.target && "value" in searchTerm.target
+      ? searchTerm.target.value
+      : (searchTerm ?? "");
+  const timeoutDelay = typeof delay === "number" ? delay : 300;
   if (AppState.nonMemberSearchTimers[teamId]) {
     clearTimeout(AppState.nonMemberSearchTimers[teamId]);
   }
   AppState.nonMemberSearchTimers[teamId] = setTimeout(() => {
-    serverSideNonMemberSearch(teamId, searchTerm);
-  }, delay);
-}
+    serverSideNonMemberSearch(teamId, query);
+  }, timeoutDelay);
+};
 
 // Search current team members via server-side filtering
 export const serverSideMemberSearch = async function (teamId, searchTerm) {
