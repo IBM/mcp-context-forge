@@ -935,12 +935,13 @@ test-oauth-browser-binding: uv  ## Test OAuth binding with isolated HTTPS server
 test-e2e: uv  ## Consolidated E2E suite against live gateway (3 replicas)
 	@echo "🧪 Running E2E suite against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
-	@echo "   MCP Apps: set MCPGATEWAY_MCP_APPS_ENABLED=true for both testing-up and this target"
-	@echo "   Modern MCP: set MCP_INBOUND_PROTOCOL_MODE=auto for both testing-up and this target; select with K=modern_logging"
+	@echo "   MCP Apps: tests run when the gateway has MCPGATEWAY_MCP_APPS_ENABLED=true (probed, not read from this shell)"
+	@echo "   Modern MCP: tests run when the gateway has MCP_INBOUND_PROTOCOL_MODE=auto (the default; probed); select with K=modern_logging"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
+	@echo "   LIVE_GATEWAY_REQUIRED=1: an unreachable gateway fails here instead of skipping."
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@$(UV_BIN) run rstest -n 0 -p playwright tests/live_gateway/e2e/test_e2e.py tests/live_gateway/e2e/test_observability_metrics_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+	@LIVE_GATEWAY_REQUIRED=1 $(UV_BIN) run rstest -n 0 -p playwright tests/live_gateway/e2e/test_e2e.py tests/live_gateway/e2e/test_observability_metrics_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
 		|| { echo "❌ E2E suite failed!"; exit 1; }
 	@echo "✅ E2E suite passed!"
 

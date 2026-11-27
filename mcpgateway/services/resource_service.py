@@ -3093,6 +3093,11 @@ class ResourceService(BaseService):
                     # Fallback to stringified content
                     content = ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
 
+                # MCP resources/read contents carry the requested URI, not the catalog template that served it.
+                template_pattern = getattr(resource_db, "uri_template", None) if resource_db else None
+                if template_pattern and uri and uri != template_pattern and getattr(content, "uri", None) == template_pattern:
+                    content.uri = uri
+
                 # ═══════════════════════════════════════════════════════════════════════════
                 # POST-FETCH HOOKS: Now called AFTER content is resolved from gateway
                 # ═══════════════════════════════════════════════════════════════════════════

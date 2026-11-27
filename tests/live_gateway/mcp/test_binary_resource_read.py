@@ -6,13 +6,13 @@ SPDX-License-Identifier: Apache-2.0
 Verify binary resource reads through a live gateway and a real MCP upstream.
 
 Set MCP_CLI_BASE_URL and JWT_SECRET_KEY for the gateway under test.
-Set MCP_BINARY_UPSTREAM_HOST=host.docker.internal for a gateway running in Docker.
+The gateway reaches the upstream at host.docker.internal by default. Set
+MCP_BINARY_UPSTREAM_HOST=127.0.0.1 for a gateway running on the host.
 """
 
 # Standard
 import base64
 from collections.abc import Iterator
-import os
 import socket
 import threading
 import time
@@ -27,6 +27,7 @@ import uvicorn
 # Local
 from tests.helpers.auth import make_test_jwt
 from tests.live_gateway.helpers.mcp_test_helpers import ADMIN_EMAIL, BASE_URL, JWT_SECRET, skip_no_gateway
+from tests.live_gateway.helpers.upstream_host import gateway_upstream_host, upstream_bind_host
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
 BINARY_CONTENT = b"\x00\xffbinary"
@@ -49,8 +50,8 @@ def binary_resources() -> Iterator[tuple[httpx.Client, dict[str, str], str]]:
         """Return an empty binary payload."""
         return b""
 
-    host = os.getenv("MCP_BINARY_UPSTREAM_HOST", "127.0.0.1")
-    bind_host = "127.0.0.1" if host in {"127.0.0.1", "localhost"} else "0.0.0.0"  # nosec B104 - Test upstream for a containerized gateway.
+    host = gateway_upstream_host("MCP_BINARY_UPSTREAM_HOST")
+    bind_host = upstream_bind_host(host)
     with socket.socket() as listener:
         listener.bind((bind_host, 0))
         port = listener.getsockname()[1]

@@ -69,10 +69,12 @@ It creates and deletes its own gateways, resources, virtual servers, users, and 
 export MCP_CLI_BASE_URL=http://127.0.0.1:8080
 export GATEWAY_TOOL_NAME_SEPARATOR=-
 export MCP_TEMPLATE_GATEWAY_COMMIT="commit-used-to-build-the-gateway"
-# Omit this variable for a host gateway. The fixture then binds to 127.0.0.1.
-# Use host.docker.internal for Docker Desktop or host.lima.internal for Colima.
+# Default: host.docker.internal, which the compose gateway reaches (extra_hosts).
 # Container access binds the unauthenticated fixture to 0.0.0.0 and prints a warning.
-export MCP_TEMPLATE_UPSTREAM_HOST=host.docker.internal
+# Set 127.0.0.1 for a gateway that runs on the host, or host.lima.internal for Colima.
+# MCP_UPSTREAM_HOST sets the same default for every fixture that hosts an upstream.
+# The bind-all-interfaces warning fires once per test process.
+# export MCP_TEMPLATE_UPSTREAM_HOST=127.0.0.1
 make test-e2e K=resource_template
 ```
 

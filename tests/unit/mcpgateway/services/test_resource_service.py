@@ -6618,6 +6618,42 @@ class TestReadResourceCoverageEdges:
         assert out.text == '{"user_id":"7","name":"Cached User"}'
 
     @pytest.mark.asyncio
+    async def test_read_resource_template_proxy_returns_requested_uri(self):
+        """Templated proxy reads report the requested URI, not the catalog template."""
+        # First-Party
+        from mcpgateway.common.models import ResourceContent
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        template_db = MagicMock()
+        template_db.id = "tmpl-1"
+        template_db.uri = "reference://users/{user_id}"
+        template_db.uri_template = "reference://users/{user_id}"
+        template_db.enabled = True
+        template_db.visibility = "public"
+        template_db.owner_email = None
+        template_db.team_id = None
+        template_db.gateway_id = "gateway-1"
+
+        db.execute.return_value.scalar_one_or_none.side_effect = [None, None, template_db]
+        content = ResourceContent(type="resource", id="tmpl-1", uri="reference://users/{user_id}", text="reference://users/7")
+
+        with (
+            patch.object(svc, "_read_template_resource", new_callable=AsyncMock, return_value=content),
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value="user 7") as invoke_resource,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="reference://users/7")
+
+        assert out.uri == "reference://users/7"
+        assert out.text == "user 7"
+        assert invoke_resource.await_args.kwargs["resource_uri"] == "reference://users/{user_id}"
+
+    @pytest.mark.asyncio
     async def test_read_resource_template_proxy_none_response_raises(self):
         """Templated proxy reads fail when gateway resolution returns no content."""
         # First-Party
