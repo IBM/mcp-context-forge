@@ -31,6 +31,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailApiToken, EmailTeam, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+from mcpgateway.utils.error_formatter import PublicValidationError
 
 # Initialize logging
 logging_service = LoggingService()
@@ -326,6 +327,35 @@ class TokenCatalogService:
         """
         return hashlib.sha256(token.encode()).hexdigest()
 
+    @staticmethod
+    def _scope_differs(token: EmailApiToken, scope: TokenScope) -> bool:
+        """Check whether a requested scope differs from the scope stored on a token.
+
+        Args:
+            token: Stored token record
+            scope: Requested scope
+
+        Returns:
+            bool: True if any scope field differs from the stored value
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> stored = SimpleNamespace(server_id=None, resource_scopes=["tools.read"], ip_restrictions=[], time_restrictions={}, usage_limits={})
+            >>> TokenCatalogService._scope_differs(stored, TokenScope(permissions=["tools.read"]))
+            False
+            >>> TokenCatalogService._scope_differs(stored, TokenScope(permissions=["tools.read", "tools.execute"]))
+            True
+            >>> TokenCatalogService._scope_differs(stored, TokenScope(permissions=["tools.read"], ip_restrictions=["10.0.0.0/8"]))
+            True
+        """
+        return (
+            scope.server_id != token.server_id
+            or scope.permissions != (token.resource_scopes or [])
+            or scope.ip_restrictions != (token.ip_restrictions or [])
+            or scope.time_restrictions != (token.time_restrictions or {})
+            or scope.usage_limits != (token.usage_limits or {})
+        )
+
     def _validate_scope_containment(
         self,
         requested_permissions: Optional[List[str]],
@@ -426,7 +456,7 @@ class TokenCatalogService:
                 authenticated session. Defaults to ``False``: callers that did not opt in cannot satisfy the
                 admin bypass, even if they pass ``is_admin=True`` and ``caller_permissions=["*"]``. Routers
                 that intend to allow the bypass must set this to ``True`` (default is False).
-            is_active (bool): Whether the token should be created as active (default is True).
+            is_active (bool): Must be True (default). A token cannot be issued in an inactive state.
             caller_email (Optional[str]): The email of the caller creating the token. When admin delegation
                 is used (``user_email != caller_email``), team membership checks are enforced even for
                 unrestricted admins to prevent privilege escalation.
@@ -438,6 +468,7 @@ class TokenCatalogService:
 
         Raises:
             ValueError: If any of the following validation checks fail:
+                - `is_active` is False (a token cannot be issued in an inactive state).
                 - The `user_email` does not correspond to an existing user.
                 - The `team_id` is missing or the user is not an active member of the specified team.
                 - A token with the same name already exists for the given user and team.
@@ -452,6 +483,9 @@ class TokenCatalogService:
         # # Enforce team-level scoping requirement
         # if not team_id:
         #     raise ValueError("team_id is required for token creation. " "Please select a specific team before creating a token. " "You cannot create tokens while viewing 'All Teams'.")
+
+        if not is_active:
+            raise PublicValidationError("A token cannot be created in an inactive state. Create the token as active and revoke it when it is no longer needed.")
 
         # Validate user exists
         user = self.db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
@@ -879,6 +913,14 @@ class TokenCatalogService:
         if scope and scope.permissions:
             self._validate_scope_containment(scope.permissions, caller_permissions)
 
+        # A disabled token is revoked, and a revoked JTI stays revoked.
+        if is_active and not token.is_active:
+            raise PublicValidationError("A deactivated token cannot be reactivated. Create a new token instead.")
+
+        # Scope is signed into the issued JWT, so it cannot be changed in place.
+        if scope and self._scope_differs(token, scope):
+            raise PublicValidationError("The scope of an issued token cannot be changed. Create a new token with the required scope and revoke this one.")
+
         # Check for duplicate name if changing
         if name and name != token.name:
             existing = self.db.execute(
@@ -896,22 +938,45 @@ class TokenCatalogService:
         if tags is not None:
             token.tags = tags
 
-        if is_active is not None:
-            token.is_active = is_active
-
-        if scope:
-            token.server_id = scope.server_id
-            token.resource_scopes = scope.permissions
-            token.ip_restrictions = scope.ip_restrictions
-            token.time_restrictions = scope.time_restrictions
-            token.usage_limits = scope.usage_limits
-
-        self.db.commit()
+        if is_active is False and token.is_active:
+            # Disabling revokes the JTI so the issued bearer stops working immediately.
+            await self._revoke_token_record(token, revoked_by=user_email, reason="Deactivated via token update")
+        else:
+            self.db.commit()
         self.db.refresh(token)
 
         logger.info("Updated token '%s' for user %s", token.name, SecurityValidator.sanitize_log_message(user_email))
 
         return token
+
+    async def _revoke_token_record(self, token: EmailApiToken, revoked_by: str, reason: Optional[str]) -> None:
+        """Mark a token inactive, blacklist its JTI and invalidate the auth cache.
+
+        Commits the session, including any other pending changes on the session.
+
+        Args:
+            token: Token record to revoke
+            revoked_by: Email of user performing revocation (for audit)
+            reason: Optional reason for revocation
+
+        Examples:
+            >>> service = TokenCatalogService(None)  # Would use real DB session
+            >>> # await service._revoke_token_record(token, "admin@example.com", "reason")
+        """
+        token.is_active = False
+        self.db.add(TokenRevocation(jti=token.jti, revoked_by=revoked_by, reason=reason))
+        self.db.commit()
+
+        # Invalidate auth cache synchronously so revoked tokens are rejected immediately
+        # (fire-and-forget via create_task risks a race where the next request arrives
+        # before the invalidation task runs, allowing the revoked token through).
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            await auth_cache.invalidate_revocation(token.jti)
+        except Exception as cache_error:
+            logger.debug("Failed to invalidate auth cache for revoked token: %s", cache_error)
 
     async def revoke_token(self, token_id: str, user_email: str, revoked_by: str, reason: Optional[str] = None) -> bool:
         """Revoke a token owned by the specified user or in a team the user belongs to.
@@ -946,25 +1011,7 @@ class TokenCatalogService:
             if role != "owner":
                 return False
 
-        # Mark token as inactive
-        token.is_active = False
-
-        # Add to blacklist
-        revocation = TokenRevocation(jti=token.jti, revoked_by=revoked_by, reason=reason)
-
-        self.db.add(revocation)
-        self.db.commit()
-
-        # Invalidate auth cache synchronously so revoked tokens are rejected immediately
-        # (fire-and-forget via create_task risks a race where the next request arrives
-        # before the invalidation task runs, allowing the revoked token through).
-        try:
-            # First-Party
-            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-            await auth_cache.invalidate_revocation(token.jti)
-        except Exception as cache_error:
-            logger.debug("Failed to invalidate auth cache for revoked token: %s", cache_error)
+        await self._revoke_token_record(token, revoked_by, reason)
 
         logger.info(
             "Revoked token '%s' (JTI: %s) by %s",
@@ -998,18 +1045,7 @@ class TokenCatalogService:
         if not token:
             return False
 
-        token.is_active = False
-        revocation = TokenRevocation(jti=token.jti, revoked_by=revoked_by, reason=reason)
-        self.db.add(revocation)
-        self.db.commit()
-
-        try:
-            # First-Party
-            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-            await auth_cache.invalidate_revocation(token.jti)
-        except Exception as cache_error:
-            logger.debug("Failed to invalidate auth cache: %s", cache_error)
+        await self._revoke_token_record(token, revoked_by, reason)
 
         logger.info(
             "Admin revoked token '%s' (JTI: %s) by %s",

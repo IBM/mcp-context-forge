@@ -25,6 +25,14 @@
   `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
   See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
 
+### Breaking Changes
+
+- **API token lifecycle hardening (breaking for `/tokens` clients)** - Deactivating a token and changing its scope now follow the rules of the issued bearer, which carries its scope and stays valid until its JTI is revoked.
+    - `PUT /tokens/{token_id}` with `is_active=false` now revokes the token, so the issued bearer stops working immediately. Before, it only hid the token from listings.
+    - Deactivation is permanent. `PUT /tokens/{token_id}` with `is_active=true` on a deactivated token returns HTTP 400.
+    - `POST /tokens` and `POST /tokens/teams/{team_id}` with `is_active=false` return HTTP 400. Before, they returned a bearer for a token marked inactive.
+    - `PUT /tokens/{token_id}` with a `scope` that differs from the issued scope (`server_id`, permissions, IP, time or usage restrictions) returns HTTP 400. Resending the issued scope is accepted.
+    - To reactivate a token or change its scope, create a new token and revoke the old one.
 
 ## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
 

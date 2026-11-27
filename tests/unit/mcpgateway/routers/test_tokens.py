@@ -36,10 +36,12 @@ from mcpgateway.schemas import (
     TokenListResponse,
     TokenResponse,
     TokenRevokeRequest,
+    TokenScopeRequest,
     TokenUpdateRequest,
     TokenUsageStatsResponse,
 )
 from mcpgateway.services.token_catalog_service import TokenScope
+from mcpgateway.utils.error_formatter import PublicValidationError
 
 # Local
 # Test utilities
@@ -226,26 +228,26 @@ class TestCreateToken:
             assert "Invalid request" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_create_token_with_is_active_false(self, mock_db, mock_current_user, mock_token_record):
-        """Test creating token with is_active=False persists the value."""
+    async def test_create_token_with_is_active_false_rejected(self, mock_db, mock_current_user):
+        """Test creating a token as inactive returns 400 with the actionable message."""
         request = TokenCreateRequest(
             name="Inactive Token",
             description="Token created as inactive",
             is_active=False,
         )
-        mock_token_record.is_active = False
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.get_default_team_id = AsyncMock(return_value=None)
-            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "inactive-token"))
+            mock_service.create_token = AsyncMock(
+                side_effect=PublicValidationError("A token cannot be created in an inactive state. Create the token as active and revoke it when it is no longer needed.")
+            )
 
-            response = await create_token(request, current_user=mock_current_user, db=mock_db)
+            with pytest.raises(HTTPException) as exc_info:
+                await create_token(request, current_user=mock_current_user, db=mock_db)
 
-            assert response.token.is_active is False
-            # Verify is_active=False was passed to service
-            call_args = mock_service.create_token.call_args
-            assert call_args[1]["is_active"] is False
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "inactive state" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -342,6 +344,7 @@ class TestCreateToken:
 @pytest.mark.asyncio
 async def test_create_token_public_validation_error(mock_db, mock_current_user):
     """Test that PublicValidationError messages are exposed even in production mode."""
+    # First-Party
     from mcpgateway.utils.error_formatter import PublicValidationError
 
     request = TokenCreateRequest(
@@ -366,6 +369,7 @@ async def test_create_token_public_validation_error(mock_db, mock_current_user):
 @pytest.mark.asyncio
 async def test_create_team_token_public_validation_error(mock_db, mock_current_user):
     """Test that PublicValidationError messages are exposed in create_team_token."""
+    # First-Party
     from mcpgateway.utils.error_formatter import PublicValidationError
 
     request = TokenCreateRequest(
@@ -566,9 +570,8 @@ class TestUpdateToken:
             assert "Invalid request" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_update_token_toggle_is_active(self, mock_db, mock_current_user, mock_token_record):
-        """Test updating token to toggle is_active status."""
-        # Deactivate an active token
+    async def test_update_token_deactivate(self, mock_db, mock_current_user, mock_token_record):
+        """Test deactivating a token passes is_active=False to the service."""
         request = TokenUpdateRequest(is_active=False)
         mock_token_record.is_active = False
 
@@ -580,31 +583,46 @@ class TestUpdateToken:
             response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
 
             assert response.is_active is False
-            # Verify is_active=False was passed to service
             call_args = mock_service.update_token.call_args
             assert call_args[1]["is_active"] is False
 
     @pytest.mark.asyncio
-    async def test_update_token_reactivate(self, mock_db, mock_current_user, mock_token_record):
-        """Test updating token to reactivate it."""
+    async def test_update_token_reactivate_rejected(self, mock_db, mock_current_user):
+        """Test reactivating a deactivated token returns 400 with the actionable message."""
         request = TokenUpdateRequest(is_active=True)
-        mock_token_record.is_active = True
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.get_default_team_id = AsyncMock(return_value=None)
-            mock_service.update_token = AsyncMock(return_value=mock_token_record)
+            mock_service.update_token = AsyncMock(side_effect=PublicValidationError("A deactivated token cannot be reactivated. Create a new token instead."))
 
-            response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+            with pytest.raises(HTTPException) as exc_info:
+                await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
 
-            assert response.is_active is True
-            call_args = mock_service.update_token.call_args
-            assert call_args[1]["is_active"] is True
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "cannot be reactivated" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_update_token_scope_change_rejected(self, mock_db, mock_current_user):
+        """Test changing the scope of an issued token returns 400 with the actionable message."""
+        request = TokenUpdateRequest(scope=TokenScopeRequest(server_id="other-server"))
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
+            mock_service.update_token = AsyncMock(side_effect=PublicValidationError("The scope of an issued token cannot be changed. Create a new token with the required scope and revoke this one."))
+
+            with pytest.raises(HTTPException) as exc_info:
+                await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "cannot be changed" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio
 async def test_update_token_public_validation_error(mock_db, mock_current_user):
     """Test that PublicValidationError messages are exposed in update_token."""
+    # First-Party
     from mcpgateway.utils.error_formatter import PublicValidationError
 
     request = TokenUpdateRequest(name="Updated Token")
@@ -968,6 +986,7 @@ class TestTeamTokens:
 @pytest.mark.asyncio
 async def test_list_team_tokens_public_validation_error(mock_db, mock_current_user):
     """Test that PublicValidationError messages are exposed in list_team_tokens."""
+    # First-Party
     from mcpgateway.utils.error_formatter import PublicValidationError
 
     with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
@@ -1486,6 +1505,7 @@ class TestAdminBypassRouterLevel:
     @pytest.mark.asyncio
     async def test_create_team_token_admin_bypass_with_scope(self, mock_db, mock_admin_user, mock_token_record):
         """Un-narrowed admin can create team token with custom scope."""
+        # First-Party
         from mcpgateway.schemas import TokenScopeRequest
 
         request = TokenCreateRequest(name="Scoped Admin Token", description="With permissions", scope=TokenScopeRequest(permissions=["tools.read"]))
