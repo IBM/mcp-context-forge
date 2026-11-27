@@ -232,3 +232,29 @@ class TestGatewayLifecycleClaimMigrationDefaults:
                 assert CLAIM_INDEX not in _index_names(conn)
         finally:
             engine.dispose()
+
+    def test_downgrade_drops_columns_through_batch_alter_table(self, monkeypatch):
+        """downgrade() uses batch mode so SQLite versions without DROP COLUMN can downgrade."""
+        engine = sa.create_engine("sqlite:///:memory:")
+        try:
+            with engine.connect() as conn:
+                _create_gateway_table(conn)
+                ctx = _migration_context(conn)
+                module = importlib.import_module(MODULE_NAME)
+                batch_calls = []
+                real_batch_alter_table = module.op.batch_alter_table
+
+                def tracking_batch_alter_table(*args, **kwargs):
+                    batch_calls.append(args)
+                    return real_batch_alter_table(*args, **kwargs)
+
+                with Operations.context(ctx):
+                    module.upgrade()
+                    monkeypatch.setattr(module.op, "batch_alter_table", tracking_batch_alter_table)
+                    module.downgrade()
+
+                assert batch_calls == [("gateways",)]
+                assert LIFECYCLE_COLUMNS.isdisjoint(_column_names(conn))
+                assert CLAIM_COLUMNS.isdisjoint(_column_names(conn))
+        finally:
+            engine.dispose()
