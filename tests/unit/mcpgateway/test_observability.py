@@ -1038,7 +1038,7 @@ class TestLegacyInstanaContextCompat:
             fake_legacy_instana().start_span("x", context=self._inbound_context(), bogus=True)
 
     def test_noop_for_modern_instana(self, monkeypatch):
-        """Instana >= 3.12 (``context`` already supported) is left untouched."""
+        """Instana >= 3.20 (converts foreign parents itself) is left untouched."""
         # Standard
         import sys
         import types
@@ -1054,8 +1054,11 @@ class TestLegacyInstanaContextCompat:
         tracer_mod.InstanaTracer = InstanaTracer
         span_context_mod = types.ModuleType("instana.span_context")
         span_context_mod.SpanContext = object
+        version_mod = types.ModuleType("instana.version")
+        version_mod.VERSION = "3.20.0"
         monkeypatch.setitem(sys.modules, "instana.tracer", tracer_mod)
         monkeypatch.setitem(sys.modules, "instana.span_context", span_context_mod)
+        monkeypatch.setitem(sys.modules, "instana.version", version_mod)
         original = (InstanaTracer.__dict__["start_span"], InstanaTracer.__dict__["start_as_current_span"])
 
         assert observability.ensure_legacy_instana_context_compat() is False
@@ -1123,6 +1126,216 @@ class TestLegacyInstanaContextCompat:
         monkeypatch.setitem(sys.modules, "instana.span_context", span_context_mod)
         assert observability.ensure_legacy_instana_context_compat() is False
         assert InstanaTracer.start_span is print
+
+
+@pytest.fixture
+def fake_instana_pre_3_20(monkeypatch):
+    """Install an ``instana`` stand-in that mirrors Instana 3.12 to 3.19.
+
+    ``start_span`` accepts ``context=`` but raises ``TypeError`` when the parent span
+    context is not an Instana ``SpanContext``, as ``instana/tracer.py`` does in those releases.
+    """
+    pytest.importorskip("opentelemetry.trace")
+    # Standard
+    from contextlib import contextmanager
+    import sys
+    import types
+
+    # Third-Party
+    from opentelemetry import trace as otel_trace_api
+
+    class SpanContext(otel_trace_api.SpanContext):
+        """Instana span context (extra kwargs accepted and ignored)."""
+
+        def __new__(cls, trace_id, span_id, is_remote, trace_flags=None, trace_state=None, **_kwargs):
+            return super().__new__(cls, trace_id, span_id, is_remote, trace_flags, trace_state)
+
+    class FakeSpan(otel_trace_api.NonRecordingSpan):
+        def __init__(self, ctx, parent_id):
+            super().__init__(ctx)
+            self.parent_id = parent_id
+
+    counter = {"id": 0x2000}
+
+    class InstanaTracer:
+        """Tracer whose ``start_span`` rejects non-Instana parents."""
+
+        def start_span(self, name, context=None, kind=None, attributes=None, links=None, start_time=None, record_exception=True, set_status_on_exception=True):
+            span = otel_trace_api.get_current_span(context)
+            parent = None if span is otel_trace_api.INVALID_SPAN else span.get_span_context()
+            if parent and not isinstance(parent, SpanContext):
+                raise TypeError("parent_context must be an Instana SpanContext or None.")
+            counter["id"] += 1
+            if parent is not None and parent.is_valid:
+                return FakeSpan(SpanContext(parent.trace_id, counter["id"], False), parent.span_id)
+            return FakeSpan(SpanContext(counter["id"], counter["id"], False), None)
+
+        @contextmanager
+        def start_as_current_span(self, name, context=None, kind=None, attributes=None, links=None, start_time=None, record_exception=True, set_status_on_exception=True, end_on_exit=True):
+            span = self.start_span(name=name, context=context, kind=kind)
+            with otel_trace_api.use_span(span, end_on_exit=end_on_exit) as current:
+                yield current
+
+    tracer_mod = types.ModuleType("instana.tracer")
+    tracer_mod.InstanaTracer = InstanaTracer
+    span_context_mod = types.ModuleType("instana.span_context")
+    span_context_mod.SpanContext = SpanContext
+    ids_mod = types.ModuleType("instana.util.ids")
+    ids_mod.hex_id = lambda value: format(int(value), "016x") if int(value) < (1 << 64) else format(int(value), "032x")
+    ids_mod.hex_id_limited = lambda value: format(int(value), "032x")[-16:]
+    version_mod = types.ModuleType("instana.version")
+    version_mod.VERSION = "3.15.0"
+    monkeypatch.setitem(sys.modules, "instana.tracer", tracer_mod)
+    monkeypatch.setitem(sys.modules, "instana.span_context", span_context_mod)
+    monkeypatch.setitem(sys.modules, "instana.util.ids", ids_mod)
+    monkeypatch.setitem(sys.modules, "instana.version", version_mod)
+    return InstanaTracer
+
+
+class TestInstanaForeignParentCompat:
+    """Adapter for Instana 3.12 to 3.19, which reject a plain OpenTelemetry parent span context."""
+
+    TRACE_ID_LOW = 0x0AF7651916CD43DD8448EB211C80319C & ((1 << 64) - 1)
+    PARENT_SPAN_ID = 0xB7AD6B7169203331
+
+    @staticmethod
+    def _inbound_context():
+        # Third-Party
+        from opentelemetry.propagate import extract
+
+        return extract({"traceparent": INBOUND_TRACEPARENT})
+
+    def test_unadapted_tracer_rejects_traceparent(self, fake_instana_pre_3_20):
+        """The fake reproduces the production failure before the adapter runs."""
+        with pytest.raises(TypeError, match="parent_context must be an Instana SpanContext or None"):
+            fake_instana_pre_3_20().start_span("GET /health", context=self._inbound_context())
+
+    def test_cached_instance_start_span_accepts_traceparent(self, fake_instana_pre_3_20):
+        """Instances created before adaptation accept a traceparent parent and keep the parent span ID."""
+        cached = fake_instana_pre_3_20()
+        assert observability.ensure_legacy_instana_context_compat() is True
+        span = cached.start_span("GET /health", context=self._inbound_context())
+        assert span.parent_id == self.PARENT_SPAN_ID
+        assert span.get_span_context().trace_id == self.TRACE_ID_LOW
+
+    def test_start_as_current_span_accepts_traceparent_and_restores(self, fake_instana_pre_3_20):
+        """``start_as_current_span`` parents correctly, including its children, and restores the outer context."""
+        # Third-Party
+        from opentelemetry import context as otel_context_api
+        from opentelemetry import trace as otel_trace_api
+
+        observability.ensure_legacy_instana_context_compat()
+        tracer = fake_instana_pre_3_20()
+        before = otel_context_api.get_current()
+        with tracer.start_as_current_span("mcp", context=self._inbound_context()) as span:
+            assert span.parent_id == self.PARENT_SPAN_ID
+            assert otel_trace_api.get_current_span() is span
+            child = tracer.start_span("child")
+            assert child.parent_id == span.get_span_context().span_id
+        assert otel_context_api.get_current() is before
+
+    def test_context_restored_when_body_raises(self, fake_instana_pre_3_20):
+        """Application failures inside the span propagate and the context is restored."""
+        # Third-Party
+        from opentelemetry import context as otel_context_api
+
+        observability.ensure_legacy_instana_context_compat()
+        before = otel_context_api.get_current()
+        with pytest.raises(RuntimeError, match="app"):
+            with fake_instana_pre_3_20().start_as_current_span("x", context=self._inbound_context()):
+                raise RuntimeError("app")
+        assert otel_context_api.get_current() is before
+
+    def test_ambient_foreign_parent_with_context_none(self, fake_instana_pre_3_20):
+        """A plain OpenTelemetry span in the ambient context no longer breaks ``context=None`` calls."""
+        # Third-Party
+        from opentelemetry import trace as otel_trace_api
+
+        observability.ensure_legacy_instana_context_compat()
+        foreign = otel_trace_api.get_current_span(self._inbound_context()).get_span_context()
+        with otel_trace_api.use_span(otel_trace_api.NonRecordingSpan(foreign)):
+            span = fake_instana_pre_3_20().start_span("inner")
+        assert span.parent_id == self.PARENT_SPAN_ID
+
+    def test_positional_context_is_normalized(self, fake_instana_pre_3_20):
+        """A positionally passed ``context`` is converted as well."""
+        observability.ensure_legacy_instana_context_compat()
+        span = fake_instana_pre_3_20().start_span("x", self._inbound_context())
+        assert span.parent_id == self.PARENT_SPAN_ID
+
+    def test_baggage_survives_conversion(self, fake_instana_pre_3_20):
+        """Other context values, such as baggage, stay in the rebuilt context."""
+        # Third-Party
+        from opentelemetry import baggage as otel_baggage
+
+        captured = {}
+        original = fake_instana_pre_3_20.start_span
+
+        def spy(self, name, context=None, **kwargs):
+            captured["baggage"] = otel_baggage.get_baggage("tenant", context)
+            return original(self, name, context=context, **kwargs)
+
+        fake_instana_pre_3_20.start_span = spy
+        observability.ensure_legacy_instana_context_compat()
+        context = otel_baggage.set_baggage("tenant", "t1", self._inbound_context())
+        fake_instana_pre_3_20().start_span("x", context=context)
+        assert captured["baggage"] == "t1"
+
+    def test_context_without_parent_passes_through_unchanged(self, fake_instana_pre_3_20):
+        """Empty and ``None`` contexts are not rebuilt."""
+        # Third-Party
+        from opentelemetry.context import Context
+
+        empty = Context()
+        assert observability._normalize_instana_parent_context(empty, observability.sys.modules["instana.span_context"].SpanContext) is empty
+        assert observability._normalize_instana_parent_context(None, observability.sys.modules["instana.span_context"].SpanContext) is None
+        observability.ensure_legacy_instana_context_compat()
+        assert fake_instana_pre_3_20().start_span("root", context=empty).parent_id is None
+
+    def test_instana_native_parent_passes_through_unchanged(self, fake_instana_pre_3_20):
+        """A context that already holds an Instana parent is not rebuilt."""
+        # Third-Party
+        from opentelemetry import trace as otel_trace_api
+
+        span_context_cls = observability.sys.modules["instana.span_context"].SpanContext
+        native = otel_trace_api.set_span_in_context(otel_trace_api.NonRecordingSpan(span_context_cls(1, 2, False)))
+        assert observability._normalize_instana_parent_context(native, span_context_cls) is native
+
+    def test_idempotent(self, fake_instana_pre_3_20):
+        """Repeated initialization wraps each method exactly once."""
+        assert observability.ensure_legacy_instana_context_compat() is True
+        first = (fake_instana_pre_3_20.start_span, fake_instana_pre_3_20.start_as_current_span)
+        assert observability.ensure_legacy_instana_context_compat() is True
+        assert (fake_instana_pre_3_20.start_span, fake_instana_pre_3_20.start_as_current_span) == first
+        assert not hasattr(first[0].__wrapped__, "__wrapped__")
+        assert getattr(first[0], observability._INSTANA_PARENT_NORMALIZER_MARKER, False)
+
+    def test_unrelated_type_error_propagates(self, fake_instana_pre_3_20):
+        """Unrelated TypeErrors from the tracer are not swallowed or retried."""
+        observability.ensure_legacy_instana_context_compat()
+        with pytest.raises(TypeError, match="bogus"):
+            fake_instana_pre_3_20().start_span("x", context=self._inbound_context(), bogus=True)
+
+    @pytest.mark.parametrize("version_text", ["3.20.0", "3.21.4", "4.0.0"])
+    def test_noop_for_instana_3_20_and_later(self, fake_instana_pre_3_20, monkeypatch, version_text):
+        """Instana 3.20 and later convert the parent themselves, so the tracer stays unpatched."""
+        # Standard
+        import sys
+
+        monkeypatch.setattr(sys.modules["instana.version"], "VERSION", version_text)
+        original = (fake_instana_pre_3_20.__dict__["start_span"], fake_instana_pre_3_20.__dict__["start_as_current_span"])
+        assert observability.ensure_legacy_instana_context_compat() is False
+        assert (fake_instana_pre_3_20.__dict__["start_span"], fake_instana_pre_3_20.__dict__["start_as_current_span"]) == original
+
+    @pytest.mark.parametrize("version_text", ["", "unknown", "3"])
+    def test_unknown_version_is_wrapped(self, fake_instana_pre_3_20, monkeypatch, version_text):
+        """An unreadable Instana version is wrapped, because converting a valid parent twice is harmless."""
+        # Standard
+        import sys
+
+        monkeypatch.setattr(sys.modules["instana.version"], "VERSION", version_text)
+        assert observability.ensure_legacy_instana_context_compat() is True
+        assert fake_instana_pre_3_20().start_span("x", context=self._inbound_context()).parent_id == self.PARENT_SPAN_ID
 
 
 def test_upstream_request_context_is_a_noop_without_otel_baggage(monkeypatch):

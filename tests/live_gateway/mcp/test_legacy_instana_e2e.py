@@ -89,17 +89,26 @@ def upstream_mcp_server():
     worker.join(timeout=5)
 
 
-@pytest.fixture(scope="module")
-def legacy_instana_gateway(tmp_path_factory, upstream_mcp_server):
-    """Boot a gateway under legacy Instana AutoTrace and register the upstream."""
+def installed_instana_version():
+    """Return the installed Instana version as a ``(major, minor)`` tuple, or fail/skip when it is absent."""
     try:
         instana_version = version("instana")
     except PackageNotFoundError:
-        _unavailable("instana is not installed; run with --with 'instana==3.11.1'")
-    if tuple(int(part) for part in instana_version.split(".")[:2]) >= (3, 12):
-        _unavailable(f"instana {instana_version} supports `context=`; a legacy (< 3.12) sensor is required")
+        _unavailable("instana is not installed; run with --with 'instana==<version>'")
+    return tuple(int(part) for part in instana_version.split(".")[:2])
 
-    tmp_path = tmp_path_factory.mktemp("legacy-instana-gateway")
+
+@pytest.fixture(scope="module")
+def legacy_instana_gateway(tmp_path_factory, upstream_mcp_server):
+    """Boot a gateway under legacy Instana AutoTrace and register the upstream."""
+    if installed_instana_version() >= (3, 12):
+        _unavailable("instana supports `context=`; a legacy (< 3.12) sensor is required")
+    yield from boot_instana_gateway(tmp_path_factory, upstream_mcp_server)
+
+
+def boot_instana_gateway(tmp_path_factory, upstream_mcp_server):
+    """Boot a gateway subprocess under Instana AutoTrace and register the upstream MCP server."""
+    tmp_path = tmp_path_factory.mktemp("instana-gateway")
     gateway_port = _free_port()
     signing_key = secrets.token_urlsafe(48)
     env = {
@@ -174,7 +183,7 @@ def legacy_instana_gateway(tmp_path_factory, upstream_mcp_server):
                         time.sleep(0.5)
                 assert tool_name, f"upstream echo tool was not discovered: {log_path.read_text()[-3000:]}"
 
-                yield {"client": client, "base_url": base_url, "token": token, "tool_name": tool_name, "log_path": log_path}
+                yield {"client": client, "base_url": base_url, "token": token, "tool_name": tool_name, "log_path": log_path, "gateway_id": gateway_id, "upstream_url": upstream_mcp_server}
         finally:
             process.terminate()
             try:
