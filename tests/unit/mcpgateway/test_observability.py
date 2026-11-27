@@ -25,6 +25,7 @@ from mcpgateway.observability import (
     OpenTelemetryRequestMiddleware,
     create_span,
     extract_baggage_span_attribute_policy,
+    FASTAPI_TELEMETRY_CONFIG,
     inject_trace_context_headers,
     init_telemetry,
     otel_context_active,
@@ -1131,3 +1132,44 @@ def test_upstream_request_context_is_a_noop_without_otel_baggage(monkeypatch):
     with upstream_request_context():
         reached = True
     assert reached
+
+
+@pytest.mark.parametrize(
+    ("telemetry_kwargs", "expected_server_span_scopes"),
+    [
+        pytest.param({"telemetry": FASTAPI_TELEMETRY_CONFIG}, ["mcp-gateway"], id="gateway-config"),
+        pytest.param({}, ["fastapi", "mcp-gateway"], id="fastapi-default"),
+    ],
+)
+def test_fastapi_telemetry_config_leaves_one_server_span_per_request(monkeypatch, telemetry_kwargs, expected_server_span_scopes):
+    """FASTAPI_TELEMETRY_CONFIG removes the duplicate server span that FastAPI native tracing adds by default."""
+    otel_trace = pytest.importorskip("opentelemetry.trace")
+    trace_sdk = pytest.importorskip("opentelemetry.sdk.trace")
+    export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export")
+    memory_export_sdk = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+
+    # Third-Party
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    exporter = memory_export_sdk.InMemorySpanExporter()
+    provider = trace_sdk.TracerProvider()
+    provider.add_span_processor(export_sdk.SimpleSpanProcessor(exporter))
+    # FastAPI native tracing starts only when the global tracer provider is configured.
+    monkeypatch.setattr(otel_trace, "get_tracer_provider", lambda: provider)
+    monkeypatch.setattr(observability, "_TRACER", provider.get_tracer("mcp-gateway"))
+
+    app = FastAPI(**telemetry_kwargs)
+
+    @app.get("/health")
+    async def health():
+        return {"ok": True}
+
+    traced_app = OpenTelemetryRequestMiddleware(app, should_trace_request_path=lambda _path: True)
+    response = TestClient(traced_app).get("/health")
+    provider.force_flush()
+
+    assert response.status_code == 200
+    server_spans = [span for span in exporter.get_finished_spans() if span.kind == otel_trace.SpanKind.SERVER]
+    assert sorted(span.instrumentation_scope.name for span in server_spans) == expected_server_span_scopes
+    assert {span.name for span in server_spans} == {"GET /health"}

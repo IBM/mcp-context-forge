@@ -118,7 +118,14 @@ from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddl
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
-from mcpgateway.observability import configure_baggage_span_attribute_policy, extract_baggage_span_attribute_policy, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
+from mcpgateway.observability import (
+    configure_baggage_span_attribute_policy,
+    extract_baggage_span_attribute_policy,
+    FASTAPI_TELEMETRY_CONFIG,
+    init_telemetry,
+    OpenTelemetryRequestMiddleware,
+    otel_tracing_enabled,
+)
 from mcpgateway.plugins import (
     enable_plugins,
     get_plugin_manager,
@@ -2012,6 +2019,7 @@ app = FastAPI(
     root_path=settings.app_root_path,
     lifespan=lifespan,
     default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization
+    telemetry=FASTAPI_TELEMETRY_CONFIG,
 )
 
 # Setup metrics instrumentation

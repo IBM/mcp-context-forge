@@ -348,6 +348,14 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
     assert main_module.OpenTelemetryRequestMiddleware in middleware_classes
 
 
+def test_main_app_disables_fastapi_native_tracing():
+    """The main app applies FASTAPI_TELEMETRY_CONFIG, so FastAPI emits no server span of its own."""
+    # First-Party
+    import mcpgateway.main as main_module
+
+    assert main_module.app._telemetry["tracing"] is False  # pylint: disable=protected-access
+
+
 def test_get_csp_nonce_from_request_with_none():
     """Test get_csp_nonce_from_request returns empty string when request is None."""
     # First-Party

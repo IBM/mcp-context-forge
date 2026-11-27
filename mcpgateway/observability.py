@@ -22,6 +22,9 @@ import sys
 from typing import Any, Callable, cast, Dict, Generator, Mapping, MutableMapping, Optional
 from urllib.parse import urlparse
 
+# Third-Party
+from fastapi.telemetry import TelemetryConfig
+
 _UPSTREAM_LOCAL_BAGGAGE: ContextVar[Optional[Mapping[str, Any]]] = ContextVar("upstream_local_baggage", default=None)
 
 # Third-Party - Try to import OpenTelemetry core components - make them truly optional
@@ -1212,6 +1215,10 @@ def _should_trace_request_path(path: str) -> bool:
     if normalized.startswith("/_internal/mcp/"):
         return True
     return False
+
+
+# OpenTelemetryRequestMiddleware owns the HTTP server span. FastAPI native tracing emits a duplicate sibling span.
+FASTAPI_TELEMETRY_CONFIG: TelemetryConfig = {"tracing": False}
 
 
 class OpenTelemetryRequestMiddleware:
