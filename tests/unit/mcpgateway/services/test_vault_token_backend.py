@@ -333,13 +333,13 @@ class TestVaultTokenBackendPathHelpers:
 
         path = backend._construct_vault_path(
             team_id="engineering",
-            mcp_url="https://mcp.example.com",
+            gateway_id="gw-123",
             app_user_email="alice@example.com"
         )
 
-        # Verify path structure
-        assert path.startswith("secret/data/contextforge/oauth/engineering/")
-        assert "alice%40example.com" in path  # Email URL-encoded
+        # Verify path structure — the third segment is the gateway id, so two gateways sharing an
+        # upstream URL get separate paths (issue #6353 item 3).
+        assert path == "secret/data/contextforge/oauth/engineering/gw-123/alice%40example.com"
 
     def test_construct_vault_path_with_special_chars_in_email(self):
         """Test path construction with special characters in email."""
@@ -360,7 +360,7 @@ class TestVaultTokenBackendPathHelpers:
 
         path = backend._construct_vault_path(
             team_id="team1",
-            mcp_url="https://mcp.example.com",
+            gateway_id="gw-123",
             app_user_email="user+test@example.com"
         )
 
@@ -386,7 +386,7 @@ class TestVaultTokenBackendPathHelpers:
 
         path = backend._construct_metadata_path(
             team_id="team1",
-            mcp_url="https://mcp.example.com",
+            gateway_id="gw-123",
             app_user_email="alice@example.com"
         )
 
@@ -705,9 +705,11 @@ class TestVaultTokenBackendRevoke:
             )
 
             assert result is True
-            # Verify DELETE was called
-            call_args = mock_vault.call_args
-            assert call_args[0][0] == "DELETE"
+            # Both the gateway-keyed path and the legacy URL-keyed path are deleted, so a revoke
+            # cannot leave a readable credential behind at the path the read falls back to.
+            assert [c[0][0] for c in mock_vault.call_args_list] == ["DELETE", "DELETE"]
+            deleted = [c[0][1] for c in mock_vault.call_args_list]
+            assert "secret/metadata/contextforge/oauth/team1/gw-123/user%40example.com" in deleted
 
     @pytest.mark.asyncio
     async def test_revoke_user_tokens_not_found(self):
@@ -2183,12 +2185,8 @@ class TestVaultTokenBackendAdditionalCoverage:
         mock_gateway.url = "https://mcp.example.com"
         mock_db.get.return_value = mock_gateway
 
-        # Populate cache
-        cache_key = (
-            "team1",
-            backend._hash_server_id("https://mcp.example.com"),
-            "user@test.com",
-        )
+        # Populate cache — keyed on gateway_id, matching the Vault path
+        cache_key = ("team1", "gw-123", "user@test.com")
         VaultTokenBackend._token_cache[cache_key] = {"token": "cached", "cache_expires": datetime.now(timezone.utc) + timedelta(seconds=300)}
 
         with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
@@ -2196,10 +2194,11 @@ class TestVaultTokenBackendAdditionalCoverage:
 
             await backend.revoke_user_tokens("gw-123", "team1", "user@test.com")
 
-            # Assert: DELETE called and cache entry marked expired (not deleted —
-            # expire-in-place lets other workers' copies become stale within one TTL cycle).
-            mock_vault.assert_called_once()
-            assert mock_vault.call_args[0][0] == "DELETE"
+            # Assert: both the gateway-keyed and legacy paths are deleted, and the cache entry is
+            # marked expired (not deleted — expire-in-place lets other workers' copies become
+            # stale within one TTL cycle).
+            assert mock_vault.call_count == 2
+            assert all(c[0][0] == "DELETE" for c in mock_vault.call_args_list)
             assert cache_key in VaultTokenBackend._token_cache
             assert VaultTokenBackend._token_cache[cache_key]["cache_expires"] < datetime.now(timezone.utc)
 
@@ -2230,8 +2229,12 @@ class TestVaultTokenBackendAdditionalCoverage:
 
             await backend.revoke_user_tokens("gw-123", None, "user@test.com")
 
-            # Assert: DELETE called with correct path (no team_id segment)
-            mock_vault.assert_called_once()
+            # Assert: DELETE called for the gateway-keyed and legacy paths, both under "shared"
+            # since there is no team_id segment.
+            assert mock_vault.call_count == 2
+            deleted = [c[0][1] for c in mock_vault.call_args_list]
+            assert "secret/metadata/contextforge/oauth/shared/gw-123/user%40test.com" in deleted
+            assert all("/shared/" in path for path in deleted)
 
 
 # ============================================================================
@@ -2319,8 +2322,7 @@ class TestVaultTokenBackendStoreTokensEdgeCases:
         mock_db.get.return_value = mock_gateway
 
         # Pre-populate cache with a future-expiry entry
-        server_id = backend._hash_server_id("https://mcp.example.com")
-        cache_key = ("team1", server_id, "user@test.com")
+        cache_key = ("team1", "gw-123", "user@test.com")
         VaultTokenBackend._token_cache[cache_key] = {
             "token": "cached_token",
             "cache_expires": datetime.now(timezone.utc) + timedelta(seconds=300),
@@ -2682,5 +2684,131 @@ async def test_validation_token_missing_vault_record(response):
     backend._resolve_mcp_url = MagicMock(return_value="https://example.com/mcp")
     backend._vault_request = AsyncMock(return_value=response)
     assert await backend.read_validation_token("gw-1", "team-1", "caller@example.com") is None
-    backend._vault_request.assert_awaited_once()
-    assert backend._vault_request.await_args.args[0] == "GET"
+    assert [call.args[0] for call in backend._vault_request.await_args_list] == ["GET", "GET"]
+
+
+def _backend_with_records(records: dict):
+    """Build a Vault backend whose reads return ``records`` keyed by the server path segment."""
+    settings = MagicMock(vault_token=SecretStr("test"), vault_addr="http://vault", vault_kv_mount="secret", vault_kv_path_prefix="oauth", vault_token_cache_max_size=100)
+    backend = VaultTokenBackend(MagicMock(), settings)
+    backend._resolve_mcp_url = MagicMock(return_value="https://example.com/mcp")
+    segments = {"gateway": backend._server_segment("gw-1"), "legacy": backend._hash_server_id("https://example.com/mcp")}
+
+    async def vault_request(method, path, *_args, **_kwargs):
+        for key, data in records.items():
+            if f"/{segments[key]}/" in path:
+                return {"data": {"data": data}}
+        return None
+
+    backend._vault_request = AsyncMock(side_effect=vault_request)
+    return backend
+
+
+_BOUND_RECORD = {"gateway_id": "gw-1", "email": "caller@example.com", "mcp_url": "https://example.com/mcp", "token": {"access_token": "validation-value"}, "expires_at": None}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["gateway", "legacy"])
+async def test_validation_token_reads_gateway_path_then_legacy(location):
+    """Validation reads the gateway-keyed record and falls back to the legacy URL-keyed record."""
+    backend = _backend_with_records({location: _BOUND_RECORD})
+    result = await backend.read_validation_token("gw-1", "team-1", "caller@example.com")
+    assert result.status == "valid"
+    assert result.access_token == "validation-value"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["gateway", "legacy"])
+async def test_token_details_reads_gateway_path_then_legacy(location):
+    """Token details read the gateway-keyed record and fall back to the legacy URL-keyed record."""
+    backend = _backend_with_records({location: {"token": {"access_token": "detail-value", "scopes": ["read"]}, "expires_at": None}})
+    details = await backend.get_user_token_details("gw-1", "team-1", "caller@example.com")
+    assert details.access_token == "detail-value"
+    assert details.scopes == ["read"]
+
+
+def _backend_with_vault_tree(leaves: set[str]):
+    """Build a Vault backend over a fake KV v2 metadata tree of ``team/server/email`` leaves."""
+    from urllib.parse import unquote
+
+    settings = MagicMock(vault_token=SecretStr("test"), vault_addr="http://vault", vault_kv_mount="secret", vault_kv_path_prefix="oauth", vault_token_cache_enabled=True)
+    backend = VaultTokenBackend(MagicMock(), settings)
+    base = "secret/metadata/oauth"
+
+    async def vault_request(method, path, *_args, **_kwargs):
+        relative = unquote(path.removeprefix(base).strip("/"))
+        if method == "LIST":
+            prefix = f"{relative}/" if relative else ""
+            children = sorted({leaf[len(prefix):].split("/")[0] + ("/" if "/" in leaf[len(prefix):] else "") for leaf in leaves if leaf.startswith(prefix)})
+            return {"data": {"keys": children}} if children else None
+        if method == "DELETE":
+            leaves.discard(relative)
+            return {}
+        raise AssertionError(f"unexpected {method} {path}")
+
+    backend._vault_request = AsyncMock(side_effect=vault_request)
+    return backend
+
+
+@pytest.mark.asyncio
+async def test_delete_gateway_tokens_deletes_gateway_records_under_every_team():
+    """A deleted gateway loses its records under every caller team, and other gateways keep theirs."""
+    backend = _backend_with_vault_tree(set())
+    gateway, legacy, other = backend._server_segment("gw-1"), backend._hash_server_id("https://example.com/mcp"), backend._server_segment("gw-2")
+    leaves = {
+        f"team-1/{gateway}/alice@example.com",
+        f"team-2/{gateway}/bob@example.com",
+        f"shared/{gateway}/carol@example.com",
+        f"team-1/{other}/alice@example.com",
+        f"team-1/{legacy}/alice@example.com",
+        f"credentials/team-1/{legacy}",
+    }
+    backend = _backend_with_vault_tree(leaves)
+    VaultTokenBackend._token_cache[("team-1", "gw-1", "alice@example.com")] = {"token": "cached", "cache_expires": datetime.now(timezone.utc)}
+    VaultTokenBackend._token_cache[("team-1", "gw-2", "alice@example.com")] = {"token": "cached", "cache_expires": datetime.now(timezone.utc)}
+
+    assert await backend.delete_gateway_tokens("gw-1", "https://example.com/mcp", include_legacy=False) == 3
+
+    assert leaves == {f"team-1/{other}/alice@example.com", f"team-1/{legacy}/alice@example.com", f"credentials/team-1/{legacy}"}
+    assert ("team-1", "gw-1", "alice@example.com") not in VaultTokenBackend._token_cache
+    assert VaultTokenBackend._token_cache.pop(("team-1", "gw-2", "alice@example.com"))
+
+
+@pytest.mark.asyncio
+async def test_delete_gateway_tokens_includes_legacy_records_when_asked():
+    """Legacy URL-keyed records go only when the caller confirms no remaining gateway shares the URL."""
+    backend = _backend_with_vault_tree(set())
+    legacy = backend._hash_server_id("https://example.com/mcp")
+    leaves = {f"team-1/{legacy}/alice@example.com", f"team-2/{legacy}/bob@example.com", f"credentials/team-1/{legacy}"}
+    backend = _backend_with_vault_tree(leaves)
+
+    assert await backend.delete_gateway_tokens("gw-1", "https://example.com/mcp", include_legacy=True) == 2
+    assert leaves == {f"credentials/team-1/{legacy}"}
+
+
+@pytest.mark.asyncio
+async def test_delete_gateway_tokens_on_empty_vault_returns_zero():
+    """An empty token tree deletes nothing and does not fail."""
+    backend = _backend_with_vault_tree(set())
+    assert await backend.delete_gateway_tokens("gw-1", "https://example.com/mcp", include_legacy=True) == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_gateway_tokens_propagates_vault_failure():
+    """A Vault failure reaches the caller, which decides whether the deletion continues."""
+    settings = MagicMock(vault_token=SecretStr("test"), vault_addr="http://vault", vault_kv_mount="secret", vault_kv_path_prefix="oauth")
+    backend = VaultTokenBackend(MagicMock(), settings)
+    backend._vault_request = AsyncMock(side_effect=VaultConnectionError("vault down"))
+    with pytest.raises(VaultConnectionError):
+        await backend.delete_gateway_tokens("gw-1", "https://example.com/mcp", include_legacy=False)
+
+
+@pytest.mark.asyncio
+async def test_vault_request_sends_list_verb():
+    """LIST requests use the Vault LIST verb."""
+    settings = MagicMock(vault_token=SecretStr("test"), vault_addr="http://vault", vault_kv_mount="secret", vault_kv_path_prefix="oauth", vault_namespace=None, vault_tls_verify=True)
+    backend = VaultTokenBackend(MagicMock(), settings)
+    response = httpx.Response(200, json={"data": {"keys": ["team-1/"]}}, request=httpx.Request("LIST", "http://vault/v1/secret/metadata/oauth"))
+    with patch("httpx.AsyncClient.request", new_callable=AsyncMock, return_value=response) as request:
+        assert await backend._vault_request("LIST", "secret/metadata/oauth") == {"data": {"keys": ["team-1/"]}}
+    assert request.await_args.args[:2] == ("LIST", "http://vault/v1/secret/metadata/oauth")
