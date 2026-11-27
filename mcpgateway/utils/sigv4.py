@@ -31,9 +31,11 @@ from urllib.parse import parse_qsl, quote, urlsplit
 import httpx
 import httpx2
 
+# First-Party
+from mcpgateway.utils.sigv4_names import SIGV4_REDACT_NAMES, SIGV4_SENSITIVE_KEYS, SIGV4_WIRE_NAMES  # noqa: F401  # pylint: disable=unused-import
+
 ALGORITHM = "AWS4-HMAC-SHA256"
 UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD"
-SIGV4_SENSITIVE_KEYS = frozenset({"secret_access_key", "session_token"})
 SIGV4_CONFIG_KEYS = frozenset({"access_key_id", "secret_access_key", "session_token", "region", "service", "unsigned_payload"})
 _SCOPE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _ACCESS_KEY_ID = re.compile(r"^[A-Za-z0-9]{16,128}$")

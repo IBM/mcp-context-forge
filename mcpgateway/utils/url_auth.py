@@ -18,6 +18,9 @@ import re
 from typing import Dict, FrozenSet, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+# First-Party
+from mcpgateway.utils.sigv4_names import SIGV4_WIRE_NAMES
+
 # Static set of commonly sensitive query parameter names
 # Used as a fallback when gateway-specific params aren't available
 STATIC_SENSITIVE_PARAMS: FrozenSet[str] = frozenset(
@@ -37,9 +40,7 @@ STATIC_SENSITIVE_PARAMS: FrozenSet[str] = frozenset(
         "credentials",
         "tavilyapikey",  # Tavily-specific
         "tavilyApiKey",  # Tavily-specific (camelCase)
-        "x-amz-signature",  # AWS SigV4 presigned URL
-        "x-amz-credential",  # AWS SigV4 presigned URL
-        "x-amz-security-token",  # AWS SigV4 presigned URL
+        *SIGV4_WIRE_NAMES,  # AWS SigV4 presigned URL parameters
     }
 )
 

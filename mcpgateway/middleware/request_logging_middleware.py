@@ -65,6 +65,7 @@ from mcpgateway.middleware.path_filter import should_skip_request_logging
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.sigv4_names import SIGV4_REDACT_NAMES
 from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 # Initialize logging service first
@@ -76,6 +77,7 @@ structured_logger = get_structured_logger("http_gateway")
 
 SENSITIVE_KEYS = frozenset(
     {
+        *(name.replace("-", "_") for name in SIGV4_REDACT_NAMES),
         "password",
         "passphrase",
         "secret",
@@ -89,10 +91,6 @@ SENSITIVE_KEYS = frozenset(
         "auth_token",
         "jwt_token",
         "private_key",
-        "secret_access_key",
-        "x_amz_security_token",
-        "x_amz_signature",
-        "x_amz_credential",
     }
 )
 _NON_SENSITIVE_KEY_SUFFIXES = (

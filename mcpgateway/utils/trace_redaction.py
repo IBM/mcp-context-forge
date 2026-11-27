@@ -13,6 +13,7 @@ from typing import Any
 
 # First-Party
 from mcpgateway.config import get_settings
+from mcpgateway.utils.sigv4_names import SIGV4_REDACT_NAMES
 from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging
 
 _DEFAULT_REDACT_FIELDS = ",".join(
@@ -33,11 +34,7 @@ _DEFAULT_REDACT_FIELDS = ",".join(
         "private_key",
         "session_id",
         "sessionid",
-        "session_token",
-        "secret_access_key",
-        "x-amz-security-token",
-        "x-amz-signature",
-        "x-amz-credential",
+        *SIGV4_REDACT_NAMES,
     ]
 )
 _DEFAULT_MAX_PAYLOAD_SIZE = 32768
