@@ -257,6 +257,22 @@ class TestA2AOAuthConfigSchema:
             build({**CONFIG, "token_url": "http://10.0.0.5/token"})
 
 
+class TestA2AOAuthCredentialsRequiredOnCreate:
+    """Create requires client credentials; an update may omit them and keep the stored ones."""
+
+    @pytest.mark.parametrize("missing", ["client_id", "client_secret"])
+    @pytest.mark.parametrize("blank", [None, "", "   "], ids=["absent", "empty", "blank"])
+    def test_missing_or_blank_credential_is_rejected(self, missing, blank):
+        config = {key: value for key, value in CONFIG.items() if key != missing}
+        if blank is not None:
+            config[missing] = blank
+        with pytest.raises(ValidationError, match=f"oauth_config.{missing} is required"):
+            _create(config)
+
+    def test_update_may_omit_credentials(self):
+        assert A2AAgentUpdate(oauth_config={"grant_type": "client_credentials", "token_url": CONFIG["token_url"]}).oauth_config["token_url"] == CONFIG["token_url"]
+
+
 @pytest.mark.asyncio
 async def test_repeated_resource_is_sent_as_an_encoded_form_body(monkeypatch):
     """A list of pairs becomes a form-encoded body, because httpx fails on a list as ``data``."""

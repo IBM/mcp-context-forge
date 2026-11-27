@@ -458,7 +458,7 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
 _A2A_OAUTH_GRANT_TYPE = "client_credentials"
 
 
-def _validate_a2a_oauth_config(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _validate_a2a_oauth_config(v: Optional[Dict[str, Any]], require_credentials: bool = False) -> Optional[Dict[str, Any]]:
     """Validate the OAuth configuration of an A2A agent.
 
     The gateway requests an agent-level token with the ``client_credentials`` grant,
@@ -466,12 +466,13 @@ def _validate_a2a_oauth_config(v: Optional[Dict[str, Any]]) -> Optional[Dict[str
 
     Args:
         v: OAuth configuration dict or ``None``.
+        require_credentials: Require a non-empty ``client_id`` and ``client_secret`` (create only, an update may keep the stored ones).
 
     Returns:
         The original dict when valid.
 
     Raises:
-        ValueError: If a URL fails the core URL rules or the grant type is not supported.
+        ValueError: If a URL fails the core URL rules, the grant type is not supported or a required credential is missing.
 
     Examples:
         >>> _validate_a2a_oauth_config(None) is None
@@ -482,6 +483,10 @@ def _validate_a2a_oauth_config(v: Optional[Dict[str, Any]]) -> Optional[Dict[str
         Traceback (most recent call last):
             ...
         ValueError: A2A agents support only the client_credentials OAuth grant type, got 'authorization_code'
+        >>> _validate_a2a_oauth_config({"client_id": "c"}, require_credentials=True)
+        Traceback (most recent call last):
+            ...
+        ValueError: oauth_config.client_secret is required for the client_credentials OAuth grant type
     """
     v = _validate_oauth_config_urls(v)
     if v is None:
@@ -489,6 +494,11 @@ def _validate_a2a_oauth_config(v: Optional[Dict[str, Any]]) -> Optional[Dict[str
     grant_type = v.get("grant_type", _A2A_OAUTH_GRANT_TYPE)
     if grant_type != _A2A_OAUTH_GRANT_TYPE:
         raise ValueError(f"A2A agents support only the {_A2A_OAUTH_GRANT_TYPE} OAuth grant type, got '{grant_type}'")
+    if require_credentials:
+        for field in ("client_id", "client_secret"):
+            value = v.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"oauth_config.{field} is required for the {_A2A_OAUTH_GRANT_TYPE} OAuth grant type")
     return v
 
 
@@ -6656,7 +6666,7 @@ class A2AAgentCreate(BaseModel):
         Returns:
             The validated configuration.
         """
-        return _validate_a2a_oauth_config(v)
+        return _validate_a2a_oauth_config(v, require_credentials=True)
 
     @field_validator("passthrough_headers")
     @classmethod

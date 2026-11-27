@@ -20583,10 +20583,9 @@ async def test_admin_add_a2a_agent_oauth_assembled_minimal_fields_covers_false_b
     )
 
     response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
-    assert response.status_code == 200
-    agent_data = service.register_agent.call_args.args[1]
-    assert agent_data.auth_type == "oauth"
-    assert agent_data.oauth_config == {"grant_type": "client_credentials"}
+    # The assembled config has no client credentials, so create rejects it instead of registering an agent that cannot invoke.
+    assert response.status_code == 422
+    service.register_agent.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -20621,15 +20620,14 @@ async def test_admin_add_a2a_agent_oauth_scopes_parse_empty_and_missing_client_i
     )
 
     response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
-    assert response.status_code == 200
-    agent_data = service.register_agent.call_args.args[1]
-    assert agent_data.auth_type == "oauth"
-    assert agent_data.oauth_config == {"grant_type": "client_credentials"}
+    # The assembled config has no client credentials, so create rejects it instead of registering an agent that cannot invoke.
+    assert response.status_code == 422
+    service.register_agent.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_admin_add_a2a_agent_oauth_config_without_client_secret(monkeypatch, mock_db):
-    """Cover Option 1 parsing when oauth_config has no client_secret."""
+    """Option 1 parsing rejects an oauth_config with no client_secret."""
     oauth_config = {"client_id": "cid", "grant_type": "client_credentials"}
     form_data = FakeForm(
         {
@@ -20657,10 +20655,8 @@ async def test_admin_add_a2a_agent_oauth_config_without_client_secret(monkeypatc
     )
 
     response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
-    assert response.status_code == 200
-    agent_data = service.register_agent.call_args.args[1]
-    assert agent_data.auth_type == "oauth"
-    assert agent_data.oauth_config == oauth_config
+    assert response.status_code == 422
+    service.register_agent.assert_not_called()
 
 
 @pytest.mark.asyncio
