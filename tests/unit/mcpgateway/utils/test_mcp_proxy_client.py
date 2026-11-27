@@ -25,11 +25,16 @@ from unittest.mock import MagicMock, patch
 
 # Third-Party
 import httpx2
+from mcp import Client
+from mcp.server.lowlevel import Server
 from mcp.shared._httpx_utils import stream_within_origin
 from mcp.shared.exceptions import MCPError
+import mcp_types as types
+from mcp_types import CLIENT_CAPABILITIES_META_KEY, CLIENT_INFO_META_KEY, PROTOCOL_VERSION_META_KEY
 import pytest
 
 # First-Party
+from mcpgateway.common.validators import MCP_ENVELOPE_META_KEYS
 from mcpgateway.config import settings
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.streamable_http_compat import ErrorResponseHook
@@ -521,3 +526,38 @@ def test_upstream_request_context_limits_sdk_baggage(monkeypatch, enabled, exter
     finally:
         context.detach(token)
         provider.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["legacy", "auto"])
+async def test_caller_envelope_meta_is_not_relayed_to_a_handshake_upstream(mode: str) -> None:
+    """A handshake-era upstream never receives the caller's 2026-07-28 envelope;
+    a modern one gets the stamped envelope, with the caller's capabilities."""
+    seen: dict = {}
+
+    async def call_tool(ctx, params):
+        seen.update(ctx.meta or {})
+        return types.CallToolResult(content=[])
+
+    async def list_tools(ctx, params):
+        return types.ListToolsResult(tools=[types.Tool(name="ping", input_schema={"type": "object"})])
+
+    server = Server("upstream", on_call_tool=call_tool, on_list_tools=list_tools)
+    envelope = {
+        PROTOCOL_VERSION_META_KEY: "2026-07-28",
+        CLIENT_INFO_META_KEY: {"name": "caller", "version": "1"},
+        CLIENT_CAPABILITIES_META_KEY: {"elicitation": {"form": {}}},
+    }
+
+    with (
+        patch("mcpgateway.utils.mcp_proxy_client.streamable_http_client"),
+        patch("mcpgateway.utils.mcp_proxy_client.Client", lambda _transport, **kwargs: Client(server, **kwargs)),
+    ):
+        async with mcp_proxy_client(_URL, mode=mode) as client:
+            await client.call_tool("ping", {}, meta={**envelope, "x-custom": "kept"})
+
+    assert seen["x-custom"] == "kept"
+    if mode == "legacy":
+        assert not MCP_ENVELOPE_META_KEYS & seen.keys()
+    else:
+        assert seen[CLIENT_CAPABILITIES_META_KEY] == envelope[CLIENT_CAPABILITIES_META_KEY]
