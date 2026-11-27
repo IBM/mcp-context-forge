@@ -93,7 +93,7 @@ from mcpgateway.schemas import (
     TopPerformer,
 )
 from mcpgateway.services.a2a_oauth import resolve_a2a_agent_oauth_headers
-from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
+from mcpgateway.services.a2a_protocol import _jsonrpc_error_message, prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
@@ -7334,12 +7334,17 @@ class ToolService(BaseService):
                                 content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
                             else:
                                 content = [TextContent(type="text", text=response_text)]
-                            tool_result = ToolResult(content=content, is_error=False)
-                            success = True
+                            jsonrpc_error = _jsonrpc_error_message(response_data)
+                            is_error = jsonrpc_error is not None
+                            if jsonrpc_error is not None:
+                                error_message = jsonrpc_error
+                            tool_result = ToolResult(content=content, is_error=is_error)
+                            success = not is_error
                         else:
                             error_message = f"HTTP {status_code}: {response_text}"
                             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                             tool_result = ToolResult(content=content, is_error=True)
+                            success = False
                 elif tool_integration_type == "gRPC" and tool_grpc_service_id:
                     # gRPC tool invocation using the registered gRPC service
                     try:

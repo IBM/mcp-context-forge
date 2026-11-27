@@ -8338,6 +8338,52 @@ class TestInvokeToolA2A:
         assert "False" not in result.content[0].text
 
     @pytest.mark.asyncio
+    async def test_a2a_invoke_tool_jsonrpc_error_marks_failure(self, tool_service):
+        """invoke_tool A2A path: an HTTP 200 with a JSON-RPC error records a failed metric."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"jsonrpc": "2.0", "id": "1", "error": {"code": -32601, "message": "Method not found"}})
+        mock_http_response.text = '{"jsonrpc": "2.0", "id": "1", "error": {"code": -32601, "message": "Method not found"}}'
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        metrics_buffer = MagicMock()
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.metrics_buffer", metrics_buffer),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+        assert result.is_error is True
+        assert "Method not found" in result.content[0].text
+        metrics_buffer.record_tool_metric.assert_called_once()
+        assert metrics_buffer.record_tool_metric.call_args.kwargs["success"] is False
+        assert "Method not found" in metrics_buffer.record_tool_metric.call_args.kwargs["error_message"]
+
+    @pytest.mark.asyncio
     async def test_a2a_jsonrpc_success_no_query(self, tool_service):
         """A2A JSONRPC agent invocation without query uses raw params."""
         tp = _make_tool_payload(
