@@ -211,6 +211,35 @@ async def test_admin_test_api_chat_success(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_test_api_chat_leaves_max_tokens_unset(monkeypatch: pytest.MonkeyPatch):
+    """The chat test does not force a token limit that reasoning models reject."""
+    response_obj = ChatCompletionResponse(
+        id="resp1",
+        created=1,
+        model="m1",
+        choices=[ChatChoice(index=0, message=ChatMessage(role="assistant", content="ok"), finish_reason="stop")],
+        usage=UsageStats(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+    )
+    captured = {}
+
+    class DummyProxy:
+        async def chat_completion(self, _db, chat_request):
+            captured["max_tokens"] = chat_request.max_tokens
+            return response_obj
+
+    import mcpgateway.services.llm_proxy_service as proxy_module
+
+    monkeypatch.setattr(proxy_module, "LLMProxyService", DummyProxy)
+
+    request = MagicMock()
+    request.body = AsyncMock(return_value=orjson.dumps({"test_type": "chat", "model_id": "m1", "message": "hi"}))
+
+    await llm_admin_router.admin_test_api(request, db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert captured["max_tokens"] is None
+
+
+@pytest.mark.asyncio
 async def test_admin_test_api_missing_model_id():
     request = MagicMock()
     request.body = AsyncMock(return_value=orjson.dumps({"test_type": "chat"}))

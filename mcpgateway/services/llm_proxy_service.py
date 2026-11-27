@@ -48,6 +48,25 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+def _is_reasoning_model(model_name: Optional[str]) -> bool:
+    """Return whether a model name belongs to a reasoning model family.
+
+    Newer OpenAI reasoning deployments reject the legacy ``max_tokens`` and
+    non-default ``temperature`` parameters in favour of
+    ``max_completion_tokens``.
+
+    Args:
+        model_name: Azure deployment or model identifier.
+
+    Returns:
+        True for o-series, GPT-5, and GPT Chat models.
+    """
+    if not model_name:
+        return False
+    name = model_name.lower()
+    return name.startswith(("o1", "o3", "o4", "gpt-5", "gpt-chat-latest"))
+
+
 def _provider_trace_system(provider: LLMProvider) -> str:
     """Map provider type to a stable ``gen_ai.system`` label.
 
@@ -305,15 +324,20 @@ class LLMProxyService:
             "messages": [msg.model_dump(exclude_none=True) for msg in request.messages],
         }
 
-        if request.temperature is not None:
-            body["temperature"] = request.temperature
-        elif provider.default_temperature:
-            body["temperature"] = provider.default_temperature
+        # Reasoning deployments only accept the default temperature and renamed token limit.
+        reasoning_model = _is_reasoning_model(deployment_name) or _is_reasoning_model(model.model_id)
+        token_limit_key = "max_completion_tokens" if reasoning_model else "max_tokens"
+
+        if not reasoning_model:
+            if request.temperature is not None:
+                body["temperature"] = request.temperature
+            elif provider.default_temperature:
+                body["temperature"] = provider.default_temperature
 
         if request.max_tokens is not None:
-            body["max_tokens"] = request.max_tokens
+            body[token_limit_key] = request.max_tokens
         elif provider.default_max_tokens:
-            body["max_tokens"] = provider.default_max_tokens
+            body[token_limit_key] = provider.default_max_tokens
 
         if request.stream:
             body["stream"] = True
