@@ -26,6 +26,10 @@
   See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
 
 
+### Fixed
+
+- **A2A observability traces only invocation routes** ([#6527](https://github.com/IBM/mcp-context-forge/issues/6527)) - Default `observability_include_paths` no longer matches A2A management reads and writes. `GET /a2a`, `GET /a2a/{id}`, and the A2A create/update/delete/toggle routes are not recorded as executions. `POST /a2a/invoke`, `POST /a2a/{name}/invoke`, and `POST /a2a/{name}/jsonrpc` (and the `/v1` equivalents) remain traced.
+
 ## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
 
 ### Overview
