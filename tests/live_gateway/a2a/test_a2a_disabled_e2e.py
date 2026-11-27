@@ -174,7 +174,7 @@ def test_me_reports_a2a_flag_for_non_admin(disabled_gateway):
     _admin, _anonymous, user, _client_for = disabled_gateway
     response = user.get("/auth/email/me")
     assert response.status_code == 200, response.text
-    assert response.json()["features"] == {"a2a": False}
+    assert response.json()["features"] == {"a2a": False, "query_param_auth": False}
 
 
 ADMIN_A2A_ROUTES = [route for route in A2A_ROUTES if route[1].startswith("/admin/")]
@@ -209,4 +209,4 @@ def test_me_reports_a2a_flag_for_scoped_and_sso_tokens(disabled_gateway, jwt_kwa
     _admin, _anonymous, _user, client_for = disabled_gateway
     response = client_for(**jwt_kwargs).get("/auth/email/me")
     assert response.status_code == 200, response.text
-    assert response.json()["features"] == {"a2a": False}
+    assert response.json()["features"] == {"a2a": False, "query_param_auth": False}

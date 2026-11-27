@@ -8290,9 +8290,11 @@ class FeatureFlags(BaseModel):
 
     Attributes:
         a2a: Whether A2A is enabled on this gateway.
+        query_param_auth: Whether query parameter authentication is enabled on this gateway.
     """
 
     a2a: bool = Field(description="Whether A2A is enabled on this gateway")
+    query_param_auth: bool = Field(description="Whether query parameter authentication is enabled on this gateway")
 
 
 class CurrentUserResponse(EmailUserResponse):

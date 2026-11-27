@@ -11,6 +11,8 @@
 
 =======
 
+- **Feature flags report query parameter authentication** ([#7670](https://github.com/IBM/mcp-context-forge/issues/7670)) - `GET /auth/email/me` includes `features.query_param_auth`, reflecting `INSECURE_ALLOW_QUERYPARAM_AUTH`. Clients can hide the Query parameter authentication option on deployments where it cannot succeed.
+
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.
   Configure credentials again after restoring into an empty registry. A gateway that needs credentials stays pending.
   The CLI removes `--rekey-secret`, and the import API rejects `rekey_secret` with HTTP 400.

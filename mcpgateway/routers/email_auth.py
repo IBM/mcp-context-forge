@@ -563,7 +563,7 @@ async def get_current_user_profile(current_user: EmailUser = Depends(get_current
         >>> # Headers: Authorization: Bearer <token>
     """
     profile = EmailUserResponse.from_email_user(current_user)
-    return CurrentUserResponse(**profile.model_dump(), features=FeatureFlags(a2a=a2a_enabled()))
+    return CurrentUserResponse(**profile.model_dump(), features=FeatureFlags(a2a=a2a_enabled(), query_param_auth=settings.insecure_allow_queryparam_auth))
 
 
 @email_auth_router.get("/events", response_model=list[AuthEventResponse])
