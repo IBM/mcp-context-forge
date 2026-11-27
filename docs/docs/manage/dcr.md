@@ -16,17 +16,19 @@ Dynamic Client Registration (DCR) is an OAuth 2.0 extension that enables automat
 
 ## Overview
 
-DCR solves a common authentication challenge in distributed MCP deployments:
+OAuth client identification solves a common authentication challenge in distributed MCP deployments:
 
-- **Traditional OAuth2** requires pre-configured client credentials for each MCP server
-- **With DCR**, MCP clients can automatically register themselves as OAuth2 clients
+- **Traditional OAuth2** requires pre-configured client credentials for each MCP server.
+- **With CIMD**, the gateway uses its published Client ID Metadata Document as the client ID when the authorization server supports it.
+- **With DCR**, the gateway dynamically registers itself with the authorization server when CIMD is unavailable or unsupported.
 
 **Key Benefits:**
 
-- ✅ Zero-touch OAuth configuration - no manual credential management
+- ✅ Automatic OAuth client identification with CIMD when supported
+- ✅ DCR fallback for authorization servers that do not support CIMD
 - ✅ Automatic discovery via RFC 8414 (Authorization Server Metadata)
-- ✅ Support for public clients (PKCE-only, no client secret)
-- ✅ Credential encryption and secure storage
+- ✅ Support for public clients using PKCE without client secrets
+- ✅ Secure credential storage for DCR registrations
 - ✅ Issuer allowlist for security
 
 ---
@@ -92,9 +94,8 @@ The metadata response includes:
 
 **Caching:** Metadata is cached for `DCR_METADATA_CACHE_TTL` seconds (default: 1 hour).
 
-### 2. Client Registration (RFC 7591)
-
-If no `client_id` is configured and `DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true`, the gateway automatically registers:
+### 2. Client Identification (CIMD Preferred, DCR Fallback)
+When the authorization server supports CIMD and `CIMD_ENABLED=true`, the gateway uses its published Client ID Metadata Document URL as the `client_id` without performing registration. If CIMD is unavailable or disabled, and DCR is enabled with `DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true`, the gateway falls back to Dynamic Client Registration:
 
 ```json
 POST https://auth.example.com/register
@@ -185,7 +186,7 @@ Configure a gateway with just the issuer URL - credentials auto-register:
 }
 ```
 
-### Manual Client Credentials (Fallback)
+### Manual Client Credentials (Alternative)
 
 If DCR is disabled or you have pre-registered credentials:
 
