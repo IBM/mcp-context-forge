@@ -344,27 +344,38 @@ make test-e2e
 
 ### 5.5 Load testing
 
-Requires the compose stack with the testing profile (includes Locust).
+Run the fixed-tool-list benchmark for both protocol modes on a dedicated machine and commit the results.
 
-```bash
-make load-test-cli
-```
+1. Create a VM on any cloud provider with 48 vCPUs and install the requirements.
+2. Start the gateway stack:
 
-**Acceptance criteria:** 10-minute sustained run, 1000 RPS target, **0% error rate**.
+    ```bash
+    cp .env.example .env
+    make init-secrets-patch-env
+    make compose-up
+    ```
 
-The load test defaults are configured via Makefile variables (`LOADTEST_HOST`, `LOADTEST_USERS`, `LOADTEST_SPAWN_RATE`, `LOADTEST_RUN_TIME`, `LOADTEST_PROCESSES`). For release validation, ensure the test runs for a sufficient duration with realistic concurrency.
+3. Export a token:
 
-!!! tip "System tuning"
-    For accurate load test results, run `sudo scripts/tune-loadtest.sh` to optimize kernel parameters before testing.
+    ```bash
+    export TOKEN=$(make create-token)
+    ```
 
-Additional load profiles are available for targeted validation:
+4. Run the legacy benchmark (the default mode, 2025 specs):
 
-```bash
-make load-test-light      # Quick smoke: 10 users, 30s
-make load-test-heavy      # Stress: 200 users, 120s
-make load-test-sustained  # Endurance: 25 users, 300s
-make load-test-stress     # Peak: 500 users, 60s
-```
+    ```bash
+    make perf-benchmark-tools TIME=300s
+    ```
+
+5. Run the modern benchmark (2026 specs):
+
+    ```bash
+    make perf-benchmark-tools TIME=300s MODE=modern
+    ```
+
+6. Raise a PR with the two new HTML reports and the CSV update.
+
+Each run writes an HTML report to `reports/perf_benchmark_tools_<commit>_<mode>.html` and appends an entry to `tests/loadtest/historic_load_data.csv`.
 
 ---
 
@@ -533,8 +544,18 @@ This starts Prometheus, Grafana, and Tempo with OTEL tracing enabled:
 
 ### 8.2 Run a load test with monitoring active
 
+Export a token, then run the benchmark. The default run uses the legacy (2025) MCP specs:
+
 ```bash
-make load-test-cli
+export TOKEN=$(make create-token)
+
+make perf-benchmark-tools TIME=300s
+```
+
+For the modern (2026) MCP specs, run:
+
+```bash
+make perf-benchmark-tools TIME=300s MODE=modern
 ```
 
 While the load test is running, verify in Grafana:
@@ -1431,7 +1452,8 @@ make testing-down compose-clean testing-up
 # 7. Integration tests (compose stack must be running)
 make test-ui-headless
 make test-e2e
-make load-test-cli
+make perf-benchmark-tools TIME=300s
+make perf-benchmark-tools TIME=300s MODE=modern
 
 # 8. Embedded mode
 make embedded-up
@@ -1445,7 +1467,9 @@ make compose-sso-down
 
 # 10. Monitoring under load (compose stack must be running)
 make monitoring-up
-make load-test-cli
+export TOKEN=$(make create-token)
+make perf-benchmark-tools TIME=300s
+make perf-benchmark-tools TIME=300s MODE=modern
 # ... verify Grafana dashboards, Prometheus targets, Tempo traces ...
 make monitoring-down
 
