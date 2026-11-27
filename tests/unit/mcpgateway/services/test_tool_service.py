@@ -5926,6 +5926,59 @@ class TestToolService:
         assert result.content[0].text == "Modified by plugin"
         assert result.is_error is True
 
+    @pytest.mark.parametrize(
+        ("upstream_status", "plugin_is_error", "expected_success"),
+        [(200, True, False), (500, False, True)],
+        ids=["plugin_marks_success_as_error", "plugin_recovers_error"],
+    )
+    async def test_invoke_tool_post_invoke_is_error_sets_recorded_success(self, tool_service, mock_tool, mock_global_config_obj, test_db, upstream_status, plugin_is_error, expected_success):
+        """The span and metric ``success`` follow the ``is_error`` that a post-invoke plugin returns."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = upstream_status
+        mock_response.text = "upstream body"
+        mock_response.json = Mock(return_value={"result": "upstream body"})
+        tool_service._http_client.request.return_value = mock_response
+
+        mock_modified_payload = Mock()
+        mock_modified_payload.result = {"content": [{"type": "text", "text": "Rewritten by plugin"}], "isError": plugin_is_error}
+
+        # Third-Party
+        from cpex.framework import PluginResult, ToolHookType
+
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=mock_modified_payload, retry_delay_ms=0), None)
+
+        mock_pm = Mock()
+        mock_pm.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
+        mock_metrics_buffer = Mock()
+        span_success = []
+
+        def record_span_attribute(span, key, value):
+            if key == "success":
+                span_success.append(value)
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "upstream body"}),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.set_span_attribute", side_effect=record_span_attribute),
+            patch("mcpgateway.services.tool_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        assert result.is_error is plugin_is_error
+        assert mock_metrics_buffer.record_tool_metric.call_args.kwargs["success"] is expected_success
+        assert span_success == [expected_success]
+
     async def test_invoke_tool_with_plugin_post_invoke_invalid_modified_payload(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with plugin post-invoke hook providing invalid modified payload."""
         # Configure tool as REST
