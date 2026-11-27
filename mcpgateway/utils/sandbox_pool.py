@@ -156,8 +156,13 @@ class SandboxPool:
             logger.info("%s sandbox started with %s worker(s)", self._name, workers)
 
     def shutdown(self) -> None:
-        """Kill this pool's workers and clear its state."""
-        self._discard(None)
+        """Kill this pool's workers and clear its state.
+
+        Waits for a rebuild in flight to publish its pool, then kills that too. Without
+        the wait a rebuild that finishes after shutdown would leave live workers behind.
+        """
+        with self._build_lock:
+            self._discard(None)
 
     def submit(self, fn: Callable[..., Any], *args: Any) -> Any:
         """Run one call in a worker under the wall-clock limit.

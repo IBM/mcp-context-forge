@@ -7,6 +7,7 @@ Tests for the killable worker pool shared by jq and schema validation.
 """
 
 # Standard
+import multiprocessing
 import os
 import re
 import threading
@@ -300,6 +301,31 @@ def test_discard_hands_the_executor_one_idle_permit_per_killed_worker():
     assert fake.shutdown_calls == [{"wait": False, "cancel_futures": True}]
     assert [fake._idle_worker_semaphore.acquire(blocking=False) for _ in range(4)] == [True, True, True, False]  # pylint: disable=protected-access
     assert instance._current_executor() is None  # pylint: disable=protected-access
+
+
+def test_shutdown_during_a_rebuild_kills_the_pool_the_rebuild_publishes():
+    """Shutdown that lands mid-rebuild must not let the rebuilt pool outlive it."""
+    instance = SandboxPool(name="test", workers_fn=lambda: 1, timeout_fn=lambda: 0.1, initializer=_slow_init)
+    instance.start()
+    _kill_pool(instance)
+    outcome = []
+
+    def rebuild_and_call():
+        """Trigger the lazy rebuild; its warm-up takes the slow initializer's 0.3 s."""
+        try:
+            outcome.append(instance.submit(_echo, "x"))
+        except SandboxError as exc:
+            outcome.append(exc)
+
+    thread = threading.Thread(target=rebuild_and_call)
+    thread.start()
+    time.sleep(0.1)  # inside the warm-up, before the new pool is published
+    instance.shutdown()
+    thread.join()
+
+    assert instance._current_executor() is None  # pylint: disable=protected-access
+    assert outcome  # the caller got an answer or an error, never a hang
+    assert not multiprocessing.active_children(), "the rebuilt pool's workers survived shutdown"
 
 
 def test_shutdown_kills_a_worker_running_a_runaway_call():
