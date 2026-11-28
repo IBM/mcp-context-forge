@@ -2043,6 +2043,18 @@ catalog_servers:
     install: "uvx --from office-powerpoint-mcp-server ppt_mcp_server"
     tags: ["powerpoint", "presentations", "office", "documents", "self-hosted"]
 
+  - id: schemagate
+    name: "schemagate"
+    category: "Database"
+    url: "http://localhost:8115/mcp"
+    auth_type: "Open"
+    provider: "schemagate"
+    transport: "STREAMABLEHTTP"
+    description: "Text-to-SQL schema selection: gives the model only the few tables a question needs, out of the ones the caller may read (about 91% fewer schema tokens on 50+ table databases), and runs only single read-only SELECTs. PostgreSQL, MySQL, SQL Server, Oracle, Snowflake, Databricks, SQLite"
+    requires_api_key: false
+    repo: "https://github.com/ashishsinha1602/schemagate"
+    install: "SCHEMAGATE_MCP_TRANSPORT=streamable-http SCHEMAGATE_MCP_PORT=8115 uvx --from 'schemagate[mcp]' schemagate-mcp --url demo"
+    tags: ["database", "sql", "text-to-sql", "schema", "read-only", "self-hosted"]
   - id: fast-time-server
     name: "Fast Time Server"
     category: "Time Services"
