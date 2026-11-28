@@ -11376,6 +11376,108 @@ async def test_send_with_capture_claims_owner_when_affinity_disabled(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_send_with_capture_marks_session_in_registry_without_email(monkeypatch):
+    """SDK-issued session IDs must be registered even when no owner email is present (#7622)."""
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            await send_func(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"mcp-session-id", b"new-session-id")],
+                }
+            )
+            await send_func({"type": "http.response.body", "body": b"ok"})
+
+    registry = MagicMock()
+    registry.mark_session = AsyncMock()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: registry)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._claim_streamable_session_owner", AsyncMock())
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="POST", headers=[])
+    try:
+        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+    finally:
+        await wrapper.shutdown()
+
+    registry.mark_session.assert_awaited_once_with("new-session-id")
+    tr._claim_streamable_session_owner.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_streamable_initialize_registers_session_for_follow_up_access(monkeypatch):
+    """Follow-up requests must see the initialize-issued session in the registry (#7622)."""
+    # First-Party
+    from mcpgateway.cache.session_registry import SessionRegistry
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            await send_func(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"mcp-session-id", b"new-session-id")],
+                }
+            )
+            await send_func({"type": "http.response.body", "body": b"ok"})
+
+    registry = SessionRegistry(backend="memory")
+    await registry.initialize()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", lambda: registry)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, _messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="POST", headers=[])
+    try:
+        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+        assert await registry.session_exists("new-session-id") is True
+
+        user_context = {"email": "dev@example.com", "is_admin": False, "is_authenticated": True}
+        allowed, status, detail = await tr._validate_streamable_session_access(
+            mcp_session_id="new-session-id",
+            user_context=user_context,
+            rpc_method="tools/list",
+        )
+        # Marker is present but no owner was claimed (no email on initialize).
+        # This must not be reported as "Session not found".
+        assert allowed is False
+        assert status == 403
+        assert "not found" not in detail.lower()
+
+        allowed, status, detail = await tr._validate_streamable_session_access(
+            mcp_session_id="missing-session",
+            user_context=user_context,
+            rpc_method="tools/list",
+        )
+        assert allowed is False
+        assert status == 404
+        assert "Session not found" in detail
+    finally:
+        await wrapper.shutdown()
+        await registry.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_send_with_capture_does_not_register_denied_client_supplied_session(monkeypatch):
     """Client-supplied session IDs must not become owned when access is denied."""
 

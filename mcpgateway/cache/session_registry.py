@@ -697,6 +697,77 @@ class SessionRegistry(SessionBackend):
 
         logger.info(f"Added session: {session_id}")
 
+    async def mark_session(self, session_id: str) -> None:
+        """Record that a session exists without attaching an SSE transport.
+
+        Streamable HTTP sessions are owned by the MCP SDK, but the gateway still
+        needs a registry marker so ``session_exists()`` succeeds on later
+        POST/GET/DELETE and ``/rpc`` requests. Unlike ``add_session``, this does
+        not store an SSE transport object: the memory cache holds a ``None``
+        placeholder when no transport is already present, and the distributed
+        backends only write the existence marker. The operation is idempotent
+        and will not overwrite an existing local transport.
+
+        Args:
+            session_id: Unique session identifier issued by the transport.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.session_registry import SessionRegistry
+            >>>
+            >>> reg = SessionRegistry()
+            >>> asyncio.run(reg.mark_session('streamable-123'))
+            >>> asyncio.run(reg.session_exists('streamable-123'))
+            True
+            >>> asyncio.run(reg.get_session('streamable-123')) is None
+            True
+            >>> asyncio.run(reg.remove_session('streamable-123'))
+        """
+        if self._backend == "none" or not session_id:
+            return
+
+        async with self._lock:
+            if session_id not in self._sessions:
+                self._sessions[session_id] = None
+
+        if self._backend == "redis":
+            if not self._redis:
+                logger.warning(f"Redis client not initialized, skipping distributed session tracking for {session_id}")
+                return
+            try:
+                await self._redis.setex(f"mcp:session:{session_id}", self._session_ttl, "1")
+                await self._redis.publish("mcp_session_events", orjson.dumps({"type": "add", "session_id": session_id, "timestamp": time.time()}))
+            except Exception as e:
+                logger.error(f"Redis error marking session {session_id}: {e}")
+
+        elif self._backend == "database":
+            try:
+
+                def _db_mark() -> None:
+                    """Insert a session record if one does not already exist.
+
+                    Raises:
+                        Exception: Any database error is re-raised after rollback.
+                    """
+                    db_session = next(get_db())
+                    try:
+                        existing = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
+                        if existing:
+                            return
+                        db_session.add(SessionRecord(session_id=session_id))
+                        db_session.commit()
+                    except Exception as ex:
+                        db_session.rollback()
+                        raise ex
+                    finally:
+                        db_session.close()
+
+                await asyncio.to_thread(_db_mark)
+            except Exception as e:
+                logger.error(f"Database error marking session {session_id}: {e}")
+
+        logger.info(f"Marked session: {session_id}")
+
     def _session_owner_key(self, session_id: str) -> str:
         """Return Redis key used to store session ownership.
 

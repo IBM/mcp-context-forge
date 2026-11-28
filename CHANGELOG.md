@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Streamable HTTP sessions are registered after initialize** ([#7622](https://github.com/IBM/mcp-context-forge/issues/7622)) - When `USE_STATEFUL_SESSIONS=true`, `POST /mcp` `initialize` now writes a session-registry marker for the SDK-issued `Mcp-Session-Id`, so later requests no longer fail with `-32002 Session not found`.
+
 =======
 
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.
