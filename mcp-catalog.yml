@@ -1436,7 +1436,7 @@ catalog_servers:
     auth_type: "OAuth2.1"
     provider: "Walkover"
     transport: "STREAMABLEHTTP"
-    description: "Deploy and host AI-built apps and websites, and get a live URL without any DevOps setup"
+    description: "A shared workspace to publish, use and improve anything built with AI"
     requires_api_key: false
     tags: ["deployment", "hosting", "cloud", "developer-tools"]
     oauth:
