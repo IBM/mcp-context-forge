@@ -762,6 +762,8 @@ class SSOService:
 
         if filtered_data.get("trusted_for_api_auth") and not (filtered_data.get("api_audience") or "").strip():
             raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
+        if "access_token_marker_claim" in filtered_data:
+            filtered_data["access_token_marker_claim"] = (filtered_data["access_token_marker_claim"] or "").strip() or None
 
         provider = SSOProvider(**filtered_data)
         self.db.add(provider)
@@ -818,6 +820,8 @@ class SSOService:
         if "client_secret" in provider_data:
             client_secret = provider_data.pop("client_secret")
             provider_data["client_secret_encrypted"] = await self._encrypt_secret(client_secret)
+        if "access_token_marker_claim" in provider_data:
+            provider_data["access_token_marker_claim"] = (provider_data["access_token_marker_claim"] or "").strip() or None
 
         for key, value in provider_data.items():
             if hasattr(provider, key):
@@ -2658,6 +2662,43 @@ class SSOService:
 _TRUSTED_PROVIDER_CACHE_TTL = 60  # seconds
 _trusted_provider_cache: "dict[str, str]" = {}  # issuer(normalized) -> provider.id
 _trusted_provider_cache_loaded_at: float = 0.0
+
+
+def warn_if_audience_cannot_separate_id_tokens(provider: Any) -> bool:
+    """Log a warning when the audience check cannot tell ID tokens from access tokens.
+
+    An API-trusted provider whose ``api_audience`` equals its ``client_id`` accepts
+    any token with ``aud`` set to the client id. ID tokens always have that ``aud``.
+    Without ``access_token_marker_claim``, only the ``nonce``/``at_hash`` heuristic
+    separates the two token kinds for such a provider.
+
+    Args:
+        provider: An SSOProvider row, or any object with the same attributes.
+
+    Returns:
+        True if the warning was logged, False otherwise.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> p = SimpleNamespace(id="ak", trusted_for_api_auth=True, api_audience="cid", client_id="cid", access_token_marker_claim=None)
+        >>> warn_if_audience_cannot_separate_id_tokens(p)
+        True
+        >>> p.access_token_marker_claim = "azp"
+        >>> warn_if_audience_cannot_separate_id_tokens(p)
+        False
+    """
+    audience = (getattr(provider, "api_audience", None) or "").strip()
+    if not getattr(provider, "trusted_for_api_auth", False) or not audience or audience != getattr(provider, "client_id", None):
+        return False
+    if (getattr(provider, "access_token_marker_claim", None) or "").strip():
+        return False
+    logger.warning(
+        "SSO provider '%s' is trusted_for_api_auth with api_audience equal to its client_id and no access_token_marker_claim. "
+        "The audience check cannot separate ID tokens from access tokens for this provider. "
+        "Set access_token_marker_claim (for example 'azp' for Authentik) or use a distinct api_audience.",
+        sanitize_for_log(str(getattr(provider, "id", ""))),
+    )
+    return True
 
 
 def invalidate_trusted_provider_cache() -> None:

@@ -5890,6 +5890,9 @@ class SSOProvider(Base):
     api_audience: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True
     )  # Expected `aud` to enforce on inbound access tokens (e.g. Entra api://<app-id-uri>); must be non-empty when trusted_for_api_auth is set
+    access_token_marker_claim: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )  # Claim an inbound access token must carry with value == client_id (e.g. "azp" for Authentik); required when the IdP's access and ID tokens share `aud` (issue #7706)
 
     # Provider Settings
     trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)

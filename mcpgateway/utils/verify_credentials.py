@@ -1981,6 +1981,81 @@ async def _discover_oidc_metadata(issuer: str, ca_certificate: Optional[str] = N
     return None
 
 
+def _has_rfc9068_marker(header: dict[str, Any], claims: dict[str, Any]) -> bool:
+    """Tell if a JWT carries an RFC 9068 access-token marker.
+
+    RFC 9068 access tokens have the ``typ: at+jwt`` header and a ``client_id``
+    claim. OIDC ID tokens have neither.
+
+    Args:
+        header: Unverified JOSE header of the token.
+        claims: Unverified claims of the token.
+
+    Returns:
+        True if the header ``typ`` is ``at+jwt`` or a ``client_id`` claim is present.
+
+    Examples:
+        >>> _has_rfc9068_marker({"typ": "at+jwt"}, {})
+        True
+        >>> _has_rfc9068_marker({"typ": "application/at+JWT"}, {})
+        True
+        >>> _has_rfc9068_marker({"typ": "JWT"}, {"client_id": "app"})
+        True
+        >>> _has_rfc9068_marker({"typ": "JWT"}, {"azp": "app"})
+        False
+    """
+    typ = str(header.get("typ") or "").lower().removeprefix("application/")
+    return typ == "at+jwt" or "client_id" in claims
+
+
+def _id_token_rejection_reason(header: dict[str, Any], claims: dict[str, Any], access_token_marker: Optional[tuple[str, str]]) -> Optional[str]:
+    """Find the reason to reject a bearer token as an OIDC ID token.
+
+    The rules, in order:
+
+    1. ``at_hash`` is defined only for ID tokens (OIDC Core §2). Its presence always rejects.
+    2. With ``access_token_marker`` set, the token must carry that claim with that value.
+       The claim is required for acceptance, not only an exemption: an ID token without
+       ``nonce`` has no other marker to trip. Use this for IdPs whose access tokens have
+       no RFC 9068 marker and share ``aud`` with their ID tokens (for example Authentik,
+       which adds ``azp`` only to access tokens).
+    3. Without ``access_token_marker``, ``nonce`` rejects unless an RFC 9068 marker is present.
+       Some IdPs copy ``nonce`` into access tokens, so it is not proof of an ID token alone.
+
+    Args:
+        header: Unverified JOSE header of the token.
+        claims: Unverified claims of the token.
+        access_token_marker: Optional ``(claim, expected_value)`` that identifies an access token.
+
+    Returns:
+        A short reason string if the token is an ID token, or None if it can be an access token.
+
+    Examples:
+        >>> _id_token_rejection_reason({}, {"at_hash": "x", "azp": "app"}, ("azp", "app"))
+        'at_hash'
+        >>> _id_token_rejection_reason({}, {"nonce": "n"}, None)
+        'nonce'
+        >>> _id_token_rejection_reason({"typ": "at+jwt"}, {"nonce": "n"}, None) is None
+        True
+        >>> _id_token_rejection_reason({}, {"nonce": "n", "azp": "app"}, ("azp", "app")) is None
+        True
+        >>> _id_token_rejection_reason({}, {}, ("azp", "app"))
+        'azp missing or mismatched'
+        >>> _id_token_rejection_reason({}, {"azp": "other"}, ("azp", "app"))
+        'azp missing or mismatched'
+    """
+    if "at_hash" in claims:
+        return "at_hash"
+    if access_token_marker:
+        marker_claim, marker_value = access_token_marker
+        if not marker_value or claims.get(marker_claim) != marker_value:
+            return f"{marker_claim} missing or mismatched"
+        return None
+    if "nonce" in claims and not _has_rfc9068_marker(header, claims):
+        return "nonce"
+    return None
+
+
 async def verify_oauth_access_token(
     token: str,
     authorization_servers: list[str],
@@ -1988,6 +2063,7 @@ async def verify_oauth_access_token(
     expected_audience: Optional[Union[str, list[str]]] = None,
     jwks_uri_override: Optional[str] = None,
     ca_certificate: Optional[str] = None,
+    access_token_marker: Optional[tuple[str, str]] = None,
 ) -> Optional[dict[str, Any]]:
     """Verify an OAuth access token issued by a configured authorization server.
 
@@ -2014,6 +2090,9 @@ async def verify_oauth_access_token(
             origin than the issuer (split internal/public IdP hostnames).
         ca_certificate: Optional PEM CA bundle of the admin-configured SSOProvider,
             trusted for metadata discovery and the JWKS fetch.
+        access_token_marker: Optional ``(claim, expected_value)`` that the token
+            must carry to count as an access token. See
+            :func:`_id_token_rejection_reason`.
 
     Returns:
         Verified claims dict on success, None on failure.
@@ -2084,21 +2163,12 @@ async def verify_oauth_access_token(
     # is insufficient to distinguish them — an IdP configured with
     # ``client_id`` in ``oauth_config`` would otherwise let a client replay
     # an ID token it obtained via SSO.
-    #
-    # ``nonce`` and ``at_hash`` are defined only for ID tokens (OIDC Core
-    # §2); their presence on a bearer token is a reliable indicator from
-    # the IdPs that matter in practice (Keycloak, Auth0, Entra ID, Okta,
-    # Authentik all populate at least ``nonce`` on ID tokens for standard
-    # flows). The ``typ: at+jwt`` header (RFC 9068) is a positive access
-    # token marker but not required, so we do not key the decision on it —
-    # rejecting on its absence would break providers and PyJWT's default
-    # ``typ: JWT`` header which is used by many test/fake signers.
-    id_token_markers = [claim for claim in ("nonce", "at_hash") if claim in unverified]
-    if id_token_markers:
+    id_token_reason = _id_token_rejection_reason(jwt.get_unverified_header(token), unverified, access_token_marker)
+    if id_token_reason:
         logger.warning(
-            "Rejecting OIDC ID token masquerading as OAuth access token (issuer=%s, claims=%s)",
+            "Rejecting OIDC ID token masquerading as OAuth access token (issuer=%s, reason=%s)",
             sanitize_for_log(normalized_issuer),
-            id_token_markers,
+            id_token_reason,
         )
         return None
 
@@ -2182,12 +2252,14 @@ async def verify_external_idp_token(token: str, db: Session) -> tuple[Optional[d
         _record_external_auth_metric("denied", getattr(provider, "id", None), reason="missing_audience")
         return None, None
 
+    marker_claim = (provider.access_token_marker_claim or "").strip()
     claims = await verify_oauth_access_token(
         token,
         authorization_servers=[provider.issuer],
         expected_audience=provider.api_audience,
         jwks_uri_override=provider.jwks_uri or None,
         ca_certificate=provider.ca_certificate,
+        access_token_marker=(marker_claim, provider.client_id) if marker_claim else None,
     )
     if claims is None:
         logger.warning("external-idp auth denied: token validation failed (iss=%s)", sanitize_for_log(issuer))

@@ -103,6 +103,8 @@ def _fake_provider(issuer, enabled=True, trusted=True):
     p.is_enabled = enabled
     p.trusted_for_api_auth = trusted
     p.jwks_uri = None
+    p.client_id = "my-client"
+    p.access_token_marker_claim = None
     return p
 
 
@@ -228,7 +230,7 @@ async def test_verify_external_idp_token_valid(monkeypatch):
     prov.jwks_uri = "http://keycloak:8080/realms/m/protocol/openid-connect/certs"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
-    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None):
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None, access_token_marker=None):
         assert authorization_servers == ["https://kc/realms/m"]
         assert expected_audience == "api://my-app"
         assert jwks_uri_override == "http://keycloak:8080/realms/m/protocol/openid-connect/certs"
@@ -340,7 +342,7 @@ async def test_verify_external_idp_token_verification_fails(monkeypatch):
     prov.api_audience = "api://my-app"
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
-    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None):
+    async def fake_verify(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None, access_token_marker=None):
         return None
 
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
@@ -979,7 +981,7 @@ async def test_deny_id_token_rejected(monkeypatch):
     monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
 
     # verify_oauth_access_token rejects nonce/at_hash -> returns None
-    async def fake_oauth(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None):
+    async def fake_oauth(tok, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None, access_token_marker=None):
         return None
 
     monkeypatch.setattr(vc, "verify_oauth_access_token", fake_oauth)
@@ -1940,7 +1942,7 @@ async def test_alternate_claim_token_rejected_for_disabled_or_untrusted_provider
         sso_service.invalidate_trusted_provider_cache()
         oauth_calls = []
 
-        async def fake_oauth(token, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None):
+        async def fake_oauth(token, authorization_servers, *, expected_audience=None, jwks_uri_override=None, ca_certificate=None, access_token_marker=None):
             oauth_calls.append(authorization_servers)
             return _alt_claims()
 
@@ -1960,3 +1962,140 @@ async def test_alternate_claim_token_rejected_for_disabled_or_untrusted_provider
         assert oauth_calls == [[_ALT_ISSUER]]
 
     sso_service.invalidate_trusted_provider_cache()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("marker_claim", "expected_marker"),
+    [
+        pytest.param("azp", ("azp", "my-client"), id="opted-in"),
+        pytest.param(" azp ", ("azp", "my-client"), id="opted-in-stripped"),
+        pytest.param(None, None, id="not-opted-in"),
+        pytest.param("", None, id="cleared"),
+    ],
+)
+async def test_verify_external_idp_token_passes_access_token_marker(monkeypatch, marker_claim, expected_marker):
+    """Issue #7706: the provider's access_token_marker_claim reaches the verifier paired with its client_id."""
+    # Third-Party
+    import jwt as pyjwt
+
+    # First-Party
+    from mcpgateway.utils import verify_credentials as vc
+
+    token = pyjwt.encode({"iss": "https://ak/application/o/gw/", "sub": "u"}, _TEST_SIGNING_KEY, algorithm="HS256")
+    prov = _fake_provider("https://ak/application/o/gw/")
+    prov.api_audience = "my-client"
+    prov.access_token_marker_claim = marker_claim
+    monkeypatch.setattr(vc, "resolve_trusted_provider_by_issuer", lambda iss, db: prov)
+    seen = {}
+
+    async def fake_verify(tok, authorization_servers, **kwargs):
+        seen.update(kwargs)
+        return {"iss": "https://ak/application/o/gw/", "sub": "u"}
+
+    monkeypatch.setattr(vc, "verify_oauth_access_token", fake_verify)
+    claims, _ = await vc.verify_external_idp_token(token, MagicMock())
+    assert claims is not None
+    assert seen["access_token_marker"] == expected_marker
+
+
+def test_ssoprovider_has_access_token_marker_claim_column():
+    # First-Party
+    from mcpgateway.db import SSOProvider
+
+    assert "access_token_marker_claim" in SSOProvider.__table__.columns
+
+
+@pytest.mark.parametrize("model_name", ["SSOProviderCreateRequest", "SSOProviderUpdateRequest"])
+def test_access_token_marker_claim_rejects_aud(model_name):
+    """Deny path: ``aud`` holds the client id on ID tokens, so it cannot be the marker claim."""
+    # Third-Party
+    from pydantic import ValidationError
+
+    # First-Party
+    from mcpgateway.routers import sso
+
+    model = getattr(sso, model_name)
+    base = {"trusted_for_api_auth": True, "api_audience": "cid"}
+    if model_name == "SSOProviderCreateRequest":
+        base.update(
+            id="ak", name="ak", display_name="AK", provider_type="oidc", client_id="cid", client_secret="s", authorization_url="https://a", token_url="https://t", userinfo_url="https://u"
+        )  # pragma: allowlist secret
+    with pytest.raises(ValidationError, match="cannot be 'aud'"):
+        model(**base, access_token_marker_claim="aud")
+    with pytest.raises(ValidationError, match="JWT claim name"):
+        model(**base, access_token_marker_claim="a z p")
+    assert model(**base, access_token_marker_claim=" azp ").access_token_marker_claim == "azp"
+
+
+def test_update_provider_clears_access_token_marker_claim_with_empty_string():
+    # Standard
+    import asyncio
+
+    # First-Party
+    from mcpgateway.services.sso_service import SSOService
+
+    svc = SSOService(MagicMock())
+    existing = MagicMock()
+    existing.trusted_for_api_auth = True
+    existing.api_audience = "cid"
+    existing.access_token_marker_claim = "azp"
+    svc.get_provider = lambda _id: existing
+
+    asyncio.run(svc.update_provider("ak", {"access_token_marker_claim": ""}))
+
+    assert existing.access_token_marker_claim is None
+
+
+@pytest.mark.parametrize(
+    ("trusted", "audience", "marker", "warned"),
+    [
+        pytest.param(True, "cid", None, True, id="audience-is-client-id-no-marker"),
+        pytest.param(True, " cid ", "", True, id="blank-marker"),
+        pytest.param(True, "cid", "azp", False, id="marker-set"),
+        pytest.param(True, "api://gateway", None, False, id="distinct-audience"),
+        pytest.param(False, "cid", None, False, id="not-trusted"),
+    ],
+)
+def test_warn_if_audience_cannot_separate_id_tokens(caplog, trusted, audience, marker, warned):
+    # Standard
+    from types import SimpleNamespace
+
+    # First-Party
+    from mcpgateway.services.sso_service import warn_if_audience_cannot_separate_id_tokens
+
+    provider = SimpleNamespace(id="ak", trusted_for_api_auth=trusted, api_audience=audience, client_id="cid", access_token_marker_claim=marker)
+    with caplog.at_level("WARNING"):
+        assert warn_if_audience_cannot_separate_id_tokens(provider) is warned
+    assert ("cannot separate ID tokens" in caplog.text) is warned
+
+
+def test_bootstrap_warns_when_audience_cannot_separate_id_tokens(monkeypatch):
+    """Config-load check: bootstrap warns for a trusted provider whose api_audience is its client_id with no marker claim."""
+    # Standard
+    import asyncio
+    from types import SimpleNamespace
+
+    # First-Party
+    from mcpgateway.utils import sso_bootstrap
+
+    provider = SimpleNamespace(id="ak", display_name="AK", trusted_for_api_auth=True, api_audience="cid", client_id="cid", access_token_marker_claim=None)
+    warned = []
+
+    class FakeSSOService:
+        def __init__(self, db):
+            pass
+
+        def list_all_providers(self):
+            return [provider]
+
+    monkeypatch.setattr(sso_bootstrap.settings, "sso_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.services.sso_service.SSOService", FakeSSOService)
+    monkeypatch.setattr("mcpgateway.services.sso_service.warn_if_audience_cannot_separate_id_tokens", warned.append)
+    monkeypatch.setattr(sso_bootstrap, "get_predefined_sso_providers", lambda: [])
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([MagicMock()]))
+
+    asyncio.run(sso_bootstrap.bootstrap_sso_providers())
+
+    assert warned == [provider]
+    assert provider.trusted_for_api_auth is True

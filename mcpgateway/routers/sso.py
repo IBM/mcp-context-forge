@@ -8,14 +8,15 @@ Handles SSO login flows, provider configuration, and callback handling.
 """
 
 # Standard
+import re
 import secrets
-from typing import Dict, List, Optional
+from typing import Annotated, Dict, List, Optional
 from urllib.parse import urlparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 import jwt
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -26,7 +27,7 @@ from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oidc_tls import CaCertificateError
-from mcpgateway.services.sso_service import invalidate_trusted_provider_cache, SSOService
+from mcpgateway.services.sso_service import invalidate_trusted_provider_cache, SSOService, warn_if_audience_cannot_separate_id_tokens
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
@@ -35,6 +36,47 @@ from mcpgateway.utils.verify_credentials import invalidate_external_identity_cac
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger("mcpgateway.routers.sso")
+
+_CLAIM_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")
+
+
+def _validate_access_token_marker_claim(value: Optional[str]) -> Optional[str]:
+    """Validate the claim name that marks a provider's access tokens.
+
+    The claim value is compared against the provider ``client_id``. ``aud`` is
+    refused because ID tokens carry the client id in ``aud``, so it cannot
+    separate the two token kinds.
+
+    Args:
+        value: Claim name from the request. An empty string clears the setting.
+
+    Returns:
+        The stripped claim name, or the input when it is None or empty.
+
+    Raises:
+        ValueError: If the claim name has invalid characters or is ``aud``.
+
+    Examples:
+        >>> _validate_access_token_marker_claim(" azp ")
+        'azp'
+        >>> _validate_access_token_marker_claim("")
+        ''
+        >>> _validate_access_token_marker_claim("aud")
+        Traceback (most recent call last):
+        ...
+        ValueError: access_token_marker_claim cannot be 'aud': ID tokens carry the client id in aud
+    """
+    if not value:
+        return value
+    claim = value.strip()
+    if claim == "aud":
+        raise ValueError("access_token_marker_claim cannot be 'aud': ID tokens carry the client id in aud")
+    if claim and not _CLAIM_NAME_PATTERN.match(claim):
+        raise ValueError("access_token_marker_claim must be a JWT claim name of 1-100 characters from [A-Za-z0-9_.:-]")
+    return claim
+
+
+AccessTokenMarkerClaim = Annotated[Optional[str], AfterValidator(_validate_access_token_marker_claim)]
 
 
 class SSOProviderCreateRequest(BaseModel):
@@ -59,6 +101,7 @@ class SSOProviderCreateRequest(BaseModel):
     provider_metadata: Dict = {}  # Role mappings, groups_claim config, etc.
     trusted_for_api_auth: bool = False
     api_audience: Optional[str] = None
+    access_token_marker_claim: AccessTokenMarkerClaim = None  # Claim whose value must equal client_id on access tokens, e.g. "azp"; empty string clears it
 
     @model_validator(mode="after")
     def _require_audience_when_api_trusted(self):
@@ -97,6 +140,7 @@ class SSOProviderUpdateRequest(BaseModel):
     is_enabled: Optional[bool] = None
     trusted_for_api_auth: Optional[bool] = None
     api_audience: Optional[str] = None
+    access_token_marker_claim: AccessTokenMarkerClaim = None  # Claim whose value must equal client_id on access tokens, e.g. "azp"; empty string clears it
 
     @model_validator(mode="after")
     def _require_audience_when_api_trusted(self):
@@ -546,6 +590,7 @@ async def create_sso_provider(
     except ValueError as exc:
         logger.warning(f"SSO provider create error: {exc}")
         raise HTTPException(status_code=400, detail="Invalid SSO provider configuration") from exc
+    warn_if_audience_cannot_separate_id_tokens(provider)
 
     result = {
         "id": provider.id,
@@ -598,6 +643,7 @@ async def list_all_sso_providers(
             "auto_create_users": provider.auto_create_users,
             "trusted_for_api_auth": provider.trusted_for_api_auth,
             "api_audience": provider.api_audience,
+            "access_token_marker_claim": provider.access_token_marker_claim,
             "created_at": provider.created_at,
             "updated_at": provider.updated_at,
         }
@@ -651,6 +697,7 @@ async def get_sso_provider(
         "auto_create_users": provider.auto_create_users,
         "trusted_for_api_auth": provider.trusted_for_api_auth,
         "api_audience": provider.api_audience,
+        "access_token_marker_claim": provider.access_token_marker_claim,
         "team_mapping": provider.team_mapping,
         "is_enabled": provider.is_enabled,
         "created_at": provider.created_at,
@@ -701,6 +748,7 @@ async def update_sso_provider(
 
     if not provider:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
+    warn_if_audience_cannot_separate_id_tokens(provider)
 
     result = {
         "id": provider.id,

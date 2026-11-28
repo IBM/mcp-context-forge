@@ -1089,13 +1089,33 @@ When `trusted_for_api_auth=true`, `api_audience` **must** also be set — the re
 
 - **Microsoft Entra ID**: use the App ID URI you exposed for the API, e.g. `api://your-app-id-uri`. Note that access tokens minted for your own API typically carry `aud` = the App ID URI, not the application's client ID.
 - **Keycloak**: use the audience your realm's client/audience mapper issues for this gateway (commonly the client ID, e.g. `mcp-gateway`).
+- **Authentik**: Authentik sets `aud` to the client ID on both access and ID tokens, so `api_audience` must be the client ID. Also set `access_token_marker_claim` (see below).
+
+### `access_token_marker_claim` (IdPs whose access and ID tokens share `aud`)
+
+ID tokens are rejected before signature verification. By default the gateway rejects a token that has `at_hash`, or that has `nonce` without an RFC 9068 access-token marker (`typ: at+jwt` header or a `client_id` claim).
+
+Some IdPs copy the login `nonce` into access tokens, give access tokens neither RFC 9068 marker, and set `aud` to the client ID on both token kinds. Authentik does all three. For such an IdP, set `access_token_marker_claim` to a claim that only its access tokens carry. The gateway then accepts a token only if that claim equals the provider's `client_id`, whether or not the token has a `nonce`. `at_hash` still always rejects. `aud` is not allowed as the marker claim.
+
+```bash
+curl -X PUT https://gateway.example.com/auth/sso/admin/providers/authentik \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "trusted_for_api_auth": true,
+    "api_audience": "<authentik-client-id>",
+    "access_token_marker_claim": "azp"
+  }'
+```
+
+Send `"access_token_marker_claim": ""` to clear it. The gateway logs a warning at startup and on provider create/update when a trusted provider has `api_audience` equal to its `client_id` and no `access_token_marker_claim`, because the audience check alone cannot separate ID tokens from access tokens for that provider.
 
 ### How the request is authenticated
 
 1. The unverified token's `iss` claim is read to identify the issuing provider.
 2. If no enabled provider has `trusted_for_api_auth=true`, external tokens are never considered — the request falls through to internal JWT validation only.
 3. If the issuer matches a trusted provider, the token is fully verified against that provider's JWKS: signature, expiry, issuer, and `aud` == `api_audience`.
-4. ID tokens are rejected — only `access_token`s are accepted.
+4. ID tokens are rejected — only `access_token`s are accepted (see `access_token_marker_claim` above).
 5. The token's identity is JIT-provisioned/looked up as a local user (the same provisioning path used by browser SSO).
 6. The resulting principal is a **session-semantics** identity (`token_use="session"`): `is_admin` is read from the persisted local user record, and `teams` are resolved via `resolve_session_teams()` — both are DB-authoritative, never derived directly from the external token's claims.
 
