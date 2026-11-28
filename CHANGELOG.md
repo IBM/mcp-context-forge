@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Import of tools without `jsonpath_filter` no longer fails** ([#7637](https://github.com/IBM/mcp-context-forge/issues/7637)) - `POST /import` now applies the schema default of `""` when a tool entry omits `jsonpath_filter` or sets it to `null`, matching `POST /tools`.
+
 =======
 
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.

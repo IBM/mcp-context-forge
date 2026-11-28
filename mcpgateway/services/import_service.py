@@ -1257,7 +1257,7 @@ class ImportService:
             input_schema=tool_data.get("input_schema"),
             output_schema=tool_data.get("output_schema"),
             annotations=tool_data.get("annotations"),
-            jsonpath_filter=tool_data.get("jsonpath_filter"),
+            jsonpath_filter=tool_data.get("jsonpath_filter") or "",
             tool_validation_policy=tool_data.get("tool_validation_policy"),
             tags=tool_data.get("tags", []),
         )

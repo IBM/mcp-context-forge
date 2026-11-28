@@ -419,6 +419,35 @@ async def test_resource_update_conversion(import_service):
     assert resource_update.tags == [{"id": "resource", "label": "resource"}, {"id": "xml", "label": "xml"}]
 
 
+def _tool_import_payload(**overrides):
+    payload = {"name": "import_tool", "url": "https://api.example.com/tool", "integration_type": "REST", "request_type": "GET"}
+    payload.update(overrides)
+    return payload
+
+
+def test_convert_to_tool_create_defaults_missing_jsonpath_filter(import_service):
+    """A tool entry that omits jsonpath_filter uses the schema default of \"\"."""
+    tool = import_service._convert_to_tool_create(_tool_import_payload())
+    assert tool.jsonpath_filter == ""
+
+
+def test_convert_to_tool_create_defaults_null_jsonpath_filter(import_service):
+    """An explicit null jsonpath_filter must not override the NOT NULL default."""
+    tool = import_service._convert_to_tool_create(_tool_import_payload(jsonpath_filter=None))
+    assert tool.jsonpath_filter == ""
+
+
+def test_convert_to_tool_create_keeps_explicit_jsonpath_filter(import_service):
+    tool = import_service._convert_to_tool_create(_tool_import_payload(jsonpath_filter="response"))
+    assert tool.jsonpath_filter == "response"
+
+
+def test_convert_to_tool_update_leaves_missing_jsonpath_filter_unset(import_service):
+    """ToolUpdate treats None as 'leave unchanged' in update_tool()."""
+    tool = import_service._convert_to_tool_update(_tool_import_payload())
+    assert tool.jsonpath_filter is None
+
+
 # ============================================================================
 # Bulk Registration Tests (from test_bulk_registration.py)
 # ============================================================================
@@ -481,6 +510,25 @@ async def test_register_tools_bulk_creates_and_returns_counts():
     # verify DB contains the created tools
     rows = db.execute(select(DbTool)).scalars().all()
     assert len(rows) == 10
+
+
+@pytest.mark.asyncio
+async def test_register_imported_tool_without_jsonpath_filter_persists_empty_default():
+    """Create-path import data must not write NULL into tools.jsonpath_filter."""
+    from sqlalchemy import select
+
+    from mcpgateway.db import Tool as DbTool
+    from mcpgateway.services.tool_service import ToolService
+
+    db = make_session()
+    service = ToolService()
+    service._notify_tool_added = AsyncMock()
+    schema = ImportService()._convert_to_tool_create(_tool_import_payload())
+
+    await service.register_tool(db, schema)
+
+    row = db.execute(select(DbTool).where(DbTool.original_name == "import_tool")).scalar_one()
+    assert row.jsonpath_filter == ""
 
 
 @pytest.mark.asyncio
