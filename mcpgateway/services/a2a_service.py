@@ -862,6 +862,25 @@ class A2AAgentService(BaseService):
 
         return {team.id: team.name for team in teams}
 
+    def _batch_get_card_versions(self, db: Session, agent_ids: List[str]) -> Dict[str, int]:
+        """Return the highest stored Agent Card version for each agent in one query.
+
+        Agents with no stored card are omitted from the result. Callers treat a
+        missing key as null.
+
+        Args:
+            db (Session): Database session for querying stored cards.
+            agent_ids (List[str]): Agent IDs to look up.
+
+        Returns:
+            Dict[str, int]: Mapping of agent_id -> highest card version.
+        """
+        if not agent_ids:
+            return {}
+
+        rows = db.query(A2AAgentCard.a2a_agent_id, func.max(A2AAgentCard.version)).filter(A2AAgentCard.a2a_agent_id.in_(agent_ids)).group_by(A2AAgentCard.a2a_agent_id).all()
+        return {agent_id: version for agent_id, version in rows}
+
     async def _check_agent_access(
         self,
         db: Session,
@@ -1793,6 +1812,8 @@ class A2AAgentService(BaseService):
             teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
 
+        card_version_map = self._batch_get_card_versions(db, [s.id for s in a2a_agents_db])
+
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Convert to A2AAgentRead (common for both pagination types)
@@ -1800,7 +1821,7 @@ class A2AAgentService(BaseService):
         for s in a2a_agents_db:
             try:
                 s.team = team_map.get(s.team_id) if s.team_id else None
-                result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
+                result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map, card_version_map=card_version_map))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining agents instead of failing completely
@@ -1916,6 +1937,7 @@ class A2AAgentService(BaseService):
         # Batch fetch team names to avoid N+1 queries
         team_ids = list({a.team_id for a in agents if a.team_id})
         team_map = self._batch_get_team_names(db, team_ids)
+        card_version_map = self._batch_get_card_versions(db, [a.id for a in agents])
 
         db.commit()  # Release transaction to avoid idle-in-transaction
 
@@ -1923,7 +1945,7 @@ class A2AAgentService(BaseService):
         result = []
         for agent in agents:
             try:
-                result.append(self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map))
+                result.append(self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map, card_version_map=card_version_map))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(agent, "id", "unknown"), getattr(agent, "name", "unknown"), e)
                 # Continue with remaining agents instead of failing completely
@@ -4200,7 +4222,14 @@ class A2AAgentService(BaseService):
             agent.auth_value = encode_auth(agent.auth_value)
         return agent
 
-    def convert_agent_to_read(self, db_agent: DbA2AAgent, include_metrics: bool = False, db: Optional[Session] = None, team_map: Optional[Dict[str, str]] = None) -> A2AAgentRead:
+    def convert_agent_to_read(
+        self,
+        db_agent: DbA2AAgent,
+        include_metrics: bool = False,
+        db: Optional[Session] = None,
+        team_map: Optional[Dict[str, str]] = None,
+        card_version_map: Optional[Dict[str, int]] = None,
+    ) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:
@@ -4208,9 +4237,12 @@ class A2AAgentService(BaseService):
             include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
             db (Optional[Session]): Database session. Only required if team name is not pre-populated
-                on the db_agent object and team_map is not provided.
+                on the db_agent object and team_map is not provided, and card_version_map is not provided.
             team_map (Optional[Dict[str, str]]): Pre-fetched team_id -> team_name mapping.
                 If provided, avoids N+1 queries for team name lookups in list operations.
+            card_version_map (Optional[Dict[str, int]]): Pre-fetched agent_id -> highest stored
+                card version mapping. If provided, avoids N+1 queries for card versions in list
+                operations. A missing key means the agent has no stored card.
 
         Returns:
             A2AAgentRead: Agent read schema.
@@ -4271,6 +4303,13 @@ class A2AAgentService(BaseService):
         agent_data["team"] = getattr(db_agent, "team", None)
         # Include auth_query_params for the _mask_query_param_auth validator
         agent_data["auth_query_params"] = getattr(db_agent, "auth_query_params", None)
+
+        if card_version_map is not None:
+            agent_data["card_version"] = card_version_map.get(db_agent.id)
+        elif db is not None:
+            agent_data["card_version"] = db.query(func.max(A2AAgentCard.version)).filter(A2AAgentCard.a2a_agent_id == db_agent.id).scalar()
+        else:
+            agent_data["card_version"] = None
 
         # Validate using Pydantic model
         validated_agent = A2AAgentRead.model_validate(agent_data)
