@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Skip the unread in-memory MCP event store in JSON mode** ([#7345](https://github.com/IBM/mcp-context-forge/issues/7345)) - With `USE_STATEFUL_SESSIONS=true` and no Redis, `SessionManagerWrapper` no longer attaches `InMemoryEventStore` when `json_response_enabled` is true. ContextForge serves `GET /mcp` itself and JSON responses are written in the POST body, so the store was never read and retained every response until process exit. Redis and SSE (`json_response_enabled=false`) are unchanged.
+
 =======
 
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.

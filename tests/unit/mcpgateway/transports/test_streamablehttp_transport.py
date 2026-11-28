@@ -2933,6 +2933,74 @@ async def test_session_manager_wrapper_initialization_stateful(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_session_manager_wrapper_skips_inmemory_event_store_in_json_mode(monkeypatch, caplog):
+    """Stateful JSON mode must not attach an unread InMemoryEventStore (#7345)."""
+
+    class DummySessionManager:
+        def __init__(self, **kwargs):
+            self.config = kwargs
+
+        async def run(self):
+            raise AssertionError("initialize is not exercised in this test")
+
+    captured_configs = []
+
+    def capture_manager(**kwargs):
+        captured_configs.append(kwargs)
+        return DummySessionManager(**kwargs)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.redis_url", "")
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
+
+    wrapper = SessionManagerWrapper()
+
+    # JSON mode also builds a progress SSE manager (stateless, no store).
+    # The primary stateful manager is the first constructor call.
+    assert len(captured_configs) >= 1
+    primary = captured_configs[0]
+    assert primary["stateless"] is False
+    assert primary["event_store"] is None
+    assert wrapper.session_manager.config["event_store"] is None
+    assert "Using InMemoryEventStore" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_keeps_redis_event_store_in_json_mode(monkeypatch):
+    """Redis event store remains attached when configured, including JSON mode."""
+
+    class DummySessionManager:
+        def __init__(self, **kwargs):
+            self.config = kwargs
+
+        async def run(self):
+            raise AssertionError("initialize is not exercised in this test")
+
+    captured_configs = []
+
+    def capture_manager(**kwargs):
+        captured_configs.append(kwargs)
+        return DummySessionManager(**kwargs)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "redis")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.redis_url", "redis://localhost:6379/0")
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
+
+    SessionManagerWrapper()
+
+    # First-Party
+    from mcpgateway.transports.redis_event_store import RedisEventStore
+
+    primary = captured_configs[0]
+    assert primary["stateless"] is False
+    assert isinstance(primary["event_store"], RedisEventStore)
+
+
+@pytest.mark.asyncio
 async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
     """Test handle_streamable_http sets server_id and calls handle_request."""
     # Standard
