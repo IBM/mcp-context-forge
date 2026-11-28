@@ -172,6 +172,7 @@ from mcpgateway.schemas import (
     ToolMetrics,
     ToolRead,
     ToolUpdate,
+    PluginBindingMode,
 )
 from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.a2a_service import a2a_enabled, A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService, raise_if_a2a_disabled
@@ -18242,9 +18243,15 @@ async def admin_create_a2a_plugin_binding(
                 status_code=400,
             )
 
-        if mode not in {"enforce", "report", "disabled"}:
+        allowed_modes = {item.value for item in PluginBindingMode}
+        if mode not in allowed_modes:
             return HTMLResponse(
-                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid mode: {html.escape(mode)}</div>',
+                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid mode: {html.escape(str(mode))}</div>',
+                status_code=400,
+            )
+        if not 1 <= priority <= 1000:
+            return HTMLResponse(
+                content='<div class="bg-red-50 p-4 rounded text-red-700">Invalid priority value; must be an integer between 1 and 1000</div>',
                 status_code=400,
             )
         if on_error not in {"fail", "ignore", "disable", None}:

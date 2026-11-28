@@ -226,6 +226,34 @@ class TestA2AAgentPluginBindingsRouter:
                 )
         assert exc.value.status_code == 400
 
+    def test_request_schema_rejects_unknown_mode(self) -> None:
+        """An unknown mode such as report is rejected at schema validation (#7590)."""
+        # Third-Party
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc:
+            _make_request(mode="report")
+        assert "mode" in str(exc.value).lower()
+
+    def test_request_schema_accepts_permissive_mode(self) -> None:
+        request = _make_request(mode="permissive")
+        assert request.mode == "permissive"
+
+    def test_request_schema_rejects_unknown_on_error(self) -> None:
+        # Third-Party
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            _make_request(on_error="skip")
+
+    @pytest.mark.parametrize("priority", [0, 1001])
+    def test_request_schema_rejects_out_of_range_priority(self, priority: int) -> None:
+        # Third-Party
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            _make_request(priority=priority)
+
     # ------------------------------------------------------------------
     # GET / — list all
     # ------------------------------------------------------------------
