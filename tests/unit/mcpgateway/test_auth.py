@@ -5347,6 +5347,74 @@ class TestVerifyOauthAccessToken:
         # The critical invariant: the JWKS client was never consulted.
         assert mock_jwks_client.get_signing_key_from_jwt.called is False
 
+    def _client_id_token_claims(self, **extra) -> dict:
+        """Claims shared by an IdP's access and ID tokens when both have ``aud`` = client id (issue #7706)."""
+        return {"iss": self.ISSUER, "sub": "user@example.com", "aud": "my-client", "exp": 9999999999, "iat": 1700000000, **extra}
+
+    async def _verify(self, token: str, public_key, access_token_marker=None):
+        with self._mock_discovery_and_jwks(public_key):
+            return await verify_oauth_access_token(token, [self.ISSUER], expected_audience="my-client", access_token_marker=access_token_marker)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("typ", ["at+jwt", "application/at+jwt"])
+    async def test_nonce_with_at_jwt_typ_accepted(self, typ):
+        """RFC 9068 ``typ: at+jwt`` marks an access token, so ``nonce`` does not reject it."""
+        # Third-Party
+        import jwt  # pylint: disable=import-outside-toplevel
+
+        private_key, public_key = self._generate_rsa_keypair()
+        token = jwt.encode(self._client_id_token_claims(nonce="abc-123"), private_key, algorithm="RS256", headers={"kid": "test-key-1", "typ": typ})
+
+        assert await self._verify(token, public_key) is not None
+
+    @pytest.mark.asyncio
+    async def test_nonce_with_client_id_claim_accepted(self):
+        """An RFC 9068 ``client_id`` claim marks an access token, so ``nonce`` does not reject it."""
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token(self._client_id_token_claims(nonce="abc-123", client_id="my-client"), private_key)
+
+        assert await self._verify(token, public_key) is not None
+
+    @pytest.mark.asyncio
+    async def test_not_opted_in_nonce_with_azp_and_client_id_audience_rejected(self):
+        """Deny path: without an opt-in, ``azp`` is not an access-token marker (Keycloak sends it on ID tokens).
+
+        ``aud`` equals the client id and ``expected_audience``, so the audience check cannot catch this token.
+        """
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token(self._client_id_token_claims(nonce="abc-123", azp="my-client"), private_key)
+
+        assert await self._verify(token, public_key) is None
+
+    @pytest.mark.asyncio
+    async def test_opted_in_access_token_with_nonce_and_azp_accepted(self):
+        """Opted-in provider: an Authentik-shaped access token (``nonce`` + ``azp`` = client id) verifies."""
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token(self._client_id_token_claims(nonce="abc-123", azp="my-client", uid="u1"), private_key)
+
+        result = await self._verify(token, public_key, access_token_marker=("azp", "my-client"))
+
+        assert result is not None
+        assert result["azp"] == "my-client"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            pytest.param({"nonce": "abc-123"}, id="id-token-with-nonce-no-azp"),
+            pytest.param({}, id="id-token-without-nonce-no-azp"),
+            pytest.param({"nonce": "abc-123", "azp": "other-client"}, id="azp-other-client"),
+            pytest.param({"azp": "my-client", "at_hash": "xxxx"}, id="at-hash-always-rejects"),
+            pytest.param({"nonce": "abc-123", "client_id": "my-client"}, id="rfc9068-marker-does-not-replace-opt-in"),
+        ],
+    )
+    async def test_opted_in_rejects_token_without_matching_marker(self, extra):
+        """Deny path: an opted-in provider requires the marker claim to equal the client id for acceptance."""
+        private_key, public_key = self._generate_rsa_keypair()
+        token = self._sign_token(self._client_id_token_claims(**extra), private_key)
+
+        assert await self._verify(token, public_key, access_token_marker=("azp", "my-client")) is None
+
     @pytest.mark.asyncio
     async def test_list_audience_any_match_accepted(self):
         """PyJWT's list-audience semantics: a token whose ``aud`` matches any list entry passes."""

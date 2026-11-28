@@ -377,7 +377,7 @@ async def bootstrap_sso_providers() -> None:
 
     # First-Party
     from mcpgateway.db import get_db
-    from mcpgateway.services.sso_service import SSOService
+    from mcpgateway.services.sso_service import SSOService, warn_if_audience_cannot_separate_id_tokens
 
     providers = get_predefined_sso_providers()
 
@@ -460,6 +460,7 @@ async def bootstrap_sso_providers() -> None:
                 )
                 provider.trusted_for_api_auth = False
                 db.add(provider)
+            warn_if_audience_cannot_separate_id_tokens(provider)
         db.flush()
 
     except Exception as e:

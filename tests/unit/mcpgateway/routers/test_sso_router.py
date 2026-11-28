@@ -760,6 +760,7 @@ async def test_list_all_sso_providers(monkeypatch: pytest.MonkeyPatch):
         auto_create_users=True,
         trusted_for_api_auth=False,
         api_audience=None,
+        access_token_marker_claim=None,
         created_at="created",
         updated_at="updated",
     )
@@ -809,6 +810,7 @@ async def test_get_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
         auto_create_users=True,
         trusted_for_api_auth=False,
         api_audience=None,
+        access_token_marker_claim=None,
         team_mapping={},
         provider_metadata={},
         is_enabled=True,
