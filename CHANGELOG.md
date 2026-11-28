@@ -25,6 +25,10 @@
   `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
   See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
 
+### Fixed
+
+- **LLM proxy forwards tools and tool calls for Anthropic models** ([#7386](https://github.com/IBM/mcp-context-forge/issues/7386)) - The Anthropic chat-completions path now maps OpenAI `tools`, `tool_choice`, and tool-call history to Anthropic `tools` / `tool_use` / `tool_result`, and returns `tool_use` blocks as OpenAI `tool_calls` (including the streaming transform). `tool_choice: "none"` still omits tools. Broader `stop_reason` mapping for non-tool finishes is left to #7411.
+
 
 ## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
 
