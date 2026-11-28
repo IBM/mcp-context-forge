@@ -292,7 +292,7 @@ class TestA2APluginBindingsAdmin:
 
     @pytest.mark.asyncio
     async def test_create_invalid_mode(self, mock_request, user_ctx, db_session):
-        """Mode not in {enforce, report, disabled} returns 400."""
+        """Mode not in PluginBindingMode returns 400."""
         mock_request.form = AsyncMock(
             return_value={
                 "team_id": "team-a",
@@ -314,7 +314,52 @@ class TestA2APluginBindingsAdmin:
         assert "Invalid mode" in body
 
     @pytest.mark.asyncio
+    async def test_create_report_mode_rejected(self, mock_request, user_ctx, db_session):
+        """Legacy report mode is rejected; it is not a PluginBindingMode value (#7590)."""
+        mock_request.form = AsyncMock(
+            return_value={
+                "team_id": "team-a",
+                "agent_name": "agent_x",
+                "plugin_id": "OutputLengthGuardPlugin",
+                "mode": "report",
+                "priority": "50",
+                "on_error": "",
+                "config": "{}",
+            }
+        )
+        response = await admin_create_a2a_plugin_binding(
+            request=mock_request,
+            db=db_session,
+            user=user_ctx,
+        )
+        assert response.status_code == 400
+        body = response.body.decode()
+        assert "Invalid mode" in body
+
+    async def test_create_priority_out_of_range(self, mock_request, user_ctx, db_session):
+        """Priority outside 1-1000 returns 400."""
+        mock_request.form = AsyncMock(
+            return_value={
+                "team_id": "team-a",
+                "agent_name": "agent_x",
+                "plugin_id": "OutputLengthGuardPlugin",
+                "mode": "enforce",
+                "priority": "0",
+                "on_error": "",
+                "config": "{}",
+            }
+        )
+        response = await admin_create_a2a_plugin_binding(
+            request=mock_request,
+            db=db_session,
+            user=user_ctx,
+        )
+        assert response.status_code == 400
+        body = response.body.decode()
+        assert "Invalid priority" in body
+
     async def test_create_invalid_on_error(self, mock_request, user_ctx, db_session):
+
         """on_error not in {fail, ignore, disable, None} returns 400."""
         mock_request.form = AsyncMock(
             return_value={

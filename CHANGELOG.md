@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Validate A2A agent plugin binding mode, priority, on_error, and plugin_id** ([#7590](https://github.com/IBM/mcp-context-forge/issues/7590)) - `POST /v1/a2a-agents/plugin-bindings` now types `mode` as `PluginBindingMode`, restricts `on_error` to `fail`/`ignore`/`disable`, and bounds `priority` to 1–1000, so unknown values such as `report` are rejected with 422. When the plugin catalog is available, an unknown `plugin_id` is rejected with 400 and nothing is stored. The admin form uses the same mode and priority rules.
+
 =======
 
 - **Configuration imports and exports omit credentials** - Exports omit recognized credentials. Import ignores credentials in older files.

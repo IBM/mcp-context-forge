@@ -17,9 +17,56 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import A2AAgentPluginBinding, utc_now
-from mcpgateway.schemas import A2AAgentPluginBindingResponse
+from mcpgateway.schemas import A2AAgentPluginBindingResponse, PluginBindingMode
 
 logger = logging.getLogger(__name__)
+
+
+def _known_plugin_identifiers() -> Optional[set[str]]:
+    """Return identifiers of plugins loaded in this process, if the catalog is available.
+
+    Returns:
+        A set of plugin names, kinds, and kind class-name suffixes, or ``None``
+        when the plugin manager is not initialized and the catalog cannot be
+        consulted.
+    """
+    # First-Party - lazy to avoid import cycles during startup
+    from mcpgateway.services.plugin_service import get_plugin_service  # pylint: disable=import-outside-toplevel
+
+    try:
+        plugin_service = get_plugin_service()
+    except Exception:
+        return None
+
+    if plugin_service.get_plugin_manager() is None:
+        return None
+
+    identifiers: set[str] = set()
+    for plugin in plugin_service.get_all_plugins():
+        name = plugin.get("name")
+        kind = plugin.get("kind") or ""
+        if isinstance(name, str) and name:
+            identifiers.add(name)
+        if isinstance(kind, str) and kind:
+            identifiers.add(kind)
+            identifiers.add(kind.rsplit(".", 1)[-1])
+    return identifiers
+
+
+def _ensure_plugin_id_is_loaded(plugin_id: str) -> None:
+    """Reject a plugin_id that does not name a loaded plugin.
+
+    Args:
+        plugin_id: Plugin identifier from the binding request.
+
+    Raises:
+        ValueError: If the plugin catalog is available and ``plugin_id`` is unknown.
+    """
+    known = _known_plugin_identifiers()
+    if known is None:
+        return
+    if plugin_id not in known:
+        raise ValueError(f"Unknown plugin_id: {plugin_id}")
 
 
 class A2AAgentPluginBindingNotFoundError(Exception):
@@ -144,6 +191,9 @@ class A2AAgentPluginBindingService:
         Returns:
             A2AAgentPluginBindingResponse: The created or updated binding.
         """
+        mode = mode.value if isinstance(mode, PluginBindingMode) else mode
+        _ensure_plugin_id_is_loaded(plugin_id)
+
         now = utc_now()
         existing = (
             db.query(A2AAgentPluginBinding)

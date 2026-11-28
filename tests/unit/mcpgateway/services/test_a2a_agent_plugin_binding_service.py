@@ -299,6 +299,45 @@ class TestUpsertBinding:
         )
         assert result.plugin_id == ""
 
+    def test_unknown_plugin_id_rejected_when_catalog_available(self, service, db_session, monkeypatch):
+        """Unknown plugin_id must not be stored when the plugin catalog can be consulted (#7590)."""
+        monkeypatch.setattr(
+            "mcpgateway.services.a2a_agent_plugin_binding_service._known_plugin_identifiers",
+            lambda: {"OutputLengthGuardPlugin", "RateLimiterPlugin"},
+        )
+        with pytest.raises(ValueError, match="Unknown plugin_id"):
+            service.upsert_binding(
+                db=db_session,
+                team_id="team-a",
+                agent_name="agent_x",
+                plugin_id="NotALoadedPlugin",
+                mode="enforce",
+                priority=50,
+                config={},
+                on_error=None,
+                caller_email="admin@example.com",
+            )
+        assert service.list_bindings(db_session, team_id="team-a")[0] == []
+
+    def test_known_plugin_id_accepted_when_catalog_available(self, service, db_session, monkeypatch):
+        monkeypatch.setattr(
+            "mcpgateway.services.a2a_agent_plugin_binding_service._known_plugin_identifiers",
+            lambda: {"OutputLengthGuardPlugin"},
+        )
+        result = service.upsert_binding(
+            db=db_session,
+            team_id="team-a",
+            agent_name="agent_x",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="permissive",
+            priority=50,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        )
+        assert result.plugin_id == "OutputLengthGuardPlugin"
+        assert result.mode == "permissive"
+
 
 class TestListBindings:
     def test_list_all_when_empty(self, service, db_session):

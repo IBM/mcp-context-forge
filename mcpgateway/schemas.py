@@ -11084,18 +11084,21 @@ class A2AAgentPluginBindingRequest(BaseModelWithConfigDict):
     Attributes:
         agent_name: Agent name (or "*" for team-wide policies).
         plugin_id: Plugin identifier.
-        mode: Plugin execution mode (enforce, detect).
-        priority: Execution priority (lower runs first).
+        mode: Plugin execution mode (same vocabulary as PluginPolicyItem).
+        priority: Execution priority (1-1000; lower runs first).
         config: Plugin-specific configuration.
         on_error: Error handling policy (fail, ignore, disable).
     """
 
     agent_name: str = Field(..., min_length=1, max_length=255, description="Agent name or '*' for team-wide")
     plugin_id: str = Field(..., min_length=1, max_length=64, description="Plugin identifier")
-    mode: str = Field(default="enforce", description="Plugin execution mode")
-    priority: int = Field(default=50, description="Execution priority")
+    mode: PluginBindingMode = Field(
+        default=PluginBindingMode.ENFORCE,
+        description="Execution mode: enforce, enforce_ignore_error, permissive, disabled, sequential, concurrent, transform, audit, or fire_and_forget",
+    )
+    priority: int = Field(default=50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(default_factory=dict, description="Plugin-specific configuration")
-    on_error: Optional[str] = Field(None, description="Error handling policy (fail, ignore, disable)")
+    on_error: Optional[Literal["fail", "ignore", "disable"]] = Field(None, description="Error handling policy (fail, ignore, disable)")
 
 
 class A2AAgentPluginBindingResponse(BaseModelWithConfigDict):
