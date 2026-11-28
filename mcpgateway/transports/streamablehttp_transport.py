@@ -1380,6 +1380,26 @@ def _get_shared_session_registry() -> Optional[Any]:
     return _shared_session_registry
 
 
+async def _mark_streamable_session(session_id: str) -> None:
+    """Write a session-registry existence marker for a Streamable HTTP session.
+
+    Args:
+        session_id: Logical MCP session identifier issued by the SDK or supplied
+            by the client after initialize.
+    """
+    if not session_id:
+        return
+
+    session_registry = _get_shared_session_registry()
+    if session_registry is None:
+        return
+
+    try:
+        await session_registry.mark_session(session_id)
+    except Exception as exc:
+        logger.warning("Failed to register streamable HTTP session %s: %s", session_id, exc)
+
+
 async def _claim_streamable_session_owner(session_id: str, owner_email: str) -> Optional[str]:
     """Claim or resolve the logical owner for a Streamable HTTP session.
 
@@ -6287,6 +6307,12 @@ class SessionManagerWrapper:
                 mcp_session_id,
                 session_to_register,
             )
+            # Write the mcp:session:{sid} existence marker (and a local
+            # placeholder) so session_exists() succeeds on later /mcp and
+            # /rpc requests. Owner claim above is a separate key and is
+            # skipped when the caller has no email (issue #7622).
+            if session_to_register:
+                await _mark_streamable_session(session_to_register)
             if session_to_register and settings.mcpgateway_session_affinity_enabled:
                 try:
                     # First-Party - lazy import to avoid circular dependencies

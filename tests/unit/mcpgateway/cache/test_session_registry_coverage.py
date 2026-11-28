@@ -2745,6 +2745,87 @@ class TestSessionOwnerTracking:
         assert await registry.session_exists("owner-5") is True
 
     @pytest.mark.asyncio
+    async def test_mark_session_memory_backend_sets_existence_without_transport(self, registry):
+        assert await registry.session_exists("streamable-1") is False
+
+        await registry.mark_session("streamable-1")
+        assert await registry.session_exists("streamable-1") is True
+        assert await registry.get_session("streamable-1") is None
+
+        await registry.remove_session("streamable-1")
+        assert await registry.session_exists("streamable-1") is False
+
+    @pytest.mark.asyncio
+    async def test_mark_session_does_not_overwrite_existing_transport(self, registry):
+        tr = FakeSSETransport("owner-keep")
+        await registry.add_session("owner-keep", tr)
+
+        await registry.mark_session("owner-keep")
+        assert await registry.get_session("owner-keep") is tr
+
+    @pytest.mark.asyncio
+    async def test_mark_session_none_backend_and_empty_id_are_noop(self, registry):
+        registry._backend = "none"
+        await registry.mark_session("ignored")
+        registry._backend = "memory"
+        assert await registry.session_exists("ignored") is False
+
+        await registry.mark_session("")
+        assert await registry.session_exists("") is False
+
+    @pytest.mark.asyncio
+    async def test_mark_session_redis_writes_existence_marker(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.setex = AsyncMock()
+        redis_client.publish = AsyncMock()
+        registry._redis = redis_client
+
+        await registry.mark_session("owner-redis-mark")
+        redis_client.setex.assert_awaited_once_with("mcp:session:owner-redis-mark", registry._session_ttl, "1")
+        redis_client.publish.assert_awaited()
+        assert "owner-redis-mark" in registry._sessions
+
+    @pytest.mark.asyncio
+    async def test_mark_session_redis_without_client_skips_distributed_write(self, registry):
+        registry._backend = "redis"
+        registry._redis = None
+        await registry.mark_session("owner-redis-none")
+        assert "owner-redis-none" in registry._sessions
+
+    @pytest.mark.asyncio
+    async def test_mark_session_database_inserts_when_missing(self, registry):
+        registry._backend = "database"
+        fake_db = MagicMock()
+        fake_query = MagicMock()
+        fake_query.filter.return_value.first.return_value = None
+        fake_db.query.return_value = fake_query
+        added = []
+        fake_db.add.side_effect = added.append
+
+        with patch("mcpgateway.cache.session_registry.get_db", return_value=iter([fake_db])):
+            await registry.mark_session("owner-db-mark")
+
+        assert added, "expected a SessionRecord to be inserted"
+        fake_db.commit.assert_called_once()
+        fake_db.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_mark_session_database_skips_existing_record(self, registry):
+        registry._backend = "database"
+        fake_db = MagicMock()
+        fake_query = MagicMock()
+        fake_query.filter.return_value.first.return_value = object()
+        fake_db.query.return_value = fake_query
+
+        with patch("mcpgateway.cache.session_registry.get_db", return_value=iter([fake_db])):
+            await registry.mark_session("owner-db-existing")
+
+        fake_db.add.assert_not_called()
+        fake_db.commit.assert_not_called()
+        fake_db.close.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_claim_session_owner_redis_without_client_returns_none(self, registry):
         registry._backend = "redis"
         registry._redis = None
