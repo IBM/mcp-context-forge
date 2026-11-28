@@ -25,6 +25,10 @@
   `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
   See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
 
+### Fixed
+
+- **Catalog OAuth authorization leaves the server enabled** ([#7398](https://github.com/IBM/mcp-context-forge/issues/7398)) - After a successful authorization-code callback stores tokens, a catalog-registered gateway created with `enabled=False` pending OAuth is enabled in the callback. Users without `gateways.update` no longer depend on a follow-up UI enable request. Non-catalog gateways are left unchanged.
+
 
 ## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
 
