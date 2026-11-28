@@ -5373,8 +5373,15 @@ class SessionManagerWrapper:
             if settings.cache_type == "redis" and settings.redis_url:
                 event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
                 logger.debug("Using RedisEventStore for stateful sessions (single-worker)")
+            elif settings.json_response_enabled:
+                # JSON mode answers each POST in its own body, and GET /mcp is
+                # served by ContextForge, so the SDK event store is never read.
+                # InMemoryEventStore would retain every response (keyed only by
+                # JSON-RPC request id) until process exit (issue #7345).
+                event_store = None
+                logger.debug("Skipping MCP SDK event store in JSON-response mode")
             else:
-                # Fall back to in-memory for single-worker or when Redis not available
+                # Fall back to in-memory for SSE replay on a single worker
                 event_store = InMemoryEventStore()
                 logger.warning("Using InMemoryEventStore - only works with single worker!")
             stateless = False
