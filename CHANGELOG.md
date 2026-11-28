@@ -25,6 +25,10 @@
   `POST /servers/{server_id}/oauth/approve` or the Admin UI review action. Unrelated edits do not approve settings.
   See [OAuth approval and upgrade steps](docs/docs/manage/sso.md#virtual-server-oauth-approval-and-upgrades).
 
+### Fixed
+
+- **A2A agent reads report the stored card version** ([#7605](https://github.com/IBM/mcp-context-forge/issues/7605)) - `A2AAgentRead` now includes `card_version`, set to the highest version in `a2a_agent_cards` for that agent, or `null` when no card is stored. List requests resolve versions in one query.
+
 
 ## [1.1.2] - MCP Subscriptions, A2A Agent Cards, AWS SigV4, and Security Hardening
 

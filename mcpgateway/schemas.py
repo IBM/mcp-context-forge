@@ -7328,6 +7328,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Creation/update timestamps
     - Enabled/reachable status
     - Metrics
+    - Stored Agent Card version (card_version), or null when no card is stored
     - Authentication type: basic, bearer, authheaders, oauth, query_param
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
@@ -7354,6 +7355,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     protocol_version: str
     capabilities: Dict[str, Any]
     skills: Optional[List[Dict[str, Any]]] = Field(default=None, description="Skills the agent advertises; falls back to capabilities.skills for older agents")
+    card_version: Optional[int] = Field(None, description="Highest stored Agent Card version for this agent, or null when no card is stored")
     config: Dict[str, Any]
     enabled: bool
     reachable: bool
