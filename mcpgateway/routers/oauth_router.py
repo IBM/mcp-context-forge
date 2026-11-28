@@ -13,6 +13,7 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 
 # Standard
 import asyncio
+from datetime import datetime, timezone
 from functools import wraps
 import hashlib
 from html import escape
@@ -326,6 +327,30 @@ async def _persist_registered_oauth_config(gateway: Gateway, oauth_config: Dict[
     gateway.oauth_config = await protect_oauth_config_for_storage(persist_dict, existing_oauth_config=gateway.oauth_config)
     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
     db.commit()
+
+
+def _enable_catalog_gateway_after_oauth(gateway: Gateway, db: Session) -> None:
+    """Enable a catalog-registered gateway after a successful OAuth token store.
+
+    Catalog registration persists authorization-code servers with ``enabled=False``
+    until consent completes. The browser previously called the gateway enable API
+    after the popup, which requires ``gateways.update`` and left the record
+    disabled for callers without that permission. Move enablement here, and only
+    for ``created_via="catalog"`` rows, so a non-catalog disabled gateway is
+    unchanged.
+
+    Args:
+        gateway: Gateway row that just received stored OAuth tokens.
+        db: Database session used to persist the enablement.
+    """
+    if getattr(gateway, "created_via", None) != "catalog":
+        return
+    if gateway.enabled:
+        return
+    gateway.enabled = True
+    gateway.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    logger.info("Enabled catalog gateway %s after successful OAuth authorization", gateway.id)
 
 
 def _is_well_formed_audience(value: Any) -> bool:
@@ -1260,6 +1285,7 @@ async def oauth_callback(
                 learned_aud=token_aud,
                 learned_iss=token_iss,
             )
+            _enable_catalog_gateway_after_oauth(gateway, db)
 
         # Learn the IdP's audience mapping from the token and persist as resource.
         # RFC 8707 Section 2: "The authorization server may use the exact resource value

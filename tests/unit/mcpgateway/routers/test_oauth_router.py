@@ -6904,3 +6904,174 @@ class TestCimdIntegration:
             iss=None,
             validated_state={"gateway_id": "gateway_cimd_int", "state": "mock_state_456", "code_verifier": "verifier", "app_user_email": "user@example.com", "team_id": None},
         )
+
+
+class TestEnableCatalogGatewayAfterOAuth:
+    """Catalog gateways created disabled pending OAuth are enabled after token store (#7398)."""
+
+    def test_enables_disabled_catalog_gateway(self):
+        from mcpgateway.routers.oauth_router import _enable_catalog_gateway_after_oauth
+
+        gateway = SimpleNamespace(id="gw-catalog", created_via="catalog", enabled=False, updated_at=None)
+        db = Mock()
+
+        _enable_catalog_gateway_after_oauth(gateway, db)
+
+        assert gateway.enabled is True
+        assert gateway.updated_at is not None
+        assert gateway.updated_at.tzinfo is not None
+        db.commit.assert_called_once()
+
+    def test_does_not_enable_non_catalog_gateway(self):
+        from mcpgateway.routers.oauth_router import _enable_catalog_gateway_after_oauth
+
+        gateway = SimpleNamespace(id="gw-other", created_via="ui", enabled=False, updated_at=None)
+        db = Mock()
+
+        _enable_catalog_gateway_after_oauth(gateway, db)
+
+        assert gateway.enabled is False
+        db.commit.assert_not_called()
+
+    def test_does_not_enable_when_created_via_missing(self):
+        from mcpgateway.routers.oauth_router import _enable_catalog_gateway_after_oauth
+
+        gateway = SimpleNamespace(id="gw-plain", enabled=False, updated_at=None)
+        db = Mock()
+
+        _enable_catalog_gateway_after_oauth(gateway, db)
+
+        assert gateway.enabled is False
+        db.commit.assert_not_called()
+
+    def test_leaves_already_enabled_catalog_gateway_unchanged(self):
+        from mcpgateway.routers.oauth_router import _enable_catalog_gateway_after_oauth
+
+        original = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        gateway = SimpleNamespace(id="gw-catalog", created_via="catalog", enabled=True, updated_at=original)
+        db = Mock()
+
+        _enable_catalog_gateway_after_oauth(gateway, db)
+
+        assert gateway.enabled is True
+        assert gateway.updated_at is original
+        db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_enables_disabled_catalog_gateway(self, mock_db, mock_request):
+        """Successful token store enables a catalog row even without a later UI enable call."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        mock_request.cookies = {}
+        mock_request.state = SimpleNamespace(token_teams=["team-1"], csp_nonce="test-nonce")
+
+        gateway = Mock()
+        gateway.id = "gateway123"
+        gateway.name = "Catalog Gateway"
+        gateway.url = "https://mcp.example.com"
+        gateway.visibility = "public"
+        gateway.owner_email = "test@example.com"
+        gateway.team_id = None
+        gateway.created_via = "catalog"
+        gateway.enabled = False
+        gateway.updated_at = None
+        gateway.ca_certificate = None
+        gateway.client_cert = None
+        gateway.client_key = None
+        gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "test_client",
+            "authorization_url": "https://oauth.example.com/authorize",
+            "token_url": "https://oauth.example.com/token",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        token_result = {
+            "success": True,
+            "user_id": "oauth_user_123",
+            "token_response": {"access_token": "tok-abc", "refresh_token": "ref-abc", "expires_in": 3600, "scope": "read"},
+            "token_aud": None,
+            "token_iss": None,
+            "state_data": {"app_user_email": "test@example.com", "team_id": None},
+        }
+
+        with (
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_cls,
+            patch("mcpgateway.routers.oauth_router._persist_learned_audience", new_callable=AsyncMock),
+        ):
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": "state-token", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+            mock_token_storage_cls.return_value.store_tokens = AsyncMock()
+
+            result = await oauth_callback(code="auth_code_123", state="state-token", request=mock_request, db=mock_db)
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 200
+        mock_token_storage_cls.return_value.store_tokens.assert_awaited_once()
+        assert gateway.enabled is True
+        mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_does_not_enable_non_catalog_gateway(self, mock_db, mock_request):
+        """A disabled non-catalog gateway stays disabled after a successful callback."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        mock_request.cookies = {}
+        mock_request.state = SimpleNamespace(token_teams=["team-1"], csp_nonce="test-nonce")
+
+        gateway = Mock()
+        gateway.id = "gateway123"
+        gateway.name = "Manual Gateway"
+        gateway.url = "https://mcp.example.com"
+        gateway.visibility = "public"
+        gateway.owner_email = "test@example.com"
+        gateway.team_id = None
+        gateway.created_via = "ui"
+        gateway.enabled = False
+        gateway.updated_at = None
+        gateway.ca_certificate = None
+        gateway.client_cert = None
+        gateway.client_key = None
+        gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "test_client",
+            "authorization_url": "https://oauth.example.com/authorize",
+            "token_url": "https://oauth.example.com/token",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        token_result = {
+            "success": True,
+            "user_id": "oauth_user_123",
+            "token_response": {"access_token": "tok-abc", "expires_in": 3600},
+            "token_aud": None,
+            "token_iss": None,
+            "state_data": {"app_user_email": "test@example.com", "team_id": None},
+        }
+
+        with (
+            patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class,
+            patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_cls,
+            patch("mcpgateway.routers.oauth_router._persist_learned_audience", new_callable=AsyncMock),
+        ):
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.consume_and_validate_authorization_state = AsyncMock(
+                return_value={"gateway_id": "gateway123", "state": "state-token", "code_verifier": "verifier", "app_user_email": "test@example.com", "team_id": None}
+            )
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+            mock_token_storage_cls.return_value.store_tokens = AsyncMock()
+
+            result = await oauth_callback(code="auth_code_123", state="state-token", request=mock_request, db=mock_db)
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 200
+        mock_token_storage_cls.return_value.store_tokens.assert_awaited_once()
+        assert gateway.enabled is False
