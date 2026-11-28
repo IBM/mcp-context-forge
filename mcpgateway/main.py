@@ -28,6 +28,7 @@ Structure:
 # Standard
 import asyncio
 import base64
+import copy
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -10969,8 +10970,17 @@ async def import_configuration(
 
         logger.info(f"User {safe_log_user(user)} requested configuration import (dry_run={dry_run})")
 
-        if import_envelope_includes_roots(import_data):
-            await _require_unrestricted_root_admin(request, user, db)
+        roots_excluded = False
+        roots_in_import = import_envelope_includes_roots(import_data)
+        roots_selected = selected_entities is None or selective_selection_includes_roots(selected_entities)
+        if roots_in_import and roots_selected:
+            if not await is_unrestricted_platform_admin(request, user, db):
+                # A non-admin importing an admin-exported file should still get
+                # the other entity types. Roots stay admin-only, so remove them
+                # before the dry-run counts are computed.
+                import_data = copy.deepcopy(import_data)
+                import_data.get("entities", {}).pop("roots", None)
+                roots_excluded = True
 
         if request is not None and "rekey_secret" in await request.json():
             raise HTTPException(status_code=400, detail=REKEY_SECRET_REMOVED)
@@ -10993,6 +11003,9 @@ async def import_configuration(
             token_teams=token_teams,
             unrestricted_admin=unrestricted_admin,
         )
+
+        if roots_excluded:
+            import_status.warnings.append("Roots were excluded from this import because the caller is not an unrestricted platform administrator.")
 
         return import_status.to_dict()
 
