@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
+import orjson
 import pytest
 
 # First-Party
@@ -1247,15 +1248,21 @@ def test_transform_anthropic_response_non_text_block(service):
     result = service._transform_anthropic_response(data, "claude")
 
     assert result.choices[0].message.content == "ok"
+    assert result.choices[0].message.tool_calls[0]["id"] == "t1"
+    assert result.choices[0].message.tool_calls[0]["function"]["name"] == "fn"
+    assert result.choices[0].finish_reason == "tool_calls"
 
 
 def test_transform_anthropic_stream_chunk_non_text_delta(service):
-    """Anthropic stream chunk with non-text-delta type (branch 692->718 false)."""
-    data = {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{}"}}
+    """Anthropic input_json_delta events become OpenAI tool_calls argument deltas."""
+    data = {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{}"}}
+    state = {"block_to_tool_index": {0: 0}}
 
-    result = service._transform_anthropic_stream_chunk(data, "id", 1, "model")
+    result = service._transform_anthropic_stream_chunk(data, "id", 1, "model", stream_state=state)
 
-    assert result is None
+    assert result is not None
+    assert '"arguments":"{}"' in result
+    assert '"tool_calls"' in result
 
 
 @pytest.mark.asyncio
@@ -1501,3 +1508,192 @@ async def test_chat_completion_stream_sets_langfuse_output_when_enabled(service,
     assert attrs["llm.stream"] is True
     output_attr = next(call.args[1] for call in span.set_attribute.call_args_list if call.args[0] == "langfuse.observation.output")
     assert "choices" in output_attr
+
+
+def test_build_anthropic_request_forwards_tools_and_tool_choice(service):
+    """OpenAI tools and tool_choice are mapped to Anthropic Messages fields."""
+    from mcpgateway.llm_schemas import FunctionDefinition, ToolDefinition
+
+    tool = ToolDefinition(
+        function=FunctionDefinition(
+            name="get_weather",
+            description="Look up weather",
+            parameters={"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+        )
+    )
+    request = ChatCompletionRequest(
+        model="claude-sonnet-4-6",
+        messages=[ChatMessage(role="user", content="What's the weather in Paris?")],
+        tools=[tool],
+        tool_choice="auto",
+    )
+    provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic", default_max_tokens=4096)
+    model = _make_model(model_id="claude-sonnet-4-6")
+
+    _url, _headers, body = service._build_anthropic_request(request, provider, model)
+
+    assert body["tools"] == [
+        {
+            "name": "get_weather",
+            "description": "Look up weather",
+            "input_schema": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+        }
+    ]
+    assert body["tool_choice"] == {"type": "auto"}
+    assert body["messages"] == [{"role": "user", "content": "What's the weather in Paris?"}]
+
+
+def test_build_anthropic_request_tool_choice_none_omits_tools(service):
+    """OpenAI tool_choice=none does not advertise tools to Anthropic."""
+    from mcpgateway.llm_schemas import FunctionDefinition, ToolDefinition
+
+    tool = ToolDefinition(function=FunctionDefinition(name="get_weather"))
+    request = ChatCompletionRequest(
+        model="claude",
+        messages=[ChatMessage(role="user", content="hi")],
+        tools=[tool],
+        tool_choice="none",
+    )
+    provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic")
+    model = _make_model(model_id="claude")
+
+    _url, _headers, body = service._build_anthropic_request(request, provider, model)
+
+    assert "tools" not in body
+    assert "tool_choice" not in body
+
+
+def test_build_anthropic_request_maps_required_and_named_tool_choice(service):
+    """required becomes Anthropic any; a named function becomes type=tool."""
+    from mcpgateway.llm_schemas import FunctionDefinition, ToolDefinition
+
+    tool = ToolDefinition(function=FunctionDefinition(name="get_weather", parameters={"type": "object", "properties": {}}))
+    provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic")
+    model = _make_model(model_id="claude")
+
+    required = ChatCompletionRequest(
+        model="claude",
+        messages=[ChatMessage(role="user", content="hi")],
+        tools=[tool],
+        tool_choice="required",
+    )
+    _url, _headers, body = service._build_anthropic_request(required, provider, model)
+    assert body["tool_choice"] == {"type": "any"}
+
+    named = ChatCompletionRequest(
+        model="claude",
+        messages=[ChatMessage(role="user", content="hi")],
+        tools=[tool],
+        tool_choice={"type": "function", "function": {"name": "get_weather"}},
+    )
+    _url, _headers, body = service._build_anthropic_request(named, provider, model)
+    assert body["tool_choice"] == {"type": "tool", "name": "get_weather"}
+
+
+def test_build_anthropic_request_maps_tool_call_history(service):
+    """Assistant tool_calls and role=tool messages become tool_use / tool_result."""
+    request = ChatCompletionRequest(
+        model="claude",
+        messages=[
+            ChatMessage(role="user", content="Weather in Paris?"),
+            ChatMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'},
+                    }
+                ],
+            ),
+            ChatMessage(role="tool", tool_call_id="call_1", content="22C"),
+        ],
+    )
+    provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic")
+    model = _make_model(model_id="claude")
+
+    _url, _headers, body = service._build_anthropic_request(request, provider, model)
+
+    assert body["messages"][0] == {"role": "user", "content": "Weather in Paris?"}
+    assert body["messages"][1]["role"] == "assistant"
+    assert body["messages"][1]["content"] == [
+        {"type": "tool_use", "id": "call_1", "name": "get_weather", "input": {"city": "Paris"}},
+    ]
+    assert body["messages"][2] == {
+        "role": "user",
+        "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "22C"}],
+    }
+    assert all(message["role"] != "tool" for message in body["messages"])
+
+
+def test_transform_anthropic_response_maps_tool_use_blocks(service):
+    """tool_use blocks become OpenAI tool_calls with finish_reason tool_calls."""
+    data = {
+        "id": "msg_1",
+        "content": [
+            {"type": "text", "text": ""},
+            {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {"city": "Paris"}},
+        ],
+        "stop_reason": "tool_use",
+        "usage": {"input_tokens": 8, "output_tokens": 4},
+    }
+
+    result = service._transform_anthropic_response(data, "claude-sonnet-4-6")
+
+    assert result.choices[0].finish_reason == "tool_calls"
+    assert result.choices[0].message.content is None
+    assert result.choices[0].message.tool_calls == [
+        {
+            "id": "toolu_1",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'},
+        }
+    ]
+
+
+def test_transform_anthropic_stream_chunk_tool_use(service):
+    """Streaming tool_use events emit OpenAI tool_calls deltas and finish_reason."""
+    state = {}
+    start = service._transform_anthropic_stream_chunk(
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {}},
+        },
+        "id",
+        1,
+        "model",
+        stream_state=state,
+    )
+    arg_delta = service._transform_anthropic_stream_chunk(
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": '{"city":'}},
+        "id",
+        1,
+        "model",
+        stream_state=state,
+    )
+    service._transform_anthropic_stream_chunk(
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+        "id",
+        1,
+        "model",
+        stream_state=state,
+    )
+    stop = service._transform_anthropic_stream_chunk(
+        {"type": "message_stop"},
+        "id",
+        1,
+        "model",
+        stream_state=state,
+    )
+
+    assert start is not None
+    start_payload = orjson.loads(start)
+    assert start_payload["choices"][0]["delta"]["tool_calls"][0]["id"] == "toolu_1"
+    assert start_payload["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert arg_delta is not None
+    arg_payload = orjson.loads(arg_delta)
+    assert arg_payload["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"] == '{"city":'
+    assert orjson.loads(stop)["choices"][0]["finish_reason"] == "tool_calls"
+

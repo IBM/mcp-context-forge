@@ -11,8 +11,9 @@ formats and handles streaming responses.
 """
 
 # Standard
+import json
 import time
-from typing import Any, AsyncGenerator, Dict, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 import uuid
 
 # Third-Party
@@ -99,6 +100,184 @@ class LLMProxyAuthError(LLMProxyError):
 
 class LLMProxyRequestError(LLMProxyError):
     """Raised when request to provider fails."""
+
+
+def _parse_tool_arguments(raw: Any) -> Dict[str, Any]:
+    """Parse OpenAI-style tool arguments into a JSON object.
+
+    Args:
+        raw: A dict, JSON string, or other value from a tool call.
+
+    Returns:
+        Dict[str, Any]: An object suitable for Anthropic ``tool_use.input``.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _openai_tools_to_anthropic(tools: List[Any]) -> List[Dict[str, Any]]:
+    """Map OpenAI chat-completion tools to Anthropic Messages ``tools``.
+
+    Args:
+        tools: OpenAI-style ``ToolDefinition`` entries.
+
+    Returns:
+        List[Dict[str, Any]]: Anthropic tool definitions with ``input_schema``.
+    """
+    mapped: List[Dict[str, Any]] = []
+    for tool in tools:
+        function = getattr(tool, "function", None)
+        if function is None:
+            continue
+        parameters = getattr(function, "parameters", None) or {}
+        if isinstance(parameters, dict) and parameters.get("type"):
+            schema = parameters
+        else:
+            schema = {"type": "object", "properties": parameters if isinstance(parameters, dict) else {}}
+        entry: Dict[str, Any] = {"name": function.name, "input_schema": schema}
+        if function.description:
+            entry["description"] = function.description
+        mapped.append(entry)
+    return mapped
+
+
+def _openai_tool_choice_to_anthropic(tool_choice: Any) -> Optional[Dict[str, Any]]:
+    """Map an OpenAI ``tool_choice`` value to Anthropic's tool-choice object.
+
+    Args:
+        tool_choice: OpenAI string or dict tool-choice value.
+
+    Returns:
+        Optional[Dict[str, Any]]: Anthropic tool-choice, or ``None`` to omit it
+            (including OpenAI ``"none"``, which means tools should not be sent).
+    """
+    if tool_choice is None or tool_choice == "none":
+        return None
+    if tool_choice == "auto":
+        return {"type": "auto"}
+    if tool_choice == "required":
+        return {"type": "any"}
+    if isinstance(tool_choice, dict):
+        if tool_choice.get("type") in {"auto", "any", "tool"}:
+            return tool_choice
+        if tool_choice.get("type") == "function":
+            name = (tool_choice.get("function") or {}).get("name")
+            if name:
+                return {"type": "tool", "name": name}
+    return None
+
+
+def _anthropic_messages_from_request(request: ChatCompletionRequest) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+    """Convert OpenAI chat messages to Anthropic system text and message list.
+
+    Assistant ``tool_calls`` become ``tool_use`` blocks. ``role: tool`` messages
+    become ``tool_result`` blocks on a user message, because the Messages API
+    does not accept a ``tool`` role.
+
+    Args:
+        request: OpenAI-shaped chat completion request.
+
+    Returns:
+        Tuple[Optional[str], List[Dict[str, Any]]]: System prompt (last system
+            message, matching prior behaviour) and Anthropic messages.
+    """
+    system_message: Optional[str] = None
+    messages: List[Dict[str, Any]] = []
+    pending_tool_results: List[Dict[str, Any]] = []
+
+    def flush_tool_results(extra: Optional[List[Dict[str, Any]]] = None) -> None:
+        """Append buffered tool results as a user message, optionally with text.
+
+        Args:
+            extra: Extra content blocks to include after the tool results.
+        """
+        nonlocal pending_tool_results
+        if not pending_tool_results and not extra:
+            return
+        content: List[Dict[str, Any]] = list(pending_tool_results)
+        if extra:
+            content.extend(extra)
+        messages.append({"role": "user", "content": content})
+        pending_tool_results = []
+
+    for msg in request.messages:
+        if msg.role == "system":
+            system_message = msg.content
+            continue
+        if msg.role == "tool":
+            pending_tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": msg.tool_call_id or "",
+                    "content": msg.content or "",
+                }
+            )
+            continue
+        if msg.role == "assistant":
+            flush_tool_results()
+            content_blocks: List[Dict[str, Any]] = []
+            if msg.content:
+                content_blocks.append({"type": "text", "text": msg.content})
+            for call in msg.tool_calls or []:
+                function = call.get("function") or {}
+                content_blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": call.get("id") or "",
+                        "name": function.get("name") or call.get("name") or "",
+                        "input": _parse_tool_arguments(function.get("arguments")),
+                    }
+                )
+            if content_blocks:
+                messages.append({"role": "assistant", "content": content_blocks})
+            else:
+                messages.append({"role": "assistant", "content": msg.content or ""})
+            continue
+        # user (and any other non-system role)
+        extra = [{"type": "text", "text": msg.content or ""}] if pending_tool_results and (msg.content or "") else None
+        if pending_tool_results:
+            flush_tool_results(extra)
+        else:
+            messages.append({"role": "user", "content": msg.content or ""})
+
+    flush_tool_results()
+    return system_message, messages
+
+
+def _tool_calls_from_anthropic_blocks(blocks: Any) -> List[Dict[str, Any]]:
+    """Collect OpenAI ``tool_calls`` from Anthropic content blocks.
+
+    Args:
+        blocks: Anthropic ``content`` list.
+
+    Returns:
+        List[Dict[str, Any]]: OpenAI-style tool_calls, possibly empty.
+    """
+    tool_calls: List[Dict[str, Any]] = []
+    if not isinstance(blocks, list):
+        return tool_calls
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        tool_calls.append(
+            {
+                "id": block.get("id") or "",
+                "type": "function",
+                "function": {
+                    "name": block.get("name") or "",
+                    "arguments": json.dumps(block.get("input") or {}),
+                },
+            }
+        )
+    return tool_calls
 
 
 class LLMProxyService:
@@ -351,19 +530,8 @@ class LLMProxyService:
             "anthropic-version": anthropic_version,
         }
 
-        # Convert messages to Anthropic format
-        system_message = None
-        messages = []
-        for msg in request.messages:
-            if msg.role == "system":
-                system_message = msg.content
-            else:
-                messages.append(
-                    {
-                        "role": msg.role,
-                        "content": msg.content or "",
-                    }
-                )
+        # Convert messages to Anthropic format (tools and tool results included)
+        system_message, messages = _anthropic_messages_from_request(request)
 
         body: Dict[str, Any] = {
             "model": model.model_id,
@@ -381,6 +549,15 @@ class LLMProxyService:
 
         if request.stream:
             body["stream"] = True
+
+        # OpenAI "none" means do not advertise tools. Any other choice maps below.
+        if request.tools and request.tool_choice != "none":
+            mapped_tools = _openai_tools_to_anthropic(request.tools)
+            if mapped_tools:
+                body["tools"] = mapped_tools
+                mapped_choice = _openai_tool_choice_to_anthropic(request.tool_choice)
+                if mapped_choice is not None:
+                    body["tool_choice"] = mapped_choice
 
         return url, headers, body
 
@@ -584,6 +761,7 @@ class LLMProxyService:
         created = int(time.time())
         capture_output = is_output_capture_enabled("llm.proxy")
         captured_output = ""
+        anthropic_stream_state: Dict[str, Any] = {}
 
         span_attributes = {
             "langfuse.observation.type": "generation",
@@ -635,7 +813,9 @@ class LLMProxyService:
                                 data = orjson.loads(data_str)
 
                                 if provider.provider_type == LLMProviderType.ANTHROPIC:
-                                    chunk = self._transform_anthropic_stream_chunk(data, response_id, created, model.model_id)
+                                    chunk = self._transform_anthropic_stream_chunk(
+                                        data, response_id, created, model.model_id, stream_state=anthropic_stream_state
+                                    )
                                 elif provider.provider_type == LLMProviderType.OLLAMA:
                                     base_url = (provider.api_base or "").rstrip("/")
                                     if base_url.endswith("/v1"):
@@ -743,6 +923,11 @@ class LLMProxyService:
             if block.get("type") == "text":
                 content += block.get("text", "")
 
+        tool_calls = _tool_calls_from_anthropic_blocks(data.get("content", []))
+        stop_reason = data.get("stop_reason", "stop")
+        # Only map the tool-use case here. Broader stop_reason mapping is #7411.
+        finish_reason = "tool_calls" if tool_calls else stop_reason
+
         usage_data = data.get("usage", {})
 
         return ChatCompletionResponse(
@@ -752,8 +937,12 @@ class LLMProxyService:
             choices=[
                 ChatChoice(
                     index=0,
-                    message=ChatMessage(role="assistant", content=content),
-                    finish_reason=data.get("stop_reason", "stop"),
+                    message=ChatMessage(
+                        role="assistant",
+                        content=content or (None if tool_calls else content),
+                        tool_calls=tool_calls or None,
+                    ),
+                    finish_reason=finish_reason,
                 )
             ],
             usage=UsageStats(
@@ -806,6 +995,7 @@ class LLMProxyService:
         response_id: str,
         created: int,
         model_id: str,
+        stream_state: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """Transform Anthropic streaming chunk to OpenAI format.
 
@@ -814,39 +1004,89 @@ class LLMProxyService:
             response_id: Response ID for the chunk.
             created: Timestamp for the response.
             model_id: Model ID to include in response.
+            stream_state: Mutable per-stream state used to number tool calls
+                and remember ``stop_reason``. Callers that stream one request
+                should pass the same dict for every event of that request.
 
         Returns:
             JSON string chunk in OpenAI format, or None if not applicable.
         """
         event_type = data.get("type")
+        state = stream_state if stream_state is not None else {}
 
-        if event_type == "content_block_delta":
-            delta = data.get("delta", {})
-            if delta.get("type") == "text_delta":
-                chunk = {
-                    "id": response_id,
-                    "object": "chat.completion.chunk",
-                    "created": created,
-                    "model": model_id,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": delta.get("text", "")},
-                            "finish_reason": None,
-                        }
-                    ],
-                }
-                return orjson.dumps(chunk).decode()
+        def _chunk(delta: Dict[str, Any], finish_reason: Optional[str] = None) -> str:
+            """Serialize one OpenAI-compatible streaming chunk.
 
-        elif event_type == "message_stop":
-            chunk = {
+            Args:
+                delta: The ``delta`` object for choices[0].
+                finish_reason: Optional finish reason for this chunk.
+
+            Returns:
+                str: JSON payload (without the SSE ``data:`` prefix).
+            """
+            payload = {
                 "id": response_id,
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model_id,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": delta,
+                        "finish_reason": finish_reason,
+                    }
+                ],
             }
-            return orjson.dumps(chunk).decode()
+            return orjson.dumps(payload).decode()
+
+        if event_type == "content_block_start":
+            block = data.get("content_block") or {}
+            if block.get("type") == "tool_use":
+                block_index = data.get("index", 0)
+                tool_index = state.get("next_tool_index", 0)
+                block_map = state.setdefault("block_to_tool_index", {})
+                block_map[block_index] = tool_index
+                state["next_tool_index"] = tool_index + 1
+                state["saw_tool_use"] = True
+                return _chunk(
+                    {
+                        "tool_calls": [
+                            {
+                                "index": tool_index,
+                                "id": block.get("id") or "",
+                                "type": "function",
+                                "function": {"name": block.get("name") or "", "arguments": ""},
+                            }
+                        ]
+                    }
+                )
+
+        if event_type == "content_block_delta":
+            delta = data.get("delta", {})
+            if delta.get("type") == "text_delta":
+                return _chunk({"content": delta.get("text", "")})
+            if delta.get("type") == "input_json_delta":
+                block_index = data.get("index", 0)
+                tool_index = state.get("block_to_tool_index", {}).get(block_index, 0)
+                return _chunk(
+                    {
+                        "tool_calls": [
+                            {
+                                "index": tool_index,
+                                "function": {"arguments": delta.get("partial_json") or ""},
+                            }
+                        ]
+                    }
+                )
+
+        if event_type == "message_delta":
+            stop_reason = (data.get("delta") or {}).get("stop_reason")
+            if stop_reason:
+                state["stop_reason"] = stop_reason
+
+        if event_type == "message_stop":
+            finish_reason = "tool_calls" if state.get("saw_tool_use") or state.get("stop_reason") == "tool_use" else "stop"
+            return _chunk({}, finish_reason)
 
         return None
 
